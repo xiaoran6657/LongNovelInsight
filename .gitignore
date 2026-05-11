@@ -45,3 +45,10 @@ outputs/
 # Claude / AI local workflow memory
 agent/**
 CLAUDE.md
+
+# Python packaging / build artifacts
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
