@@ -14,7 +14,13 @@ def engine_fixture(tmp_path):
 
 
 @pytest.fixture(name="client")
-def client_fixture(engine):
+def client_fixture(engine, tmp_path, monkeypatch):
+    import config
+
+    test_data = tmp_path / "test_data"
+    test_data.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(config, "DATA_DIR", test_data)
+
     from db import get_session
     from main import app
 

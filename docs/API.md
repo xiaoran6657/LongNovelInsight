@@ -102,37 +102,45 @@ Bind (or re-bind) a provider to a Topic.
 
 ## Documents
 
-### `POST /api/topics/{topic_id}/documents`
+### `POST /api/topics/{topic_id}/documents/upload`
 
 Upload a `.txt` file to a topic. Uses `multipart/form-data`.
 
 **Request:** File field `file` (`.txt` only, max 200 MB; limit configurable in `backend/config.py`).
 
-**Response 202:**
+**Response 201:**
 ```json
 {
-  "document_id": "uuid",
+  "id": "uuid",
+  "topic_id": "uuid",
   "original_filename": "novel.txt",
+  "stored_filename": "original.txt",
+  "file_type": "txt",
+  "content_type": "text/plain",
+  "encoding": "utf-8",
   "file_size_bytes": 1048576,
+  "char_count": 500000,
+  "storage_path": "topics/{topic_id}/source/original.txt",
   "status": "uploaded",
-  "job_id": "uuid"
+  "created_at": "...",
+  "updated_at": "..."
 }
 ```
-**Errors:** `404` topic not found, `409` topic already has a document, `413` file too large, `415` not a `.txt` file.
+**Errors:** `404` topic not found, `400` not a `.txt` file, `400` unsupported encoding (UTF-8 only), `409` topic already has a document, `413` file exceeds size limit.
 
-### `GET /api/topics/{topic_id}/documents/{document_id}`
+### `GET /api/topics/{topic_id}/documents/current`
 
-Get document metadata and parse status.
+Get the current document metadata for a topic.
 
-**Response 200:** Full document object with encoding, token/word counts, status.
-**Errors:** `404` not found.
+**Response 200:** Full document object.
+**Errors:** `404` topic not found, `404` no document uploaded.
 
-### `DELETE /api/topics/{topic_id}/documents/{document_id}`
+### `DELETE /api/topics/{topic_id}/documents/current`
 
-Delete a document and cascaded chapters/chunks/analyses. Re-parsing the novel requires re-running analyses.
+Delete the current document and its file from disk.
 
-**Response 200:** `{ "deleted": true }`
-**Errors:** `404` not found.
+**Response 200:** `{ "deleted": true, "freed_bytes": 1048576 }`
+**Errors:** `404` topic not found, `404` no document uploaded.
 
 ---
 
@@ -189,7 +197,7 @@ Get a single chunk's text content (for frontend display / evidence viewing).
 
 ## Model Providers
 
-### `GET /api/providers`
+### `GET /api/model-providers`
 
 List all configured LLM providers (API keys masked).
 
@@ -200,16 +208,22 @@ List all configured LLM providers (API keys masked).
     {
       "id": "uuid",
       "name": "My DeepSeek",
+      "provider_type": "openai_compatible",
       "base_url": "https://api.deepseek.com",
       "model_name": "deepseek-chat",
+      "context_window": 1000000,
+      "max_output_tokens": 8192,
+      "temperature": 0.2,
       "is_default": true,
-      "created_at": "..."
+      "masked_api_key": "sk-...abcd",
+      "created_at": "...",
+      "updated_at": "..."
     }
   ]
 }
 ```
 
-### `POST /api/providers`
+### `POST /api/model-providers`
 
 Add a new LLM provider configuration.
 
@@ -217,35 +231,45 @@ Add a new LLM provider configuration.
 ```json
 {
   "name": "My DeepSeek",
+  "provider_type": "openai_compatible",
   "base_url": "https://api.deepseek.com",
   "api_key": "sk-...",
   "model_name": "deepseek-chat",
-  "temperature": 0.3,
+  "context_window": 1000000,
+  "max_output_tokens": 8192,
+  "temperature": 0.2,
   "is_default": true
 }
 ```
 
-**Response 201:** Full provider object (API key masked).
-**Errors:** `422` missing required fields, `409` name already exists.
+**Response 201:** Full provider object (API key masked via `masked_api_key`; `api_key` is never returned).
+**Errors:** `422` missing/invalid fields, `422` provider_type not `openai_compatible`, `409` name already exists.
 
-### `PUT /api/providers/{provider_id}`
+### `GET /api/model-providers/{provider_id}`
 
-Update a provider configuration.
+Get a single provider by ID.
+
+**Response 200:** Full provider object (API key masked).
+**Errors:** `404` not found.
+
+### `PATCH /api/model-providers/{provider_id}`
+
+Update a provider configuration. All fields optional; only provided fields are updated.
 
 **Request:** Any subset of provider fields.
 **Response 200:** Updated provider object.
-**Errors:** `404` not found, `409` name conflict.
+**Errors:** `404` not found, `409` name conflict, `422` invalid provider_type.
 
-### `DELETE /api/providers/{provider_id}`
+### `DELETE /api/model-providers/{provider_id}`
 
 Delete a provider. Blocked if any Topic references it.
 
 **Response 200:** `{ "deleted": true }`
-**Errors:** `404` not found, `409` provider is in use by topics.
+**Errors:** `404` not found, `409` provider is in use by one or more Topics.
 
-### `POST /api/providers/{provider_id}/test`
+### `POST /api/model-providers/{provider_id}/test`
 
-Test the connection by sending a minimal chat completion request.
+Test the connection by sending a minimal chat completion request. (Not yet implemented.)
 
 **Response 200:**
 ```json
