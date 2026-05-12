@@ -22,9 +22,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import documents, health, model_providers, topics  # noqa: E402
+from routers import documents, health, model_providers, parse, topics  # noqa: E402
 
 app.include_router(health.router, prefix="/api")
 app.include_router(topics.router, prefix="/api")
 app.include_router(model_providers.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(parse.router, prefix="/api")

@@ -52,16 +52,19 @@ Represents one uploaded novel file. One-to-one with Topic in v0.1.0.
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `id` | UUID (PK) | Unique document ID |
+| `id` | UUID (PK) | Unique document ID (independent of topic_id) |
 | `topic_id` | FK → Topic (unique) | Owning topic (one-to-one) |
 | `original_filename` | str | Original uploaded filename |
-| `file_path` | str | Path to stored .txt in `data/topics/{topic_id}/original.txt` |
-| `encoding` | str | Detected encoding, e.g. "utf-8", "gbk" |
-| `file_size_bytes` | int | File size on disk |
-| `total_tokens` | int | Total token count (after parsing) |
-| `total_words` | int | Total word count |
-| `status` | str | `uploaded` / `parsing` / `parsed` / `error` |
+| `stored_filename` | str | Stored filename, always "original.txt" |
+| `file_type` | str | Always "txt" in v0.1.0 |
+| `content_type` | str (optional) | MIME type from upload |
+| `encoding` | str | Source encoding used for decoding (utf-8, utf-8-sig, gbk, gb18030, etc.). File is always saved as UTF-8. |
+| `file_size_bytes` | int | Original uploaded file size in bytes |
+| `char_count` | int | Character count after decoding |
+| `storage_path` | str | Relative path within `data/` |
+| `status` | str | `uploaded` / `parsed` |
 | `created_at` | datetime | Upload timestamp |
+| `updated_at` | datetime | Last update timestamp |
 
 ### Chapter
 

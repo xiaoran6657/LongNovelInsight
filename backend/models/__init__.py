@@ -1,3 +1,7 @@
+from .chapter import Chapter as Chapter
+from .chapter import ChapterRead as ChapterRead
+from .chunk import Chunk as Chunk
+from .chunk import ChunkRead as ChunkRead
 from .document import Document as Document
 from .document import DocumentRead as DocumentRead
 from .model_provider import ModelProvider as ModelProvider

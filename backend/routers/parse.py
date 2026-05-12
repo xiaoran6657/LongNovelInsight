@@ -1,0 +1,106 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlmodel import Session, select
+
+import config
+from db import get_session
+from models.chapter import Chapter, ChapterRead
+from models.chunk import Chunk, ChunkRead
+from models.document import Document
+from models.topic import Topic
+from services import parser_service, storage
+
+router = APIRouter(prefix="/topics/{topic_id}", tags=["parse"])
+
+
+def _check_topic(topic_id: str, session: Session) -> Topic:
+    topic = session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return topic
+
+
+def _check_document(topic_id: str, session: Session) -> Document:
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No document uploaded")
+    return doc
+
+
+@router.post("/parse")
+def parse(topic_id: str, session: Session = Depends(get_session)) -> dict:
+    _check_topic(topic_id, session)
+    _check_document(topic_id, session)
+
+    txt_path = storage.get_original_txt_path(topic_id)
+    if not txt_path.exists():
+        raise HTTPException(status_code=409, detail="Original text file not found on disk")
+
+    try:
+        result = parser_service.parse_novel(topic_id, session)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    return result
+
+
+@router.get("/chapters")
+def list_chapters(topic_id: str, session: Session = Depends(get_session)) -> dict:
+    _check_topic(topic_id, session)
+    chapters = session.exec(
+        select(Chapter).where(Chapter.topic_id == topic_id).order_by(Chapter.chapter_index)
+    ).all()
+    return {"chapters": [ChapterRead.model_validate(c).model_dump() for c in chapters]}
+
+
+@router.get("/chunks")
+def list_chunks(
+    topic_id: str,
+    include_text: bool = Query(False),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+    chunks = session.exec(
+        select(Chunk)
+        .where(Chunk.topic_id == topic_id)
+        .order_by(Chunk.chapter_index, Chunk.chunk_index)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    result = []
+    for c in chunks:
+        d = ChunkRead.model_validate(c).model_dump()
+        if not include_text:
+            d["text"] = ""
+        result.append(d)
+
+    return {"chunks": result}
+
+
+@router.get("/storage")
+def get_storage(topic_id: str, session: Session = Depends(get_session)) -> dict:
+    _check_topic(topic_id, session)
+
+    db_size = config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0
+    data_size = storage.compute_data_dir_size()
+
+    topic = session.get(Topic, topic_id)
+    topic_doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
+
+    return {
+        "total_disk_usage_bytes": db_size + data_size,
+        "database_size_bytes": db_size,
+        "data_dir_size_bytes": data_size,
+        "topics": [
+            {
+                "topic_id": topic.id if topic else topic_id,
+                "topic_name": topic.name if topic else "",
+                "novel_size_bytes": topic_doc.file_size_bytes if topic_doc else 0,
+                "chunks_size_bytes": 0,
+                "analyses_size_bytes": 0,
+                "total_bytes": topic_doc.file_size_bytes if topic_doc else 0,
+            }
+        ],
+    }

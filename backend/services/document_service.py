@@ -1,10 +1,38 @@
 from fastapi import HTTPException, UploadFile
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 import config
 from models.document import Document, DocumentRead
 from models.topic import Topic
 from services import storage
+
+ENCODINGS = [
+    "utf-8-sig",
+    "utf-8",
+    "gb18030",
+    "gbk",
+    "gb2312",
+    "utf-16",
+    "utf-16-le",
+    "utf-16-be",
+]
+
+
+def _detect_encoding(content: bytes) -> tuple[str, str]:
+    for enc in ENCODINGS:
+        try:
+            text = content.decode(enc)
+            return enc, text
+        except (UnicodeDecodeError, LookupError):
+            continue
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported text encoding. Please upload UTF-8, GBK/GB18030, or UTF-16 txt.",
+    )
+
+
+def _get_doc_by_topic(topic_id: str, session: Session) -> Document | None:
+    return session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
 
 def upload_document(topic_id: str, file: UploadFile, session: Session) -> DocumentRead:
@@ -15,7 +43,7 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
     if not file.filename or not file.filename.lower().endswith(".txt"):
         raise HTTPException(status_code=400, detail="Only .txt files are supported")
 
-    existing = session.get(Document, topic_id)
+    existing = _get_doc_by_topic(topic_id, session)
     if existing is not None:
         raise HTTPException(status_code=409, detail="Topic already has a document")
 
@@ -26,24 +54,13 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
             detail=f"File exceeds maximum size of {config.UPLOAD_MAX_BYTES} bytes",
         )
 
-    encoding = "utf-8"
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail="File encoding not supported. Only UTF-8 text files are accepted.",
-            )
+    encoding, text = _detect_encoding(content)
 
     source_dir = storage.ensure_topic_dirs(topic_id)
     dest_path = source_dir / "original.txt"
-    dest_path.write_bytes(content)
+    dest_path.write_text(text, encoding="utf-8")
 
     doc = Document(
-        id=topic_id,
         topic_id=topic_id,
         original_filename=file.filename,
         file_size_bytes=len(content),
@@ -67,7 +84,7 @@ def get_current_document(topic_id: str, session: Session) -> DocumentRead:
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    doc = session.get(Document, topic_id)
+    doc = _get_doc_by_topic(topic_id, session)
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
 
@@ -79,7 +96,7 @@ def delete_current_document(topic_id: str, session: Session) -> dict:
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    doc = session.get(Document, topic_id)
+    doc = _get_doc_by_topic(topic_id, session)
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
 

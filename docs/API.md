@@ -105,6 +105,9 @@ Bind (or re-bind) a provider to a Topic.
 ### `POST /api/topics/{topic_id}/documents/upload`
 
 Upload a `.txt` file to a topic. Uses `multipart/form-data`.
+Accepts UTF-8, UTF-8-SIG, GBK, GB18030, GB2312, UTF-16 encodings.
+The file is normalized and saved as UTF-8 on the server.
+`encoding` in the response indicates the actual source encoding used for decoding.
 
 **Request:** File field `file` (`.txt` only, max 200 MB; limit configurable in `backend/config.py`).
 
@@ -148,20 +151,22 @@ Delete the current document and its file from disk.
 
 ### `POST /api/topics/{topic_id}/parse`
 
-Trigger novel parsing (chapter splitting + chunking) for the topic's document. Returns immediately with a job ID; the frontend polls for progress.
+Parse the uploaded novel: detect chapters, split into chunks, compute statistics. Idempotent — re-parsing replaces old chapters/chunks.
 
-**Response 202:**
+**Response 200:**
 ```json
 {
-  "job_id": "uuid",
-  "status": "pending"
+  "chapter_count": 120,
+  "chunk_count": 480,
+  "char_count": 800000,
+  "estimated_tokens": 533333
 }
 ```
-**Errors:** `404` topic not found, `409` no document uploaded, `409` already parsing/parsed.
+**Errors:** `404` topic not found, `404` no document uploaded, `409` original text file not found on disk.
 
 ### `GET /api/topics/{topic_id}/chapters`
 
-List chapters for the topic's document.
+List chapters ordered by chapter_index.
 
 **Response 200:**
 ```json
@@ -169,27 +174,67 @@ List chapters for the topic's document.
   "chapters": [
     {
       "id": "uuid",
-      "index": 0,
+      "topic_id": "uuid",
+      "document_id": "uuid",
+      "chapter_index": 0,
       "title": "第一章 宴桃园豪杰三结义",
-      "token_count": 2500,
-      "word_count": 1800
+      "start_char": 0,
+      "end_char": 6500,
+      "char_count": 6500,
+      "created_at": "..."
     }
   ]
 }
 ```
 
-### `GET /api/chunks/{chunk_id}`
+### `GET /api/topics/{topic_id}/chunks`
 
-Get a single chunk's text content (for frontend display / evidence viewing).
+List chunks with pagination and optional text inclusion.
+
+**Query params:**
+- `include_text` (bool, default `false`) — include full chunk text in response
+- `limit` (int, default `100`, max `1000`)
+- `offset` (int, default `0`)
 
 **Response 200:**
 ```json
 {
-  "id": "uuid",
-  "chapter_index": 0,
-  "text": "话说天下大势，分久必合，合久必分...",
-  "token_count": 4000,
-  "word_count": 2800
+  "chunks": [
+    {
+      "id": "uuid",
+      "chapter_index": 0,
+      "chunk_index": 0,
+      "text": "",
+      "start_char": 0,
+      "end_char": 4000,
+      "char_count": 4000,
+      "estimated_tokens": 2667
+    }
+  ]
+}
+```
+When `include_text=true`, the `text` field contains the full chunk content.
+
+### `GET /api/topics/{topic_id}/storage`
+
+Get storage usage for the topic.
+
+**Response 200:**
+```json
+{
+  "total_disk_usage_bytes": 5242880,
+  "database_size_bytes": 204800,
+  "data_dir_size_bytes": 5038080,
+  "topics": [
+    {
+      "topic_id": "uuid",
+      "topic_name": "Three Kingdoms",
+      "novel_size_bytes": 1048576,
+      "chunks_size_bytes": 0,
+      "analyses_size_bytes": 0,
+      "total_bytes": 1048576
+    }
+  ]
 }
 ```
 
