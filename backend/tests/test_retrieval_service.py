@@ -167,7 +167,7 @@ class TestRetrievalService:
 
             # Create a provider for analysis
             c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "R5P",
                     "provider_type": "openai_compatible",

@@ -34,6 +34,12 @@ def compute_file_size(path: Path) -> int:
     return 0
 
 
+def compute_dir_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
 def compute_data_dir_size() -> int:
     if not _data_dir().exists():
         return 0

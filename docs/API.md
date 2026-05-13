@@ -4,11 +4,7 @@ Base URL: `http://localhost:8000/api`
 
 All request/response bodies are JSON. IDs are UUID strings.
 
-> **Implementation stages:** Not all endpoints are implemented at once. Stage 1 (backend skeleton) covers only:
-> - `GET /api/health`
-> - `POST /api/topics`, `GET /api/topics`, `GET /api/topics/{topic_id}`, `DELETE /api/topics/{topic_id}`
->
-> All other endpoints below are the full v0.1.0 target and will be implemented in subsequent stages.
+> All endpoints documented below are implemented as of v0.1.0.
 
 ## Health
 
@@ -32,7 +28,7 @@ Returns backend status and basic statistics.
 
 ### `GET /api/topics`
 
-List all topics.
+List all topics with document and analysis summaries.
 
 **Response 200:**
 ```json
@@ -43,8 +39,10 @@ List all topics.
       "name": "Three Kingdoms",
       "description": "...",
       "provider_id": "uuid | null",
-      "document": { "id": "uuid", "original_filename": "...", "status": "parsed" } | null,
-      "analysis_summary": { "overview": "done", "characters": "running", ... },
+      "storage_bytes": 1048576,
+      "status": "created",
+      "document": { "id": "uuid", "original_filename": "novel.txt", "status": "parsed", "file_size_bytes": 1048576, "char_count": 500000 } | null,
+      "analysis_summary": { "overview": "completed", "characters": "completed" },
       "disk_usage_bytes": 1048576,
       "created_at": "2026-05-10T12:00:00Z",
       "updated_at": "2026-05-10T12:00:00Z"
@@ -71,9 +69,9 @@ Create a new topic.
 
 ### `GET /api/topics/{topic_id}`
 
-Get a single topic with full detail (document, chapters count, analysis statuses, chat sessions, storage).
+Get a single topic with full detail (document, analysis statuses, storage).
 
-**Response 200:** Full topic detail object.
+**Response 200:** Full topic detail object (same structure as list item).
 **Errors:** `404` topic not found.
 
 ### `DELETE /api/topics/{topic_id}`
@@ -230,9 +228,9 @@ Get storage usage for the topic.
       "topic_id": "uuid",
       "topic_name": "Three Kingdoms",
       "novel_size_bytes": 1048576,
-      "chunks_size_bytes": 0,
+      "chunks_size_bytes": 480000,
       "analyses_size_bytes": 0,
-      "total_bytes": 1048576
+      "total_bytes": 1528576
     }
   ]
 }
@@ -240,9 +238,9 @@ Get storage usage for the topic.
 
 ---
 
-## Model Providers
+## Providers
 
-### `GET /api/model-providers`
+### `GET /api/providers`
 
 List all configured LLM providers (API keys masked).
 
@@ -268,7 +266,7 @@ List all configured LLM providers (API keys masked).
 }
 ```
 
-### `POST /api/model-providers`
+### `POST /api/providers`
 
 Add a new LLM provider configuration.
 
@@ -290,14 +288,14 @@ Add a new LLM provider configuration.
 **Response 201:** Full provider object (API key masked via `masked_api_key`; `api_key` is never returned).
 **Errors:** `422` missing/invalid fields, `422` provider_type not `openai_compatible`, `409` name already exists.
 
-### `GET /api/model-providers/{provider_id}`
+### `GET /api/providers/{provider_id}`
 
 Get a single provider by ID.
 
 **Response 200:** Full provider object (API key masked).
 **Errors:** `404` not found.
 
-### `PATCH /api/model-providers/{provider_id}`
+### `PATCH /api/providers/{provider_id}`
 
 Update a provider configuration. All fields optional; only provided fields are updated.
 
@@ -305,14 +303,14 @@ Update a provider configuration. All fields optional; only provided fields are u
 **Response 200:** Updated provider object.
 **Errors:** `404` not found, `409` name conflict, `422` invalid provider_type.
 
-### `DELETE /api/model-providers/{provider_id}`
+### `DELETE /api/providers/{provider_id}`
 
 Delete a provider. Blocked if any Topic references it.
 
 **Response 200:** `{ "deleted": true }`
 **Errors:** `404` not found, `409` provider is in use by one or more Topics.
 
-### `POST /api/model-providers/{provider_id}/test`
+### `POST /api/providers/{provider_id}/test`
 
 Test the connection by sending a minimal chat completion request.
 
@@ -346,7 +344,7 @@ Run structured analysis on the first N chunks using the bound LLM provider. Dele
       "id": "uuid",
       "topic_id": "uuid",
       "job_id": null,
-      "output_type": "OVERVIEW",
+      "output_type": "overview",
       "title": "Work Overview",
       "content_json": { ... },
       "source_chunk_ids": ["uuid"],
@@ -449,7 +447,7 @@ Send a message and get an evidence-grounded assistant response. The backend perf
   "created_at": "..."
 }
 ```
-**Errors:** `404` session not found, `409` no provider configured, `422` empty content.
+**Errors:** `404` session not found, `409` no provider configured, `422` content must be a non-empty string (max 20000 chars).
 
 ### `DELETE /api/chat/sessions/{session_id}`
 
@@ -487,19 +485,21 @@ Get storage usage overview.
 
 ---
 
-## Analysis Jobs
+## Analysis Jobs (internal / dev)
+
+> The analysis jobs API tracks background tasks. In v0.1.0, jobs run synchronously as stubs. This is an internal API; the frontend should prefer `POST /api/topics/{id}/analysis/run` for analysis.
 
 ### `POST /api/topics/{topic_id}/analysis/jobs`
 
-Create and run an analysis job. v0.1.0 runs a stub (no LLM calls).
+Create and run an analysis stub job.
 
-**Query params:** `job_type` (default `ANALYSIS_ALL`). Valid types: `ANALYSIS_OVERVIEW`, `ANALYSIS_CHARACTERS`, `ANALYSIS_RELATIONS`, `ANALYSIS_EVENTS`, `ANALYSIS_CAUSALITY`, `ANALYSIS_THEMES`, `ANALYSIS_ALL`.
+**Query params:** `job_type` (default `analysis`). Valid types: `parse`, `analysis`.
 
 **Response 201:**
 ```json
 {
-  "job": { "id": "uuid", "topic_id": "uuid", "job_type": "ANALYSIS_ALL", "status": "SUCCEEDED", "progress_current": 6, "progress_total": 6, "message": "Analysis complete (stub)", ... },
-  "items": [ { "id": "uuid", "job_id": "uuid", "item_type": "OVERVIEW", "status": "SUCCEEDED", ... }, ... ]
+  "job": { "id": "uuid", "topic_id": "uuid", "job_type": "analysis", "status": "succeeded", "progress_current": 6, "progress_total": 6, "message": "Analysis complete (stub)", ... },
+  "items": [ { "id": "uuid", "job_id": "uuid", "item_type": "overview", "status": "succeeded", ... }, ... ]
 }
 ```
 **Errors:** `404` topic not found, `409` no document / not parsed, `422` invalid job_type.
@@ -520,7 +520,7 @@ Get analysis status summary for a topic.
   "topic_id": "uuid",
   "has_jobs": true,
   "latest_job": { ... },
-  "analysis_types_completed": ["CHARACTERS", "OVERVIEW", ...]
+  "analysis_types_completed": ["overview", "characters", ...]
 }
 ```
 
@@ -533,7 +533,7 @@ Get a single job with its items.
 
 ### `POST /api/analysis/jobs/{job_id}/cancel`
 
-Cancel a pending or running job. Sets status to CANCELLED for the job and all items.
+Cancel a pending or running job.
 
 **Response 200:** `{ "job": {...}, "items": [...] }`
 **Errors:** `404` not found.

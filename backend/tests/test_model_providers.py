@@ -7,7 +7,7 @@ def _create(client, **kwargs):
         "model_name": "deepseek-chat",
     }
     defaults.update(kwargs)
-    return client.post("/api/model-providers", json=defaults)
+    return client.post("/api/providers", json=defaults)
 
 
 def test_create_provider(client):
@@ -41,7 +41,7 @@ def test_mask_long_api_key(client):
 def test_list_providers(client):
     _create(client, name="P1")
     _create(client, name="P2")
-    response = client.get("/api/model-providers")
+    response = client.get("/api/providers")
     assert response.status_code == 200
     assert len(response.json()["providers"]) == 2
 
@@ -49,13 +49,13 @@ def test_list_providers(client):
 def test_get_provider(client):
     r = _create(client, name="Find Me")
     pid = r.json()["id"]
-    response = client.get(f"/api/model-providers/{pid}")
+    response = client.get(f"/api/providers/{pid}")
     assert response.status_code == 200
     assert response.json()["name"] == "Find Me"
 
 
 def test_get_provider_404(client):
-    response = client.get("/api/model-providers/nonexistent")
+    response = client.get("/api/providers/nonexistent")
     assert response.status_code == 404
 
 
@@ -63,7 +63,7 @@ def test_update_provider(client):
     r = _create(client, name="Original")
     pid = r.json()["id"]
     response = client.patch(
-        f"/api/model-providers/{pid}",
+        f"/api/providers/{pid}",
         json={"name": "Updated", "temperature": 0.5},
     )
     assert response.status_code == 200
@@ -72,20 +72,20 @@ def test_update_provider(client):
 
 
 def test_update_provider_404(client):
-    response = client.patch("/api/model-providers/nonexistent", json={"name": "X"})
+    response = client.patch("/api/providers/nonexistent", json={"name": "X"})
     assert response.status_code == 404
 
 
 def test_delete_provider(client):
     r = _create(client, name="Delete Me")
     pid = r.json()["id"]
-    response = client.delete(f"/api/model-providers/{pid}")
+    response = client.delete(f"/api/providers/{pid}")
     assert response.status_code == 200
     assert response.json()["deleted"] is True
 
 
 def test_delete_provider_404(client):
-    response = client.delete("/api/model-providers/nonexistent")
+    response = client.delete("/api/providers/nonexistent")
     assert response.status_code == 404
 
 
@@ -94,7 +94,7 @@ def test_delete_provider_in_use_409(client):
     pid = r.json()["id"]
     # Bind this provider to a topic
     client.post("/api/topics", json={"name": "T", "provider_id": pid})
-    response = client.delete(f"/api/model-providers/{pid}")
+    response = client.delete(f"/api/providers/{pid}")
     assert response.status_code == 409
 
 
@@ -114,7 +114,7 @@ def test_is_default_uniqueness(client):
     _create(client, name="Second Default", is_default=True)
     # Both should have been created successfully, but only the latest
     # should be the default after _set_default runs
-    response = client.get("/api/model-providers")
+    response = client.get("/api/providers")
     providers = response.json()["providers"]
     defaults = [p for p in providers if p["is_default"]]
     assert len(defaults) == 1
@@ -124,7 +124,7 @@ def test_is_default_uniqueness(client):
 def test_default_unchanged_on_non_default_create(client):
     _create(client, name="Default", is_default=True)
     _create(client, name="Not Default", is_default=False)
-    response = client.get("/api/model-providers")
+    response = client.get("/api/providers")
     providers = response.json()["providers"]
     defaults = [p for p in providers if p["is_default"]]
     assert len(defaults) == 1
@@ -134,6 +134,6 @@ def test_default_unchanged_on_non_default_create(client):
 def test_update_unset_default(client):
     r = _create(client, name="Default", is_default=True)
     pid = r.json()["id"]
-    response = client.patch(f"/api/model-providers/{pid}", json={"is_default": False})
+    response = client.patch(f"/api/providers/{pid}", json={"is_default": False})
     assert response.status_code == 200
     assert response.json()["is_default"] is False

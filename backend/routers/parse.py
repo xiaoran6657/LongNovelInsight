@@ -3,6 +3,7 @@ from sqlmodel import Session, select
 
 import config
 from db import get_session
+from models.analysis_output import AnalysisOutput
 from models.chapter import Chapter, ChapterRead
 from models.chunk import Chunk, ChunkRead
 from models.document import Document
@@ -89,6 +90,17 @@ def get_storage(topic_id: str, session: Session = Depends(get_session)) -> dict:
     topic = session.get(Topic, topic_id)
     topic_doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
+    # Real chunk text bytes (stored in DB, estimate from char_count)
+    chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
+    chunks_size_bytes = sum(len(c.text.encode("utf-8")) for c in chunks)
+
+    # Real analysis JSON bytes (stored in DB)
+    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+    analyses_size_bytes = sum(len(o.content_json.encode("utf-8")) for o in outputs)
+
+    novel_size = topic_doc.file_size_bytes if topic_doc else 0
+    total_bytes = novel_size + chunks_size_bytes + analyses_size_bytes
+
     return {
         "total_disk_usage_bytes": db_size + data_size,
         "database_size_bytes": db_size,
@@ -97,10 +109,10 @@ def get_storage(topic_id: str, session: Session = Depends(get_session)) -> dict:
             {
                 "topic_id": topic.id if topic else topic_id,
                 "topic_name": topic.name if topic else "",
-                "novel_size_bytes": topic_doc.file_size_bytes if topic_doc else 0,
-                "chunks_size_bytes": 0,
-                "analyses_size_bytes": 0,
-                "total_bytes": topic_doc.file_size_bytes if topic_doc else 0,
+                "novel_size_bytes": novel_size,
+                "chunks_size_bytes": chunks_size_bytes,
+                "analyses_size_bytes": analyses_size_bytes,
+                "total_bytes": total_bytes,
             }
         ],
     }

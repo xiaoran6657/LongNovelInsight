@@ -12,7 +12,7 @@ from models.model_provider import (
 )
 from models.topic import Topic
 
-router = APIRouter(prefix="/model-providers", tags=["model-providers"])
+router = APIRouter(prefix="/providers", tags=["providers"])
 
 VALID_PROVIDER_TYPE = "openai_compatible"
 

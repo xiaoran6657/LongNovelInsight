@@ -54,6 +54,17 @@ See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for the development process wit
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the version roadmap.
 
+## Backend Smoke Test
+
+A live-server end-to-end test script is available at `backend/scripts/smoke_backend.py`. It exercises the full API flow against a running backend. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
+
+```bash
+# Quick safe-mode smoke test (no real LLM calls):
+cd backend
+python -m uvicorn main:app --reload --port 8000   # Terminal 1
+python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup  # Terminal 2
+```
+
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE).

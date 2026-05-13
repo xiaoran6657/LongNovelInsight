@@ -44,6 +44,20 @@ class ChatSessionRead(SQLModel):
 class ChatMessageCreate(SQLModel):
     content: str
 
+    @classmethod
+    def parse_and_validate(cls, data: dict) -> "ChatMessageCreate":
+        content = data.get("content")
+        if content is None:
+            raise ValueError("content is required")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string")
+        trimmed = content.strip()
+        if not trimmed:
+            raise ValueError("content must not be empty")
+        if len(trimmed) > 20000:
+            raise ValueError("content must not exceed 20000 characters")
+        return cls(content=trimmed)
+
 
 class ChatMessageRead(SQLModel):
     id: str

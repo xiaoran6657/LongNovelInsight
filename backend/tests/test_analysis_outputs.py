@@ -121,7 +121,7 @@ def _setup_topic_with_document_and_chunks(client):
     """Create a topic, upload a document, parse it, and set up a provider."""
     # Create provider
     resp = client.post(
-        "/api/model-providers",
+        "/api/providers",
         json={
             "name": "Test Provider",
             "provider_type": "openai_compatible",
@@ -254,7 +254,7 @@ class TestAnalysisOutputs:
         with client as c:
             # Create provider and topic without document
             resp = c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "P",
                     "provider_type": "openai_compatible",
@@ -278,7 +278,7 @@ class TestAnalysisOutputs:
     def test_not_parsed_returns_409(self, client):
         with client as c:
             resp = c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "P2",
                     "provider_type": "openai_compatible",
@@ -335,6 +335,18 @@ class TestAnalysisOutputs:
                 assert resp.status_code == 200
                 data = resp.json()
                 assert data["count"] == 0
+
+    def test_get_outputs_nonexistent_topic_404(self, client):
+        """GET analysis outputs for nonexistent topic returns 404."""
+        with client as c:
+            resp = c.get("/api/topics/nonexistent-id/analysis/outputs")
+            assert resp.status_code == 404
+
+    def test_delete_outputs_nonexistent_topic_404(self, client):
+        """DELETE analysis outputs for nonexistent topic returns 404."""
+        with client as c:
+            resp = c.delete("/api/topics/nonexistent-id/analysis/outputs")
+            assert resp.status_code == 404
 
     def test_no_external_api_calls(self, client):
         """Ensure tests never call external APIs."""

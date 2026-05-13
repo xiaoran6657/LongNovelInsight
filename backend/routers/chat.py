@@ -4,6 +4,7 @@ from sqlmodel import Session
 from db import get_session
 from models.chat import (
     ChatAnswerRead,
+    ChatMessageCreate,
     ChatMessageRead,
     ChatSessionCreate,
     ChatSessionRead,
@@ -68,18 +69,18 @@ def send_message(
     if s is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    content = body.get("content", "")
-    if not content.strip():
-        raise HTTPException(status_code=422, detail="content must not be empty")
-
-    # Save user message and get assistant response
     try:
-        assistant_msg = chat_service.send_user_message(session_id, content, session)
+        msg = ChatMessageCreate.parse_and_validate(body)
     except ValueError as e:
-        msg = str(e)
-        if "no provider" in msg.lower():
-            raise HTTPException(status_code=409, detail=msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
+        assistant_msg = chat_service.send_user_message(session_id, msg.content, session)
+    except ValueError as e:
+        msg_str = str(e)
+        if "no provider" in msg_str.lower():
+            raise HTTPException(status_code=409, detail=msg_str)
+        raise HTTPException(status_code=400, detail=msg_str)
 
     return ChatAnswerRead.from_message(assistant_msg)
 

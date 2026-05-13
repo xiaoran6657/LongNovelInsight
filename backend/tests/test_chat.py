@@ -20,7 +20,7 @@ def _mock_chat_response(messages, model, temperature, max_tokens, response_forma
 def _setup_chat(client):
     """Create provider, topic, upload doc, parse, create chat session."""
     resp = client.post(
-        "/api/model-providers",
+        "/api/providers",
         json={
             "name": "ChatP",
             "provider_type": "openai_compatible",
@@ -209,6 +209,36 @@ class TestChat:
             resp = c.post(
                 f"/api/chat/sessions/{session_id}/messages",
                 json={"content": ""},
+            )
+            assert resp.status_code == 422
+
+    def test_content_null_returns_422(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            resp = c.post(
+                f"/api/topics/{topic_id}/chat/sessions",
+                json={"title": "Null Test"},
+            )
+            session_id = resp.json()["id"]
+
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": None},
+            )
+            assert resp.status_code == 422
+
+    def test_content_not_string_returns_422(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            resp = c.post(
+                f"/api/topics/{topic_id}/chat/sessions",
+                json={"title": "Type Test"},
+            )
+            session_id = resp.json()["id"]
+
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": 123},
             )
             assert resp.status_code == 422
 

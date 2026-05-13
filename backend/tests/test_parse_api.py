@@ -148,6 +148,8 @@ def test_get_storage(client):
     assert data["database_size_bytes"] >= 0
     assert len(data["topics"]) == 1
     assert data["topics"][0]["novel_size_bytes"] > 0
+    assert data["topics"][0]["chunks_size_bytes"] > 0
+    assert data["topics"][0]["total_bytes"] >= data["topics"][0]["novel_size_bytes"]
 
 
 # ── Long text chunking ──

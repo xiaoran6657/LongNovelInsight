@@ -27,7 +27,7 @@ class TestProviderTestEndpoint:
         with client as c:
             # Create a provider first
             resp = c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "Test Provider",
                     "provider_type": "openai_compatible",
@@ -50,7 +50,7 @@ class TestProviderTestEndpoint:
                     usage={"total_tokens": 3},
                 )
 
-                resp = c.post(f"/api/model-providers/{provider_id}/test")
+                resp = c.post(f"/api/providers/{provider_id}/test")
                 assert resp.status_code == 200
                 data = resp.json()
                 assert data["success"] is True
@@ -63,14 +63,14 @@ class TestProviderTestEndpoint:
 
     def test_provider_not_found(self, client):
         with client as c:
-            resp = c.post("/api/model-providers/nonexistent-id/test")
+            resp = c.post("/api/providers/nonexistent-id/test")
             assert resp.status_code == 404
             assert "not found" in resp.json()["detail"].lower()
 
     def test_llm_error(self, client):
         with client as c:
             resp = c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "Error Provider",
                     "provider_type": "openai_compatible",
@@ -88,7 +88,7 @@ class TestProviderTestEndpoint:
 
                 mock_chat.side_effect = LLMClientError("HTTP 401: Invalid API key", status_code=401)
 
-                resp = c.post(f"/api/model-providers/{provider_id}/test")
+                resp = c.post(f"/api/providers/{provider_id}/test")
                 assert resp.status_code == 200  # endpoint returns 200 with success=false
                 data = resp.json()
                 assert data["success"] is False
@@ -100,7 +100,7 @@ class TestProviderTestEndpoint:
     def test_no_api_key_leak_in_response(self, client):
         with client as c:
             resp = c.post(
-                "/api/model-providers",
+                "/api/providers",
                 json={
                     "name": "Leak Test",
                     "provider_type": "openai_compatible",
@@ -122,7 +122,7 @@ class TestProviderTestEndpoint:
                     usage={},
                 )
 
-                resp = c.post(f"/api/model-providers/{provider_id}/test")
+                resp = c.post(f"/api/providers/{provider_id}/test")
                 data = resp.json()
                 assert "sk-very-secret-key-do-not-leak" not in str(data)
                 assert "very-secret" not in str(data)
