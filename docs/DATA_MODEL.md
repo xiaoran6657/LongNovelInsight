@@ -1,6 +1,8 @@
 # LongNovelInsight v0.1.0 — Data Model
 
-All models are SQLModel classes backed by SQLite. Large text content (novel body, chunk text, analysis JSON) is stored on disk; SQLite stores metadata and file paths.
+All models are SQLModel classes backed by SQLite. In v0.1.0, all data including chunk text and analysis JSON is stored in SQLite for simplicity.
+
+> **Storage note:** v0.1 stores chunk text and analysis JSON in SQLite columns (`Chunk.text`, `AnalysisOutput.content_json`). Future versions may migrate large text to `data/chunks/*.txt` and `data/analyses/*.json`.
 
 ## Entity-Relationship Summary
 
@@ -13,176 +15,180 @@ Topic          1──*  AnalysisOutput
 Topic          1──*  ChatSession
 ChatSession    1──*  ChatMessage
 Topic          1──*  Job
+Job            1──*  JobItem
 ```
+
+## Enums (backend/models/enums.py)
+
+| Enum | Values |
+|------|--------|
+| `AnalysisType` | `overview`, `characters`, `relations`, `events`, `causality`, `themes` |
+| `JobType` | `parse`, `analysis` |
+| `JobStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `JobItemStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
+| `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
+
+All enum values are lowercase strings (Python `StrEnum`).
 
 ## Models
 
-### ModelProvider
-
-Stores LLM provider configuration. User-configured, not per-Topic.
-
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `id` | UUID (PK) | Unique provider ID |
-| `name` | str (unique) | Display name, e.g. "My DeepSeek" |
-| `base_url` | str | API base URL, e.g. `https://api.deepseek.com` |
-| `api_key` | str | User's API key (encrypted or plaintext on local disk) |
-| `model_name` | str | Model identifier, e.g. `deepseek-chat` |
-| `temperature` | float | Default 0.3 for analysis, 0.7 for chat |
-| `is_default` | bool | Whether this is the default provider |
-| `created_at` | datetime | Creation timestamp |
-| `updated_at` | datetime | Last update timestamp |
-
-### Topic
-
-A workspace grouping one novel, its analysis, and chat history.
+### Topic (`topic`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique topic ID |
-| `name` | str | User-given name, e.g. "Three Kingdoms Analysis" |
-| `description` | str (optional) | Optional notes |
-| `provider_id` | FK → ModelProvider (optional, nullable) | Bound LLM provider. Nullable at creation; required before analysis/chat. |
+| `name` | str | User-given name |
+| `description` | str | optional | Notes |
+| `provider_id` | FK → model_provider | optional, nullable | Bound LLM provider. Nullable at creation; required before analysis/chat. |
+| `storage_bytes` | int | Disk usage in bytes |
+| `status` | str | TopicStatus enum value |
 | `created_at` | datetime | Creation timestamp |
 | `updated_at` | datetime | Last update timestamp |
 
-### Document
+### ModelProvider (`model_provider`)
 
-Represents one uploaded novel file. One-to-one with Topic in v0.1.0.
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique provider ID |
+| `name` | str (unique) | Display name |
+| `provider_type` | str | Always `openai_compatible` in v0.1.0 |
+| `base_url` | str | API base URL |
+| `api_key` | str | User's API key (never returned in API responses) |
+| `model_name` | str | Model identifier |
+| `context_window` | int | Context window size (default 1_000_000) |
+| `max_output_tokens` | int | Max output tokens (default 8192) |
+| `temperature` | float | Sampling temperature (default 0.2) |
+| `is_default` | bool | Whether this is the default provider |
+| `masked_api_key` | (property) | Computed masked version of api_key |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+
+### Document (`document`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique document ID (independent of topic_id) |
-| `topic_id` | FK → Topic (unique) | Owning topic (one-to-one) |
+| `topic_id` | FK → topic (unique) | Owning topic (one-to-one in v0.1.0) |
 | `original_filename` | str | Original uploaded filename |
-| `stored_filename` | str | Stored filename, always "original.txt" |
-| `file_type` | str | Always "txt" in v0.1.0 |
-| `content_type` | str (optional) | MIME type from upload |
-| `encoding` | str | Source encoding used for decoding (utf-8, utf-8-sig, gbk, gb18030, etc.). File is always saved as UTF-8. |
-| `file_size_bytes` | int | Original uploaded file size in bytes |
+| `stored_filename` | str | Always `original.txt` |
+| `file_type` | str | Always `txt` in v0.1.0 |
+| `content_type` | str | optional | MIME type from upload |
+| `encoding` | str | Source encoding used for decoding |
+| `file_size_bytes` | int | Original uploaded file size |
 | `char_count` | int | Character count after decoding |
 | `storage_path` | str | Relative path within `data/` |
-| `status` | str | `uploaded` / `parsed` |
+| `status` | str | DocumentStatus enum value |
 | `created_at` | datetime | Upload timestamp |
 | `updated_at` | datetime | Last update timestamp |
 
-### Chapter
-
-A detected chapter boundary within a document.
+### Chapter (`chapter`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique chapter ID |
-| `document_id` | FK → Document | Owning document |
-| `index` | int | Chapter number (0-based) |
-| `title` | str | Detected chapter title, e.g. "第一章 宴桃园豪杰三结义" |
-| `start_char` | int | Character offset where chapter starts in document text |
+| `topic_id` | FK → topic | Owning topic |
+| `document_id` | FK → document | Owning document |
+| `chapter_index` | int | Chapter number (0-based) |
+| `title` | str | Detected chapter title |
+| `start_char` | int | Character offset where chapter starts |
 | `end_char` | int | Character offset where chapter ends |
-| `token_count` | int | Token count for this chapter |
-| `word_count` | int | Word count for this chapter |
+| `char_count` | int | Character count |
+| `created_at` | datetime | Creation timestamp |
 
-### Chunk
-
-A fixed-size sliding window of text within a chapter, used as LLM context unit.
+### Chunk (`chunk`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique chunk ID |
-| `chapter_id` | FK → Chapter | Owning chapter |
-| `index` | int | Chunk number within chapter (0-based) |
-| `file_path` | str | Path to chunk text in `data/chunks/{chunk_id}.txt` |
-| `start_char` | int | Character offset within chapter |
-| `end_char` | int | Character offset within chapter |
-| `token_count` | int | Token count for this chunk |
-| `word_count` | int | Word count for this chunk |
+| `topic_id` | FK → topic | Owning topic |
+| `document_id` | FK → document | Owning document |
+| `chapter_id` | FK → chapter | optional | Owning chapter |
+| `chunk_index` | int | Chunk number (0-based within topic) |
+| `chapter_index` | int | optional | Chapter number (for ordering) |
+| `text` | str | Full chunk text (stored in SQLite in v0.1) |
+| `start_char` | int | Character offset within document |
+| `end_char` | int | Character offset within document |
+| `char_count` | int | Character count |
+| `estimated_tokens` | int | Estimated token count (chars / 1.5 for Chinese) |
+| `created_at` | datetime | Creation timestamp |
 
-### AnalysisOutput
-
-One analysis result. A Topic has multiple analysis outputs (one per type).
+### AnalysisOutput (`analysis_output`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique analysis ID |
-| `topic_id` | FK → Topic | Owning topic |
-| `analysis_type` | str | One of: `overview`, `characters`, `relationships`, `events`, `causal_chain`, `themes` |
-| `status` | str | `pending` / `running` / `done` / `failed` |
-| `file_path` | str | Path to output JSON in `data/analyses/{id}.json` |
-| `error_message` | str (optional) | Error details if failed |
-| `job_id` | FK → Job (optional) | Associated background job |
+| `topic_id` | FK → topic | Owning topic |
+| `job_id` | FK → job | optional | Associated job |
+| `output_type` | str | AnalysisType enum value |
+| `title` | str | Human-readable title |
+| `content_json` | str | Full LLM response as JSON string (stored in SQLite in v0.1) |
+| `source_chunk_ids` | str | JSON array of source chunk IDs |
+| `evidence_quotes` | str | JSON array of direct quotes |
+| `confidence` | float | Overall confidence score (0.0–1.0) |
 | `created_at` | datetime | Creation timestamp |
 | `updated_at` | datetime | Last update timestamp |
 
-**Output JSON Structure** (stored on disk at `file_path`):
-
-```json
-{
-  "analysis_type": "characters",
-  "results": [
-    {
-      "name": "刘备",
-      "description": "...",
-      "traits": ["仁德", "坚忍"],
-      "source_chunk_ids": ["uuid1", "uuid2"],
-      "evidence_quotes": ["原文引文1", "原文引文2"],
-      "confidence": 0.9
-    }
-  ],
-  "model": "deepseek-chat",
-  "tokens_used": 4500,
-  "generated_at": "2026-05-10T12:00:00Z"
-}
-```
-
-### ChatSession
-
-A named conversation thread within a Topic.
+### ChatSession (`chat_session`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique session ID |
-| `topic_id` | FK → Topic | Owning topic |
-| `name` | str | Auto-generated or user-given name |
+| `topic_id` | FK → topic | Owning topic |
+| `title` | str | User-given or auto-generated title |
 | `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
 
-### ChatMessage
-
-A single message in a chat session.
+### ChatMessage (`chat_message`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique message ID |
-| `session_id` | FK → ChatSession | Owning session |
-| `role` | str | `user` or `assistant` |
-| `content` | str | Message text (Markdown for assistant) |
-| `referenced_chunk_ids` | JSON (list of UUIDs) | Chunks referenced in assistant response |
-| `referenced_analysis_ids` | JSON (list of UUIDs) | Analysis outputs referenced |
-| `tokens_used` | int | Tokens consumed by this message (prompt + completion) |
+| `session_id` | FK → chat_session | Owning session |
+| `role` | str | `user`, `assistant`, or `system` |
+| `content` | str | Message text |
+| `evidence_json` | str | optional | JSON evidence list (assistant messages) |
+| `uncertainty` | str | optional | Uncertainty notes (assistant messages) |
 | `created_at` | datetime | Message timestamp |
 
-### Job
-
-Tracks long-running background operations.
+### Job (`job`)
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique job ID |
-| `topic_id` | FK → Topic | Owning topic |
-| `job_type` | str | `parse` or `analysis` |
-| `status` | str | `pending` / `running` / `done` / `failed` |
-| `progress` | float | 0.0 to 1.0 |
-| `progress_message` | str | Human-readable status, e.g. "Splitting chapters..." |
-| `error_message` | str (optional) | Error details if failed |
-| `result_summary` | JSON (optional) | Summary of results (e.g., "{chapters: 120, chunks: 480}") |
-| `created_at` | datetime | Job creation |
-| `started_at` | datetime (optional) | When job started |
-| `completed_at` | datetime (optional) | When job finished |
+| `topic_id` | FK → topic | Owning topic |
+| `job_type` | str | JobType enum value: `parse` or `analysis` |
+| `status` | str | JobStatus enum value |
+| `progress_current` | int | Items completed |
+| `progress_total` | int | Total items |
+| `message` | str | optional | Human-readable status |
+| `error_message` | str | optional | Error details if failed |
+| `started_at` | datetime | optional | When job started |
+| `finished_at` | datetime | optional | When job finished |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+
+### JobItem (`job_item`)
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique item ID |
+| `job_id` | FK → job | Owning job |
+| `item_type` | str | AnalysisType enum value |
+| `status` | str | JobItemStatus enum value |
+| `progress_current` | int | 0 |
+| `progress_total` | int | 1 |
+| `message` | str | optional | Status message |
+| `error_message` | str | optional | Error details |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
 
 ## Deletion Cascades
 
 | Delete Target | Cascades To |
 | ------------- | ----------- |
 | ModelProvider | Blocked if referenced by any Topic |
-| Topic | Document, Chapter, Chunk, AnalysisOutput, ChatSession → ChatMessage, Job |
+| Topic | Document, Chapter, Chunk, AnalysisOutput, ChatSession → ChatMessage, Job → JobItem |
 | ChatSession | ChatMessage |
 | Document | Chapter → Chunk |
 

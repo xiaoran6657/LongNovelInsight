@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 from db import get_session
 from models.chunk import Chunk
 from models.document import Document
+from models.enums import JobStatus
 from models.job import JOB_TYPES, JobRead
 from models.job_item import JobItemRead
 from models.topic import Topic
@@ -38,7 +39,7 @@ def _check_chunks(topic_id: str, session: Session) -> None:
 @topic_router.post("/jobs", status_code=201)
 def create_analysis_job(
     topic_id: str,
-    job_type: str = "ANALYSIS_ALL",
+    job_type: str = "analysis",
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
@@ -75,9 +76,9 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
 
     latest_job = jobs[0] if jobs else None
     completed_types = set()
-    if latest_job and latest_job.status == "SUCCEEDED":
+    if latest_job and latest_job.status == JobStatus.SUCCEEDED:
         items = job_service.get_job_items(latest_job.id, session)
-        completed_types = {i.item_type for i in items if i.status == "SUCCEEDED"}
+        completed_types = {i.item_type for i in items if i.status == JobStatus.SUCCEEDED}
 
     return {
         "topic_id": topic_id,

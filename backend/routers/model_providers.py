@@ -9,7 +9,6 @@ from models.model_provider import (
     ModelProviderCreate,
     ModelProviderRead,
     ModelProviderUpdate,
-    mask_api_key,
 )
 from models.topic import Topic
 
@@ -50,7 +49,7 @@ def _set_default(session: Session, provider: ModelProvider) -> None:
 def _to_read(provider: ModelProvider) -> ModelProviderRead:
     return ModelProviderRead(
         **provider.model_dump(exclude={"api_key"}),
-        masked_api_key=mask_api_key(provider.api_key),
+        masked_api_key=provider.masked_api_key,
     )
 
 

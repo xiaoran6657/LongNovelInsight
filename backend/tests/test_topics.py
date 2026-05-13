@@ -60,3 +60,36 @@ def test_deleted_topic_not_in_list(client):
     client.delete(f"/api/topics/{topic_id}")
     response = client.get("/api/topics")
     assert len(response.json()["topics"]) == 0
+
+
+def test_create_topic_with_valid_provider(client):
+    """Topic.provider_id referencing an existing provider should succeed."""
+    # Create a provider first
+    r = client.post(
+        "/api/model-providers",
+        json={
+            "name": "ValidP",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.example.com",
+            "api_key": "sk-key",
+            "model_name": "m",
+        },
+    )
+    provider_id = r.json()["id"]
+
+    # Create topic with valid provider_id
+    r = client.post(
+        "/api/topics",
+        json={"name": "Topic With Provider", "provider_id": provider_id},
+    )
+    assert r.status_code == 201
+    assert r.json()["provider_id"] == provider_id
+
+
+def test_create_topic_with_nonexistent_provider_404(client):
+    """Topic.provider_id referencing a nonexistent provider should fail."""
+    r = client.post(
+        "/api/topics",
+        json={"name": "Bad Topic", "provider_id": "nonexistent-id"},
+    )
+    assert r.status_code == 404

@@ -3,6 +3,8 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
+from models.enums import TopicStatus
+
 
 class Topic(SQLModel, table=True):
     __tablename__ = "topic"
@@ -10,9 +12,9 @@ class Topic(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     name: str
     description: str | None = None
-    provider_id: str | None = None
+    provider_id: str | None = Field(default=None, foreign_key="model_provider.id", index=True)
     storage_bytes: int = 0
-    status: str = "created"
+    status: str = TopicStatus.CREATED
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

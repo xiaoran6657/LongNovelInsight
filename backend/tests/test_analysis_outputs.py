@@ -12,7 +12,7 @@ def _mock_llm_response(output_type: str):
     from services.llm_client import LLMResponse
 
     responses = {
-        "OVERVIEW": json.dumps(
+        "overview": json.dumps(
             {
                 "title": "Test Novel",
                 "author_hint": "Test Author",
@@ -27,7 +27,7 @@ def _mock_llm_response(output_type: str):
                 "confidence": 0.85,
             }
         ),
-        "CHARACTER_TABLE": json.dumps(
+        "characters": json.dumps(
             {
                 "characters": [
                     {
@@ -45,7 +45,7 @@ def _mock_llm_response(output_type: str):
                 "insufficient_evidence": False,
             }
         ),
-        "RELATION_TABLE": json.dumps(
+        "relations": json.dumps(
             {
                 "relationships": [
                     {
@@ -62,7 +62,7 @@ def _mock_llm_response(output_type: str):
                 "insufficient_evidence": False,
             }
         ),
-        "EVENT_TABLE": json.dumps(
+        "events": json.dumps(
             {
                 "events": [
                     {
@@ -80,7 +80,7 @@ def _mock_llm_response(output_type: str):
                 "insufficient_evidence": False,
             }
         ),
-        "CAUSALITY_CHAIN": json.dumps(
+        "causality": json.dumps(
             {
                 "causal_chains": [
                     {
@@ -96,7 +96,7 @@ def _mock_llm_response(output_type: str):
                 "insufficient_evidence": False,
             }
         ),
-        "THEME_ANALYSIS": json.dumps(
+        "themes": json.dumps(
             {
                 "themes": [
                     {
@@ -167,12 +167,12 @@ class TestAnalysisOutputs:
                 assert data["count"] == 6
                 types_found = {o["output_type"] for o in data["outputs"]}
                 assert types_found == {
-                    "OVERVIEW",
-                    "CHARACTER_TABLE",
-                    "RELATION_TABLE",
-                    "EVENT_TABLE",
-                    "CAUSALITY_CHAIN",
-                    "THEME_ANALYSIS",
+                    "overview",
+                    "characters",
+                    "relations",
+                    "events",
+                    "causality",
+                    "themes",
                 }
 
     def test_outputs_have_evidence_fields(self, client):
@@ -207,10 +207,10 @@ class TestAnalysisOutputs:
             with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
                 c.post(f"/api/topics/{topic_id}/analysis/run?limit_chunks=5")
 
-            resp = c.get(f"/api/topics/{topic_id}/analysis/outputs?output_type=CHARACTER_TABLE")
+            resp = c.get(f"/api/topics/{topic_id}/analysis/outputs?output_type=characters")
             assert resp.status_code == 200
             assert resp.json()["count"] == 1
-            assert resp.json()["outputs"][0]["output_type"] == "CHARACTER_TABLE"
+            assert resp.json()["outputs"][0]["output_type"] == "characters"
 
     def test_delete_outputs(self, client):
         with client as c:
@@ -350,16 +350,14 @@ def _infer_output_type(messages):
     """Infer the output type from the system prompt content."""
     for m in messages:
         content = m.content if hasattr(m, "content") else m.get("content", "")
-        if "characters" == content[:10]:
-            return "CHARACTER_TABLE"
-        if "relationships" in content[:50] and "causal" not in content[:50]:
-            return "RELATION_TABLE"
-        if "causal" in content[:50]:
-            return "CAUSALITY_CHAIN"
-        if "events" in content[:50] or "event" in content[:50]:
-            return "EVENT_TABLE"
-        if "theme" in content[:50]:
-            return "THEME_ANALYSIS"
-        if "overview" in content[:50] or "literary" in content[:50]:
-            return "OVERVIEW"
-    return "OVERVIEW"
+        if "character extraction" in content[:200]:
+            return "characters"
+        if "relationship" in content[:200]:
+            return "relations"
+        if "causal chain" in content[:200]:
+            return "causality"
+        if "plot event" in content[:200]:
+            return "events"
+        if "philosophy" in content[:200]:
+            return "themes"
+    return "overview"

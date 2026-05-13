@@ -3,17 +3,10 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
-JOB_TYPES = [
-    "ANALYSIS_OVERVIEW",
-    "ANALYSIS_CHARACTERS",
-    "ANALYSIS_RELATIONS",
-    "ANALYSIS_EVENTS",
-    "ANALYSIS_CAUSALITY",
-    "ANALYSIS_THEMES",
-    "ANALYSIS_ALL",
-]
+from models.enums import JobStatus, JobType
 
-JOB_STATUSES = ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
+JOB_TYPES = [JobType.PARSE, JobType.ANALYSIS]
+JOB_STATUSES = [s for s in JobStatus]
 
 
 class Job(SQLModel, table=True):
@@ -22,7 +15,7 @@ class Job(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     topic_id: str = Field(foreign_key="topic.id", index=True)
     job_type: str
-    status: str = "PENDING"
+    status: str = JobStatus.PENDING
     progress_current: int = 0
     progress_total: int = 0
     message: str | None = None

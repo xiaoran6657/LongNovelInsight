@@ -1,7 +1,14 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from pydantic import model_validator
 from sqlmodel import Field, SQLModel
+
+
+def mask_api_key(key: str) -> str:
+    if len(key) <= 8:
+        return "***"
+    return key[:3] + "..." + key[-4:]
 
 
 class ModelProvider(SQLModel, table=True):
@@ -20,11 +27,9 @@ class ModelProvider(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-
-def mask_api_key(key: str) -> str:
-    if len(key) <= 8:
-        return "***"
-    return key[:3] + "..." + key[-4:]
+    @property
+    def masked_api_key(self) -> str:
+        return mask_api_key(self.api_key)
 
 
 class ModelProviderCreate(SQLModel):
@@ -37,6 +42,18 @@ class ModelProviderCreate(SQLModel):
     max_output_tokens: int = 8192
     temperature: float = 0.2
     is_default: bool = False
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> "ModelProviderCreate":
+        if not self.name.strip():
+            raise ValueError("name must not be empty")
+        if self.context_window <= 0:
+            raise ValueError("context_window must be > 0")
+        if self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be > 0")
+        if not (0.0 <= self.temperature <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        return self
 
 
 class ModelProviderRead(SQLModel):

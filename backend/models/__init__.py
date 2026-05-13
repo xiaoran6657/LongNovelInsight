@@ -8,6 +8,12 @@ from .chunk import Chunk as Chunk
 from .chunk import ChunkRead as ChunkRead
 from .document import Document as Document
 from .document import DocumentRead as DocumentRead
+from .enums import AnalysisType as AnalysisType
+from .enums import DocumentStatus as DocumentStatus
+from .enums import JobItemStatus as JobItemStatus
+from .enums import JobStatus as JobStatus
+from .enums import JobType as JobType
+from .enums import TopicStatus as TopicStatus
 from .job import Job as Job
 from .job import JobRead as JobRead
 from .job_item import JobItem as JobItem

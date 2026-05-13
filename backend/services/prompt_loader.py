@@ -1,12 +1,12 @@
 from pathlib import Path
 
 PROMPT_FILES = {
-    "OVERVIEW": "overview.md",
-    "CHARACTER_TABLE": "characters.md",
-    "RELATION_TABLE": "relations.md",
-    "EVENT_TABLE": "events.md",
-    "CAUSALITY_CHAIN": "causality.md",
-    "THEME_ANALYSIS": "themes.md",
+    "overview": "overview.md",
+    "characters": "characters.md",
+    "relations": "relations.md",
+    "events": "events.md",
+    "causality": "causality.md",
+    "themes": "themes.md",
 }
 
 

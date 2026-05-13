@@ -1,5 +1,7 @@
 import io
 
+from models.enums import AnalysisType, JobStatus
+
 
 def _create_topic(client, name="Job Test"):
     r = client.post("/api/topics", json={"name": name})
@@ -59,8 +61,8 @@ def test_create_analysis_job_success(client):
     r = client.post(f"/api/topics/{tid}/analysis/jobs")
     assert r.status_code == 201
     data = r.json()
-    assert data["job"]["status"] == "SUCCEEDED"
-    assert data["job"]["job_type"] == "ANALYSIS_ALL"
+    assert data["job"]["status"] == JobStatus.SUCCEEDED
+    assert data["job"]["job_type"] == "analysis"
     assert data["job"]["progress_current"] == 6
     assert data["job"]["progress_total"] == 6
     assert len(data["items"]) == 6
@@ -70,24 +72,36 @@ def test_job_items_all_succeeded(client):
     tid = _setup_topic(client)
     r = client.post(f"/api/topics/{tid}/analysis/jobs")
     for item in r.json()["items"]:
-        assert item["status"] == "SUCCEEDED"
+        assert item["status"] == JobStatus.SUCCEEDED
 
 
 def test_job_items_have_all_types(client):
     tid = _setup_topic(client)
     r = client.post(f"/api/topics/{tid}/analysis/jobs")
     types = {i["item_type"] for i in r.json()["items"]}
-    assert types == {"OVERVIEW", "CHARACTERS", "RELATIONS", "EVENTS", "CAUSALITY", "THEMES"}
+    assert types == {t.value for t in AnalysisType}
 
 
-def test_create_specific_job_type(client):
+def test_create_analysis_job_with_parse_type(client):
+    """JobType.parse creates a parse job."""
     tid = _setup_topic(client)
     r = client.post(
         f"/api/topics/{tid}/analysis/jobs",
-        params={"job_type": "ANALYSIS_CHARACTERS"},
+        params={"job_type": "parse"},
     )
     assert r.status_code == 201
-    assert r.json()["job"]["job_type"] == "ANALYSIS_CHARACTERS"
+    assert r.json()["job"]["job_type"] == "parse"
+
+
+def test_create_analysis_job_with_analysis_type(client):
+    """JobType.analysis creates an analysis job."""
+    tid = _setup_topic(client)
+    r = client.post(
+        f"/api/topics/{tid}/analysis/jobs",
+        params={"job_type": "analysis"},
+    )
+    assert r.status_code == 201
+    assert r.json()["job"]["job_type"] == "analysis"
 
 
 def test_invalid_job_type_422(client):
@@ -168,8 +182,7 @@ def test_cancel_job(client):
 
     r = client.post(f"/api/analysis/jobs/{job_id}/cancel")
     assert r.status_code == 200
-    # Already succeeded, cancel should be no-op
-    assert r.json()["job"]["status"] in ("SUCCEEDED", "CANCELLED")
+    assert r.json()["job"]["status"] in (JobStatus.SUCCEEDED, JobStatus.CANCELLED)
 
 
 def test_cancel_job_404(client):

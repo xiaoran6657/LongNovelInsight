@@ -127,12 +127,12 @@ def run_structured_analysis(
         confidence = _extract_confidence(parsed)
 
         title_map = {
-            "OVERVIEW": parsed.get("title", "Work Overview"),
-            "CHARACTER_TABLE": f"Characters ({len(parsed.get('characters', []))} found)",
-            "RELATION_TABLE": f"Relationships ({len(parsed.get('relationships', []))} found)",
-            "EVENT_TABLE": f"Events ({len(parsed.get('events', []))} found)",
-            "CAUSALITY_CHAIN": f"Causal Chains ({len(parsed.get('causal_chains', []))} found)",
-            "THEME_ANALYSIS": f"Themes ({len(parsed.get('themes', []))} found)",
+            "overview": parsed.get("title", "Work Overview"),
+            "characters": f"Characters ({len(parsed.get('characters', []))} found)",
+            "relations": f"Relationships ({len(parsed.get('relationships', []))} found)",
+            "events": f"Events ({len(parsed.get('events', []))} found)",
+            "causality": f"Causal Chains ({len(parsed.get('causal_chains', []))} found)",
+            "themes": f"Themes ({len(parsed.get('themes', []))} found)",
         }
 
         output = AnalysisOutput(

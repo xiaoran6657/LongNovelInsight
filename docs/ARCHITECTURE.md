@@ -43,37 +43,44 @@ A REST API served by Uvicorn at `localhost:8000`.
 **Module Structure:**
 ```
 backend/
-  main.py              — FastAPI app, CORS, lifespan
-  config.py            — Settings (data dir, DB path, etc.)
-  db.py                — SQLite engine + session factory
+  main.py                — FastAPI app, CORS, lifespan
+  config.py              — Settings (data dir, DB path, etc.)
+  db.py                  — SQLite engine + session factory
   routers/
-    health.py           — GET /api/health
-    topics.py           — Topic CRUD
-    documents.py        — Novel upload, parsing trigger
-    parse.py            — Chapter/chunk operations
-    model_providers.py  — LLM provider config CRUD
-    analysis.py         — Analysis pipeline trigger & results
-    chat.py             — Chat sessions & messages
-    storage.py          — Storage usage stats
+    health.py             — GET /api/health
+    topics.py             — Topic CRUD
+    documents.py          — Novel upload
+    parse.py              — Chapter/chunk operations
+    model_providers.py    — LLM provider config CRUD + test
+    analysis_jobs.py      — Analysis job creation & status
+    analysis_outputs.py   — Structured analysis run & results
+    chat.py               — Chat sessions & messages
   models/
     __init__.py
+    enums.py              — Shared enums (AnalysisType, JobType, etc.)
     topic.py
     document.py
     chapter.py
     chunk.py
     model_provider.py
-    analysis.py
+    analysis_output.py
     chat.py
     job.py
+    job_item.py
   services/
-    parser.py           — Chapter splitting, chunking, encoding detection
-    llm_client.py       — OpenAI-compatible API client wrapper
-    analysis_runner.py  — Analysis pipeline orchestration
-    chat_service.py     — Chat context assembly & LLM call
+    storage.py            — File storage helpers
+    document_service.py   — Upload/delete logic
+    parser_service.py     — Chapter splitting, chunking, encoding detection
+    job_service.py        — Job create, list, cancel, run
+    llm_client.py         — OpenAI-compatible API client wrapper
+    provider_test_service.py — Provider connection test
+    prompt_loader.py      — Prompt template loading
+    analysis_service.py   — Analysis pipeline orchestration
+    chat_service.py       — Chat context assembly & LLM call
+    retrieval_service.py  — Keyword-based chunk/analysis retrieval
+  prompts/
+    overview.md, characters.md, relations.md, events.md, causality.md, themes.md
   tests/
-    __init__.py
-    test_health.py
-    test_topics.py
     ...
 ```
 
@@ -105,17 +112,14 @@ See [DATA_MODEL.md](DATA_MODEL.md) for full schema.
 
 ```
 data/
+  longnovelinsight.sqlite  — SQLite database (all data including text)
   topics/
     {topic_id}/
-      original.txt          — the uploaded novel (UTF-8 normalized)
-      meta.json             — file metadata (original name, size, encoding)
-  chunks/
-    {chunk_id}.txt          — individual chunk text
-  analyses/
-    {analysis_id}.json      — structured analysis output
+      source/
+        original.txt       — the uploaded novel (UTF-8 normalized)
 ```
 
-Large text content (novels, chunks, analysis JSON) is stored on disk rather than in SQLite to keep the database small and fast. SQLite stores metadata, relationships, and pointers (file paths).
+**v0.1.0 storage note:** For simplicity, chunk text (`Chunk.text`) and analysis JSON (`AnalysisOutput.content_json`) are stored directly in SQLite. The `data/` directory holds only uploaded novel files. Future versions (v0.2+) may migrate large text content to separate files on disk to improve database performance.
 
 ### LLM Provider
 

@@ -3,14 +3,9 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
-ITEM_TYPES = [
-    "OVERVIEW",
-    "CHARACTERS",
-    "RELATIONS",
-    "EVENTS",
-    "CAUSALITY",
-    "THEMES",
-]
+from models.enums import AnalysisType, JobItemStatus
+
+ITEM_TYPES = [t for t in AnalysisType]
 
 
 class JobItem(SQLModel, table=True):
@@ -19,7 +14,7 @@ class JobItem(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     job_id: str = Field(foreign_key="job.id", index=True)
     item_type: str
-    status: str = "PENDING"
+    status: str = JobItemStatus.PENDING
     progress_current: int = 0
     progress_total: int = 1
     message: str | None = None

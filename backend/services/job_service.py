@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
+from models.enums import JobStatus
 from models.job import JOB_TYPES, Job
 from models.job_item import ITEM_TYPES, JobItem
 
@@ -17,7 +18,7 @@ def create_analysis_job(topic_id: str, job_type: str, session: Session) -> Job:
     job = Job(
         topic_id=topic_id,
         job_type=job_type,
-        status="PENDING",
+        status=JobStatus.PENDING,
         progress_current=0,
         progress_total=len(ITEM_TYPES),
     )
@@ -29,7 +30,7 @@ def create_analysis_job(topic_id: str, job_type: str, session: Session) -> Job:
 def create_default_analysis_items(job_id: str, session: Session) -> list[JobItem]:
     items = []
     for item_type in ITEM_TYPES:
-        item = JobItem(job_id=job_id, item_type=item_type, status="PENDING")
+        item = JobItem(job_id=job_id, item_type=item_type, status=JobStatus.PENDING)
         session.add(item)
         items.append(item)
     session.flush()
@@ -60,16 +61,16 @@ def cancel_job(job_id: str, session: Session) -> Job | None:
     job = session.get(Job, job_id)
     if job is None:
         return None
-    if job.status in ("PENDING", "RUNNING"):
-        job.status = "CANCELLED"
+    if job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+        job.status = JobStatus.CANCELLED
         job.finished_at = _now()
         job.message = "Job cancelled by user"
         session.add(job)
 
         items = get_job_items(job_id, session)
         for item in items:
-            if item.status in ("PENDING", "RUNNING"):
-                item.status = "CANCELLED"
+            if item.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                item.status = JobStatus.CANCELLED
                 item.message = "Cancelled"
                 session.add(item)
 
@@ -83,11 +84,11 @@ def run_stub_analysis_job(job_id: str, session: Session) -> Job:
     if job is None:
         raise ValueError("Job not found")
 
-    if job.status == "CANCELLED":
+    if job.status == JobStatus.CANCELLED:
         return job
 
     now = _now()
-    job.status = "RUNNING"
+    job.status = JobStatus.RUNNING
     job.started_at = now
     job.message = "Analysis started"
     session.add(job)
@@ -95,14 +96,14 @@ def run_stub_analysis_job(job_id: str, session: Session) -> Job:
 
     items = get_job_items(job_id, session)
     for i, item in enumerate(items):
-        if job.status == "CANCELLED":
+        if job.status == JobStatus.CANCELLED:
             return job
-        item.status = "RUNNING"
+        item.status = JobStatus.RUNNING
         session.add(item)
         session.flush()
 
         # Stub: immediately succeed
-        item.status = "SUCCEEDED"
+        item.status = JobStatus.SUCCEEDED
         item.progress_current = 1
         item.progress_total = 1
         item.message = f"Stub: {item.item_type} completed"
@@ -111,7 +112,7 @@ def run_stub_analysis_job(job_id: str, session: Session) -> Job:
 
         job.progress_current = i + 1
 
-    job.status = "SUCCEEDED"
+    job.status = JobStatus.SUCCEEDED
     job.finished_at = _now()
     job.message = "Analysis complete (stub)"
     session.add(job)

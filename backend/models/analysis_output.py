@@ -4,14 +4,9 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
-OUTPUT_TYPES = [
-    "OVERVIEW",
-    "CHARACTER_TABLE",
-    "RELATION_TABLE",
-    "EVENT_TABLE",
-    "CAUSALITY_CHAIN",
-    "THEME_ANALYSIS",
-]
+from models.enums import AnalysisType
+
+OUTPUT_TYPES = [t for t in AnalysisType]
 
 
 class AnalysisOutput(SQLModel, table=True):
@@ -23,8 +18,8 @@ class AnalysisOutput(SQLModel, table=True):
     output_type: str
     title: str
     content_json: str
-    source_chunk_ids: str  # JSON array string
-    evidence_quotes: str  # JSON array string
+    source_chunk_ids: str
+    evidence_quotes: str
     confidence: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
