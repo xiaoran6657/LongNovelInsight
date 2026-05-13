@@ -314,84 +314,70 @@ Delete a provider. Blocked if any Topic references it.
 
 ### `POST /api/model-providers/{provider_id}/test`
 
-Test the connection by sending a minimal chat completion request. (Not yet implemented.)
+Test the connection by sending a minimal chat completion request.
 
 **Response 200:**
 ```json
-{ "ok": true, "model": "deepseek-chat", "latency_ms": 450 }
+{
+  "success": true,
+  "provider_id": "uuid",
+  "model_name": "deepseek-chat",
+  "latency_ms": 450,
+  "message": "Connection successful"
+}
 ```
-**Errors:** `200` with `{ "ok": false, "error": "Connection refused" }` on failure.
+**Errors:** `404` provider not found. On connection failure, returns `200` with `"success": false` and an error message (API key sanitized).
 
 ---
 
-## Analysis
+## Analysis Outputs
 
-### `POST /api/topics/{topic_id}/analysis`
+### `POST /api/topics/{topic_id}/analysis/run`
 
-Trigger the full analysis pipeline (all 6 types) for the topic. Returns a job ID.
+Run structured analysis on the first N chunks using the bound LLM provider. Deletes previous outputs before running. v0.1.0 runs synchronously (all 6 types).
 
-**Query params:** `types` (optional, comma-separated) — limit to specific analysis types, e.g. `?types=overview,characters`.
-
-**Response 202:**
-```json
-{
-  "job_id": "uuid",
-  "analysis_ids": ["uuid1", "uuid2", ...],
-  "status": "pending"
-}
-```
-**Errors:** `404` topic not found, `409` document not parsed yet, `409` analysis already running, `409` no provider bound to topic.
-
-### `GET /api/topics/{topic_id}/analysis`
-
-List all analysis outputs for a topic.
+**Query params:** `limit_chunks` (int, default `5`) — max chunks to analyze.
 
 **Response 200:**
 ```json
 {
-  "analyses": [
+  "outputs": [
     {
       "id": "uuid",
-      "analysis_type": "characters",
-      "status": "done",
-      "result_count": 120,
-      "tokens_used": 4500,
-      "created_at": "..."
+      "topic_id": "uuid",
+      "job_id": null,
+      "output_type": "OVERVIEW",
+      "title": "Work Overview",
+      "content_json": { ... },
+      "source_chunk_ids": ["uuid"],
+      "evidence_quotes": ["..."],
+      "confidence": 0.85,
+      "created_at": "...",
+      "updated_at": "..."
     }
-  ]
+  ],
+  "count": 6
 }
 ```
+**Errors:** `404` topic not found, `409` no document / not parsed / no provider.
 
-### `GET /api/analysis/{analysis_id}`
+### `GET /api/topics/{topic_id}/analysis/outputs`
 
-Get the full analysis output JSON.
+List analysis outputs for a topic.
 
-**Response 200:** Full analysis output object (as stored in `data/analyses/{id}.json`).
-**Errors:** `404` not found.
+**Query params:** `output_type` (optional) — filter by type.
 
-### `DELETE /api/analysis/{analysis_id}`
+**Response 200:** `{ "outputs": [...], "count": N }`
 
-Delete a single analysis output (file + DB record).
+### `DELETE /api/topics/{topic_id}/analysis/outputs`
 
-**Response 200:** `{ "deleted": true }`
-**Errors:** `404` not found.
+Delete all analysis outputs for a topic.
+
+**Response 200:** `{ "deleted": true, "count": N }`
 
 ---
 
 ## Chat
-
-### `GET /api/topics/{topic_id}/chat/sessions`
-
-List chat sessions in a topic.
-
-**Response 200:**
-```json
-{
-  "sessions": [
-    { "id": "uuid", "name": "Chat 1", "message_count": 12, "created_at": "..." }
-  ]
-}
-```
 
 ### `POST /api/topics/{topic_id}/chat/sessions`
 
@@ -399,23 +385,21 @@ Create a new chat session.
 
 **Request:**
 ```json
-{ "name": "Character Discussion" }
+{ "title": "Character Discussion" }
 ```
 
-**Response 201:** Full session object.
+**Response 201:** Full session object `{ "id": "uuid", "topic_id": "uuid", "title": "...", "created_at": "...", "updated_at": "..." }`.
 **Errors:** `404` topic not found.
 
-### `DELETE /api/chat/sessions/{session_id}`
+### `GET /api/topics/{topic_id}/chat/sessions`
 
-Delete a chat session and all its messages.
+List chat sessions in a topic (most recent first).
 
-**Response 200:** `{ "deleted": true }`
+**Response 200:** `{ "sessions": [...] }`
 
 ### `GET /api/chat/sessions/{session_id}/messages`
 
-List messages in a session (paginated).
-
-**Query params:** `offset` (default 0), `limit` (default 50).
+List messages in a session (chronological order).
 
 **Response 200:**
 ```json
@@ -423,18 +407,30 @@ List messages in a session (paginated).
   "messages": [
     {
       "id": "uuid",
+      "session_id": "uuid",
       "role": "user",
       "content": "刘备的性格特点是什么？",
+      "evidence_json": null,
+      "uncertainty": null,
+      "created_at": "..."
+    },
+    {
+      "id": "uuid",
+      "role": "assistant",
+      "content": "刘备是一个仁德的领袖...",
+      "evidence_json": ["桃园结义..."],
+      "uncertainty": null,
       "created_at": "..."
     }
   ],
-  "total": 24
+  "total": 2
 }
 ```
+**Errors:** `404` session not found.
 
 ### `POST /api/chat/sessions/{session_id}/messages`
 
-Send a message and get an assistant response. The backend retrieves relevant analysis outputs and source chunks to ground the answer.
+Send a message and get an evidence-grounded assistant response. The backend performs keyword retrieval from chunks and analysis outputs, then calls the LLM.
 
 **Request:**
 ```json
@@ -444,18 +440,23 @@ Send a message and get an assistant response. The backend retrieves relevant ana
 **Response 200:**
 ```json
 {
-  "message": {
-    "id": "uuid",
-    "role": "assistant",
-    "content": "刘备的性格特点包括...",
-    "referenced_chunk_ids": ["uuid1", "uuid2"],
-    "referenced_analysis_ids": ["uuid3"],
-    "tokens_used": 1200,
-    "created_at": "..."
-  }
+  "id": "uuid",
+  "session_id": "uuid",
+  "role": "assistant",
+  "content": "刘备是一个仁德的领袖...",
+  "evidence_json": ["..."],
+  "uncertainty": null,
+  "created_at": "..."
 }
 ```
-**Errors:** `404` session not found, `409` no provider bound to the session's topic, `422` empty content.
+**Errors:** `404` session not found, `409` no provider configured, `422` empty content.
+
+### `DELETE /api/chat/sessions/{session_id}`
+
+Delete a chat session and all its messages.
+
+**Response 200:** `{ "deleted": true }`
+**Errors:** `404` session not found.
 
 ---
 
@@ -486,36 +487,56 @@ Get storage usage overview.
 
 ---
 
-## Jobs
+## Analysis Jobs
 
-### `GET /api/jobs/{job_id}`
+### `POST /api/topics/{topic_id}/analysis/jobs`
 
-Get job status and progress.
+Create and run an analysis job. v0.1.0 runs a stub (no LLM calls).
+
+**Query params:** `job_type` (default `ANALYSIS_ALL`). Valid types: `ANALYSIS_OVERVIEW`, `ANALYSIS_CHARACTERS`, `ANALYSIS_RELATIONS`, `ANALYSIS_EVENTS`, `ANALYSIS_CAUSALITY`, `ANALYSIS_THEMES`, `ANALYSIS_ALL`.
+
+**Response 201:**
+```json
+{
+  "job": { "id": "uuid", "topic_id": "uuid", "job_type": "ANALYSIS_ALL", "status": "SUCCEEDED", "progress_current": 6, "progress_total": 6, "message": "Analysis complete (stub)", ... },
+  "items": [ { "id": "uuid", "job_id": "uuid", "item_type": "OVERVIEW", "status": "SUCCEEDED", ... }, ... ]
+}
+```
+**Errors:** `404` topic not found, `409` no document / not parsed, `422` invalid job_type.
+
+### `GET /api/topics/{topic_id}/analysis/jobs`
+
+List all analysis jobs for a topic (most recent first).
+
+**Response 200:** `{ "jobs": [...] }`
+
+### `GET /api/topics/{topic_id}/analysis/status`
+
+Get analysis status summary for a topic.
 
 **Response 200:**
 ```json
 {
-  "id": "uuid",
-  "job_type": "analysis",
-  "status": "running",
-  "progress": 0.5,
-  "progress_message": "Analyzing characters (3/6)...",
-  "created_at": "...",
-  "started_at": "...",
-  "completed_at": null
+  "topic_id": "uuid",
+  "has_jobs": true,
+  "latest_job": { ... },
+  "analysis_types_completed": ["CHARACTERS", "OVERVIEW", ...]
 }
 ```
 
-### `GET /api/jobs?topic_id={topic_id}`
+### `GET /api/analysis/jobs/{job_id}`
 
-List jobs for a topic (most recent first).
+Get a single job with its items.
 
-**Response 200:**
-```json
-{
-  "jobs": [ { "id": "uuid", "job_type": "parse", "status": "done", ... } ]
-}
-```
+**Response 200:** `{ "job": {...}, "items": [...] }`
+**Errors:** `404` not found.
+
+### `POST /api/analysis/jobs/{job_id}/cancel`
+
+Cancel a pending or running job. Sets status to CANCELLED for the job and all items.
+
+**Response 200:** `{ "job": {...}, "items": [...] }`
+**Errors:** `404` not found.
 
 ---
 

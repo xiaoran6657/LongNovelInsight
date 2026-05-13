@@ -218,30 +218,49 @@ RULES:
 
 ## LLM Client Wrapper
 
-All LLM calls go through a single `llm_client.py` module:
+All LLM calls go through a single `llm_client.py` module (`backend/services/llm_client.py`):
 
-- **Endpoint**: `{provider.base_url}/v1/chat/completions` (configurable).
-- **Request format**: OpenAI-compatible chat completions.
-- **Retry logic**: 2 retries on network/timeout errors. 1 retry on JSON parse failure.
-- **Timeout**: 120 seconds per request.
-- **Token counting**: Uses `tiktoken` with the model's encoding (or estimates via character ratio for unknown models).
+- **Class**: `OpenAICompatibleLLMClient(base_url, api_key, timeout=120.0, max_retries=2)`
+- **Endpoint**: `{provider.base_url}/chat/completions` — the base_url should already include `/v1` if needed.
+- **Request format**: OpenAI-compatible chat completions. Headers: `Authorization: Bearer {api_key}`, `Content-Type: application/json`.
+- **Retry logic**: 2 retries on network/timeout errors and JSON parse failures, with 1s/2s backoff.
+- **Timeout**: 120 seconds per request (configurable).
+- **Sync only**: v0.1.0 uses sync `httpx.Client`. No async needed.
+- **No streaming**: All calls wait for the full response.
+- **API key safety**: The client never logs the raw API key. The `provider_test_service` sanitizes error messages via `mask_api_key()`.
+- **Tests**: All tests mock `httpx.post` via `monkeypatch`. No real external API calls in CI.
 
-## Pipeline Orchestration
+## Pipeline Orchestration (v0.1.0)
 
-```
-User clicks "Start Analysis"
-  → POST /api/topics/{id}/analysis
-  → Creates Job (status=pending)
-  → Background thread:
-      1. Load parsed chunks from disk
-      2. For each of 6 analysis types:
-         a. Update job progress (e.g., "Analyzing characters (3/6)...")
-         b. Build prompt with relevant chunks
-         c. Call LLM
-         d. Parse & validate JSON response
-         e. Save to data/analyses/{id}.json + SQLite
-         f. On failure: mark analysis as failed, continue to next type
-      3. Mark job as done
-  → Frontend polls GET /api/jobs/{id} every 2s
-  → On done: frontend reloads analysis list
-```
+v0.1.0 runs analysis synchronously via `POST /api/topics/{topic_id}/analysis/run`:
+
+1. Delete previous analysis outputs for the topic.
+2. Select provider: prefer `topic.provider_id`, fall back to `is_default=true`.
+3. Load the first `limit_chunks` (default 5) from the database ordered by chapter/chunk index.
+4. For each of 6 analysis types:
+   a. Load the corresponding prompt template from `backend/prompts/`.
+   b. Build system + user messages with chunk context.
+   c. Call LLM via `OpenAICompatibleLLMClient.chat()` with `response_format={"type":"json_object"}`.
+   d. Parse JSON response, extract evidence_quotes, source_chunk_ids, confidence.
+   e. Save `AnalysisOutput` row to SQLite.
+   f. On failure (LLM error, JSON parse error): log and continue to next type.
+5. Return all generated outputs.
+
+Each output is stored in the `analysis_output` table with:
+- `content_json` — the full LLM response as JSON
+- `source_chunk_ids` — array of chunk IDs used as sources
+- `evidence_quotes` — direct quotes extracted from the LLM response
+- `confidence` — overall confidence score
+
+## Evidence-Based Chat (v0.1.0)
+
+The chat flow uses keyword retrieval to ground LLM answers in source material:
+
+1. User sends a message via `POST /api/chat/sessions/{session_id}/messages`.
+2. `retrieval_service.build_evidence_context()` performs keyword-based search:
+   - **Chunks**: substring matching, Chinese character overlap, word-level overlap — scored and ranked.
+   - **Analysis outputs**: content and title matching against the query.
+3. The top-k chunk excerpts and analysis excerpts are assembled into an evidence context.
+4. The LLM receives a system prompt instructing it to answer based only on evidence, outputting JSON with `answer`, `evidence`, and `uncertainty` fields.
+5. The assistant message is saved with `evidence_json` and `uncertainty` preserved.
+6. No vector embeddings are used — keyword retrieval is sufficient for v0.1.0.

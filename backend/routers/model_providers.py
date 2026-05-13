@@ -130,6 +130,17 @@ def update_provider(
     return _to_read(provider)
 
 
+@router.post("/{provider_id}/test")
+def test_provider(provider_id: str, session: Session = Depends(get_session)) -> dict:
+    provider = session.get(ModelProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    from services.provider_test_service import test_provider as _test
+
+    return _test(provider_id, session)
+
+
 @router.delete("/{provider_id}")
 def delete_provider(provider_id: str, session: Session = Depends(get_session)) -> dict:
     provider = session.get(ModelProvider, provider_id)

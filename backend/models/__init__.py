@@ -1,9 +1,17 @@
+from .analysis_output import AnalysisOutput as AnalysisOutput
+from .analysis_output import AnalysisOutputRead as AnalysisOutputRead
 from .chapter import Chapter as Chapter
 from .chapter import ChapterRead as ChapterRead
+from .chat import ChatMessage as ChatMessage
+from .chat import ChatSession as ChatSession
 from .chunk import Chunk as Chunk
 from .chunk import ChunkRead as ChunkRead
 from .document import Document as Document
 from .document import DocumentRead as DocumentRead
+from .job import Job as Job
+from .job import JobRead as JobRead
+from .job_item import JobItem as JobItem
+from .job_item import JobItemRead as JobItemRead
 from .model_provider import ModelProvider as ModelProvider
 from .model_provider import ModelProviderCreate as ModelProviderCreate
 from .model_provider import ModelProviderRead as ModelProviderRead
