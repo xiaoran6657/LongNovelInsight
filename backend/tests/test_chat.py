@@ -338,3 +338,88 @@ class TestChat:
                     json={"content": "Safe question?"},
                 )
                 assert resp.status_code == 200
+
+
+# ── Fix 014: Chat history & malformed JSON ──
+
+
+def test_chat_history_included_in_llm_messages(client):
+    """send_user_message includes recent history in the LLM call."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "History Test"},
+        )
+        session_id = resp.json()["id"]
+
+        # Send first message
+        with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+            c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "刘备是谁？"},
+            )
+
+        # Send second message — capture the messages passed to LLM
+        captured_messages = []
+
+        def capture_chat(messages, model, temperature, max_tokens, response_format):
+            captured_messages.extend(messages)
+            from services.llm_client import LLMResponse
+
+            return LLMResponse(
+                content='{"answer":"OK","evidence":[],"uncertainty":null}',
+                model="test",
+                usage={},
+            )
+
+        with patch(CHAT_PATCH_PATH, side_effect=capture_chat):
+            c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "他做了什么？"},
+            )
+
+        # Expect at least system + previous user + previous assistant + current user
+        assert len(captured_messages) >= 3
+        roles = [m.role for m in captured_messages]
+        assert "system" in roles
+        assert roles.count("user") >= 1
+        assert roles.count("assistant") >= 1
+
+
+def test_malformed_json_fields_dont_crash(client):
+    """Malformed but parseable JSON should not crash send_user_message."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Malformed Test"},
+        )
+        session_id = resp.json()["id"]
+
+        from services.llm_client import LLMResponse
+
+        def malformed(*args, **kwargs):
+            return LLMResponse(
+                content='{"answer":123,"evidence":"not-list","uncertainty":{"x":1}}',
+                model="test",
+                usage={},
+            )
+
+        with patch(CHAT_PATCH_PATH, side_effect=malformed):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "Test"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["role"] == "assistant"
+            # answer should be converted to string
+            assert isinstance(data["content"], str)
+            assert "123" in data["content"]
+            # evidence should be empty list (not a string)
+            assert data["evidence_json"] is None or data["evidence_json"] == []
+            # uncertainty should be converted to string
+            assert data["uncertainty"] is None or isinstance(data["uncertainty"], str)

@@ -53,7 +53,7 @@ def create_analysis_job(
     items = job_service.create_default_analysis_items(job.id, session)
     session.commit()
 
-    job = job_service.run_stub_analysis_job(job.id, session)
+    job = job_service.run_analysis_job(job.id, session)
     items = job_service.get_job_items(job.id, session)
 
     return {

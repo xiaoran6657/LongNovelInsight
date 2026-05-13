@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from models.enums import JobStatus
 from models.job import JOB_TYPES, Job
 from models.job_item import ITEM_TYPES, JobItem
+from services import analysis_service
 
 
 def _now() -> datetime:
@@ -79,7 +80,7 @@ def cancel_job(job_id: str, session: Session) -> Job | None:
     return job
 
 
-def run_stub_analysis_job(job_id: str, session: Session) -> Job:
+def run_analysis_job(job_id: str, session: Session) -> Job:
     job = session.get(Job, job_id)
     if job is None:
         raise ValueError("Job not found")
@@ -90,31 +91,71 @@ def run_stub_analysis_job(job_id: str, session: Session) -> Job:
     now = _now()
     job.status = JobStatus.RUNNING
     job.started_at = now
+
+    items = get_job_items(job_id, session)
+
+    # Parse jobs don't call LLM — just mark items succeeded immediately
+    if job.job_type == "parse":
+        job.message = "Parse job is synchronous; no LLM calls"
+        for i, item in enumerate(items):
+            item.status = JobStatus.SUCCEEDED
+            item.message = f"{item.item_type} stub"
+            session.add(item)
+            job.progress_current = i + 1
+        job.status = JobStatus.SUCCEEDED
+        job.finished_at = _now()
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
+
+    # Analysis job: run real analysis per item
     job.message = "Analysis started"
     session.add(job)
     session.flush()
 
-    items = get_job_items(job_id, session)
+    failed_count = 0
     for i, item in enumerate(items):
         if job.status == JobStatus.CANCELLED:
+            job.message = "Job was cancelled during execution"
+            session.add(job)
+            session.commit()
+            session.refresh(job)
             return job
+
         item.status = JobStatus.RUNNING
         session.add(item)
         session.flush()
 
-        # Stub: immediately succeed
-        item.status = JobStatus.SUCCEEDED
-        item.progress_current = 1
-        item.progress_total = 1
-        item.message = f"Stub: {item.item_type} completed"
+        try:
+            analysis_service.run_single_analysis_output(
+                topic_id=job.topic_id,
+                output_type=item.item_type,
+                session=session,
+                limit_chunks=5,
+            )
+            item.status = JobStatus.SUCCEEDED
+            item.message = f"{item.item_type} completed"
+        except Exception as e:
+            item.status = JobStatus.FAILED
+            safe_msg = str(e)
+            item.message = safe_msg[:500]
+            item.error_message = safe_msg[:1000]
+            failed_count += 1
+
         session.add(item)
         session.flush()
-
         job.progress_current = i + 1
+        session.add(job)
 
-    job.status = JobStatus.SUCCEEDED
+    if failed_count == 0:
+        job.status = JobStatus.SUCCEEDED
+        job.message = "Analysis complete"
+    else:
+        job.status = JobStatus.FAILED
+        job.message = f"Analysis complete with {failed_count} failed item(s)"
+
     job.finished_at = _now()
-    job.message = "Analysis complete (stub)"
     session.add(job)
     session.commit()
     session.refresh(job)

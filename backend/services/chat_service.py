@@ -18,10 +18,15 @@ CHAT_SYSTEM_PROMPT = (
     "1. Base your answer on the evidence chunks and analysis outputs provided.\n"
     "2. If evidence is insufficient, state that clearly in the uncertainty field.\n"
     "3. Do NOT fabricate information not present in the evidence.\n"
-    "4. Reference specific chunks or analysis outputs when possible.\n\n"
+    "4. Reference specific chunks or analysis outputs when possible.\n"
+    "5. Conversation history may be used only to resolve references such "
+    'as "he", "she", "this event"; factual claims must still be grounded '
+    "in the evidence context.\n\n"
     "Your response MUST be valid JSON:\n"
     '{"answer": "string", "evidence": ["string"], "uncertainty": "string or null"}'
 )
+
+HISTORY_MESSAGE_LIMIT = 6
 
 
 def create_chat_session(topic_id: str, title: str, session: Session) -> ChatSession:
@@ -81,13 +86,59 @@ def _select_provider(topic: Topic, session: Session) -> ModelProvider:
     return provider
 
 
+def _build_recent_history_messages(
+    session_id: str, session: Session, limit: int = HISTORY_MESSAGE_LIMIT
+) -> list[LLMMessage]:
+    messages = list(
+        session.exec(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    messages.reverse()  # chronological order
+    result = []
+    for m in messages:
+        if m.role in ("user", "assistant"):
+            result.append(LLMMessage(role=m.role, content=m.content))
+    return result
+
+
+def _sanitize_answer(parsed: dict, fallback: str) -> str:
+    answer = parsed.get("answer", fallback)
+    if not isinstance(answer, str):
+        answer = str(answer)
+    return answer if answer.strip() else fallback
+
+
+def _sanitize_evidence(parsed: dict) -> list[str]:
+    evidence = parsed.get("evidence", [])
+    if not isinstance(evidence, list):
+        return []
+    return [str(e) for e in evidence if isinstance(e, str)]
+
+
+def _sanitize_uncertainty(parsed: dict) -> str | None:
+    uncertainty = parsed.get("uncertainty")
+    if uncertainty is None:
+        return None
+    if not isinstance(uncertainty, str):
+        return str(uncertainty)
+    return uncertainty
+
+
 def send_user_message(session_id: str, content: str, session: Session) -> ChatMessage:
     chat_session = session.get(ChatSession, session_id)
     if chat_session is None:
         raise ValueError("Chat session not found")
 
+    trimmed = content.strip()
+    if not trimmed:
+        raise ValueError("Message content is empty")
+
     # Save user message
-    user_msg = ChatMessage(session_id=session_id, role="user", content=content)
+    user_msg = ChatMessage(session_id=session_id, role="user", content=trimmed)
     session.add(user_msg)
     session.flush()
 
@@ -100,7 +151,7 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     provider = _select_provider(topic, session)
 
     # Retrieve evidence
-    evidence = build_evidence_context(topic.id, content, session)
+    evidence = build_evidence_context(topic.id, trimmed, session)
 
     # Build evidence text
     evidence_parts = []
@@ -115,12 +166,17 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         )
     evidence_text = "\n\n".join(evidence_parts) if evidence_parts else "(no evidence found)"
 
+    # Build recent history for multi-turn context
+    history_messages = _build_recent_history_messages(session_id, session)
+
     # Build messages for LLM
     system_msg = LLMMessage(role="system", content=CHAT_SYSTEM_PROMPT)
     context_msg = LLMMessage(
         role="user",
-        content=f"Evidence context:\n{evidence_text}\n\nUser question: {content}",
+        content=f"Evidence context:\n{evidence_text}\n\nCurrent user question: {trimmed}",
     )
+
+    messages = [system_msg] + history_messages + [context_msg]
 
     client = OpenAICompatibleLLMClient(
         base_url=provider.base_url,
@@ -129,7 +185,7 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
 
     try:
         response = client.chat(
-            messages=[system_msg, context_msg],
+            messages=messages,
             model=provider.model_name,
             temperature=provider.temperature,
             max_tokens=provider.max_output_tokens,
@@ -168,15 +224,15 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         session.refresh(assistant_msg)
         return assistant_msg
 
-    answer = parsed.get("answer", response.content)
-    evidence_list = parsed.get("evidence", [])
-    uncertainty = parsed.get("uncertainty")
+    answer = _sanitize_answer(parsed, response.content)
+    evidence_list = _sanitize_evidence(parsed)
+    uncertainty = _sanitize_uncertainty(parsed)
 
     assistant_msg = ChatMessage(
         session_id=session_id,
         role="assistant",
         content=answer,
-        evidence_json=json.dumps(evidence_list, ensure_ascii=False) if evidence_list else None,
+        evidence_json=(json.dumps(evidence_list, ensure_ascii=False) if evidence_list else None),
         uncertainty=uncertainty,
     )
     session.add(assistant_msg)

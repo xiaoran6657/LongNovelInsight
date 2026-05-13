@@ -4,13 +4,20 @@ import config
 
 
 def _data_dir() -> Path:
-    return config.DATA_DIR
+    return config.DATA_DIR.resolve()
+
+
+def _is_safe(path: Path) -> None:
+    """Raise if `path` is outside the data directory."""
+    try:
+        path.resolve().relative_to(_data_dir())
+    except ValueError:
+        raise ValueError("Path traversal detected")
 
 
 def get_topic_dir(topic_id: str) -> Path:
     p = (_data_dir() / "topics" / topic_id).resolve()
-    if not str(p).startswith(str(_data_dir().resolve())):
-        raise ValueError("Path traversal detected")
+    _is_safe(p)
     return p
 
 
@@ -48,8 +55,7 @@ def compute_data_dir_size() -> int:
 
 def safe_delete_file(path: Path) -> bool:
     target = path.resolve()
-    if not str(target).startswith(str(_data_dir().resolve())):
-        raise ValueError("Path traversal detected")
+    _is_safe(target)
     if target.exists() and target.is_file():
         target.unlink()
         return True
@@ -58,10 +64,9 @@ def safe_delete_file(path: Path) -> bool:
 
 def safe_delete_empty_dirs(path: Path) -> None:
     target = path.resolve()
-    if not str(target).startswith(str(_data_dir().resolve())):
-        raise ValueError("Path traversal detected")
+    _is_safe(target)
     if target.exists() and target.is_dir() and not any(target.iterdir()):
         target.rmdir()
         parent = target.parent
-        if parent != _data_dir().resolve() and parent.exists() and not any(parent.iterdir()):
+        if parent != _data_dir() and parent.exists() and not any(parent.iterdir()):
             parent.rmdir()

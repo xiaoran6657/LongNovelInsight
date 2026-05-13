@@ -206,3 +206,98 @@ def _mock_retrieval_analysis(messages, model, temperature, max_tokens, response_
         model="test",
         usage={},
     )
+
+
+# ── Fix 014: Retrieval quality ──
+
+
+def test_empty_query_returns_empty(client):
+    with client as c:
+        resp = c.post("/api/topics", json={"name": "EmptyQ"})
+        topic_id = resp.json()["id"]
+
+        from io import BytesIO
+
+        c.post(
+            f"/api/topics/{topic_id}/documents/upload",
+            files={
+                "file": (
+                    "test.txt",
+                    BytesIO("刘备与关羽张飞在桃园结义。\n".encode("utf-8")),
+                    "text/plain",
+                )
+            },
+        )
+        c.post(f"/api/topics/{topic_id}/parse")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        results = retrieval_service.retrieve_chunks(topic_id, "", session)
+        assert results == []
+
+        results = retrieval_service.retrieve_chunks(topic_id, "   ", session)
+        assert results == []
+
+
+def test_excerpt_contains_match(client):
+    with client as c:
+        resp = c.post("/api/topics", json={"name": "ExcerptT"})
+        topic_id = resp.json()["id"]
+
+        from io import BytesIO
+
+        # Put the keyword in the middle with long surrounding text (>500 chars)
+        text = "前文很长。" * 80 + "这里出现了齐天大圣。\n" + "后文也很长。" * 80
+        c.post(
+            f"/api/topics/{topic_id}/documents/upload",
+            files={"file": ("test.txt", BytesIO(text.encode("utf-8")), "text/plain")},
+        )
+        c.post(f"/api/topics/{topic_id}/parse")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        results = retrieval_service.retrieve_chunks(topic_id, "齐天大圣", session)
+        assert len(results) > 0
+        excerpt = results[0]["text_excerpt"]
+        assert "齐天大圣" in excerpt
+        # Excerpt should start with "..." (not from the beginning of text)
+        assert excerpt.startswith("...")
+
+
+def test_chinese_stopwords_dont_score(client):
+    with client as c:
+        resp = c.post("/api/topics", json={"name": "StopT"})
+        topic_id = resp.json()["id"]
+
+        from io import BytesIO
+
+        c.post(
+            f"/api/topics/{topic_id}/documents/upload",
+            files={
+                "file": (
+                    "test.txt",
+                    BytesIO("刘备与关羽张飞在桃园结义。\n".encode("utf-8")),
+                    "text/plain",
+                )
+            },
+        )
+        c.post(f"/api/topics/{topic_id}/parse")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        # Query only stopwords
+        results = retrieval_service.retrieve_chunks(topic_id, "的了是在", session)
+        # Stopwords alone should yield 0 score
+        assert all(r["score"] == 0 for r in results) or len(results) == 0

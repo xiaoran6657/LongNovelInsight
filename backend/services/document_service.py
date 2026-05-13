@@ -2,7 +2,13 @@ from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
 import config
+from models.analysis_output import AnalysisOutput
+from models.chapter import Chapter
+from models.chat import ChatMessage, ChatSession
+from models.chunk import Chunk
 from models.document import Document, DocumentRead
+from models.job import Job
+from models.job_item import JobItem
 from models.topic import Topic
 from services import storage
 
@@ -35,6 +41,37 @@ def _get_doc_by_topic(topic_id: str, session: Session) -> Document | None:
     return session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
 
+def _delete_document_derived_data(topic_id: str, session: Session) -> None:
+    # Chat messages -> sessions
+    sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
+    for s in sessions:
+        messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == s.id)).all()
+        for m in messages:
+            session.delete(m)
+        session.delete(s)
+
+    # Analysis outputs
+    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+    for o in outputs:
+        session.delete(o)
+
+    # Jobs -> job_items
+    jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()
+    for j in jobs:
+        items = session.exec(select(JobItem).where(JobItem.job_id == j.id)).all()
+        for ji in items:
+            session.delete(ji)
+        session.delete(j)
+
+    # Chunks -> chapters
+    chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
+    for c in chunks:
+        session.delete(c)
+    chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
+    for ch in chapters:
+        session.delete(ch)
+
+
 def upload_document(topic_id: str, file: UploadFile, session: Session) -> DocumentRead:
     topic = session.get(Topic, topic_id)
     if topic is None:
@@ -56,9 +93,18 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
 
     encoding, text = _detect_encoding(content)
 
+    stripped = text.strip()
+    if not stripped:
+        raise HTTPException(status_code=422, detail="Document contains no meaningful text content")
+
     source_dir = storage.ensure_topic_dirs(topic_id)
     dest_path = source_dir / "original.txt"
     dest_path.write_text(text, encoding="utf-8")
+
+    try:
+        rel_path = str(dest_path.resolve().relative_to(config.DATA_DIR.resolve()))
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Failed to compute storage path")
 
     doc = Document(
         topic_id=topic_id,
@@ -67,7 +113,7 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
         char_count=len(text),
         content_type=file.content_type,
         encoding=encoding,
-        storage_path=str(dest_path.relative_to(config.DATA_DIR)),
+        storage_path=rel_path,
     )
     session.add(doc)
 
@@ -99,6 +145,9 @@ def delete_current_document(topic_id: str, session: Session) -> dict:
     doc = _get_doc_by_topic(topic_id, session)
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
+
+    # Delete derived data first (cascade)
+    _delete_document_derived_data(topic_id, session)
 
     storage.safe_delete_file(config.DATA_DIR / doc.storage_path)
     storage.safe_delete_empty_dirs(storage.get_source_dir(topic_id))

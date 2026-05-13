@@ -1,5 +1,7 @@
 import io
 
+import pytest
+
 
 def _create_topic(client, name="Doc Test"):
     r = client.post("/api/topics", json={"name": name})
@@ -220,3 +222,117 @@ def test_char_count_records_decoded(client):
     r = _upload(client, tid, content=text.encode("gbk"))
     assert r.status_code == 201
     assert r.json()["char_count"] == len(text)
+
+
+# ── Empty / whitespace rejection ──
+
+
+def test_upload_empty_txt_returns_422(client):
+    tid = _create_topic(client)
+    r = _upload(client, tid, content=b"")
+    assert r.status_code == 422
+    assert "no meaningful text" in r.json()["detail"].lower()
+
+
+def test_upload_whitespace_only_txt_returns_422(client):
+    tid = _create_topic(client)
+    r = _upload(client, tid, content="   \n  \t  \n  ".encode("utf-8"))
+    assert r.status_code == 422
+    assert "no meaningful text" in r.json()["detail"].lower()
+
+
+# ── Document delete cascade ──
+
+
+def test_delete_document_cascades_derived_data(client):
+    """Deleting a document removes chapters/chunks/jobs/chat/analysis."""
+    tid = _create_topic(client, name="DocCascade")
+
+    # Upload
+    novel = "第一章 风起\n张三走进长安城。\n第二章 雨落\n李四拔剑。"
+    _upload(client, tid, content=novel.encode("utf-8"))
+
+    # Parse
+    client.post(f"/api/topics/{tid}/parse")
+
+    # Create chat session
+    r = client.post(f"/api/topics/{tid}/chat/sessions", json={"title": "Test Chat"})
+    session_id = r.json()["id"]
+
+    # Run analysis (stub job)
+    client.post(f"/api/topics/{tid}/analysis/jobs")
+
+    # Verify derived data exists
+    assert len(client.get(f"/api/topics/{tid}/chapters").json()["chapters"]) >= 1
+    assert len(client.get(f"/api/topics/{tid}/chunks").json()["chunks"]) >= 1
+    assert len(client.get(f"/api/topics/{tid}/analysis/jobs").json()["jobs"]) >= 1
+    assert len(client.get(f"/api/topics/{tid}/chat/sessions").json()["sessions"]) >= 1
+    assert client.get(f"/api/chat/sessions/{session_id}/messages").status_code == 200
+
+    # Delete document
+    r = client.delete(f"/api/topics/{tid}/documents/current")
+    assert r.status_code == 200
+    assert r.json()["deleted"] is True
+
+    # Verify derived data cleaned up
+    assert len(client.get(f"/api/topics/{tid}/chapters").json()["chapters"]) == 0
+    assert len(client.get(f"/api/topics/{tid}/chunks").json()["chunks"]) == 0
+    assert len(client.get(f"/api/topics/{tid}/analysis/jobs").json()["jobs"]) == 0
+    assert len(client.get(f"/api/topics/{tid}/chat/sessions").json()["sessions"]) == 0
+
+    # Document gone
+    r = client.get(f"/api/topics/{tid}/documents/current")
+    assert r.status_code == 404
+
+    # Topic still exists
+    r = client.get(f"/api/topics/{tid}")
+    assert r.status_code == 200
+    assert r.json()["storage_bytes"] == 0
+    assert r.json()["document"] is None
+
+
+def test_reupload_after_delete_works(client):
+    """After deleting a document, re-upload should succeed."""
+    tid = _create_topic(client)
+    _upload(client, tid, content="第一章\n".encode("utf-8"))
+    client.delete(f"/api/topics/{tid}/documents/current")
+
+    # Re-upload should work
+    r = _upload(client, tid, content="新内容\n".encode("utf-8"))
+    assert r.status_code == 201
+    assert r.json()["status"] == "uploaded"
+
+    # Verify there's exactly one document
+    r = client.get(f"/api/topics/{tid}/documents/current")
+    assert r.status_code == 200
+    assert r.json()["original_filename"] == "test.txt"
+
+
+# ── Path safety ──
+
+
+def test_safe_delete_blocks_path_traversal(monkeypatch, tmp_path):
+    """safe_delete_file must refuse to delete files outside DATA_DIR."""
+    from services import storage
+
+    inside_dir = tmp_path / "data"
+    inside_dir.mkdir()
+    monkeypatch.setattr(storage, "_data_dir", lambda: inside_dir.resolve())
+
+    # File inside data dir — should work
+    safe_file = inside_dir / "topics" / "t1" / "source" / "original.txt"
+    safe_file.parent.mkdir(parents=True, exist_ok=True)
+    safe_file.write_text("hello", encoding="utf-8")
+
+    result = storage.safe_delete_file(safe_file)
+    assert result is True
+    assert not safe_file.exists()
+
+    # File outside data dir — must raise
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("danger", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Path traversal"):
+        storage.safe_delete_file(outside_file)
+
+    assert outside_file.exists()
