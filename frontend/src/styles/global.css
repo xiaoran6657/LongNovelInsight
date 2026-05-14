@@ -272,3 +272,124 @@ button:disabled {
   background: #fff5f5;
   color: #e74c3c;
 }
+
+/* ── Topic form ── */
+
+.topic-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+.topic-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+}
+
+.topic-form-grid input[type="text"],
+.topic-form-grid select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.topic-form-grid input:focus,
+.topic-form-grid select:focus {
+  outline: none;
+  border-color: #4fc3f7;
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.2);
+}
+
+/* ── Select ── */
+
+select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  background: #fff;
+}
+
+select:focus {
+  outline: none;
+  border-color: #4fc3f7;
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.2);
+}
+
+/* ── Links ── */
+
+a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ── Status badges ── */
+
+.status-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1em 0.45em;
+  border-radius: 3px;
+  vertical-align: middle;
+  background: #e0e0e0;
+  color: #555;
+}
+
+.status-created {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.status-uploaded {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.status-parsed,
+.status-parsing {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.status-ready {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-analyzing,
+.status-running {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.status-failed {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.status-succeeded {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-pending {
+  background: #f5f5f5;
+  color: #757575;
+}
+
+.status-cancelled {
+  background: #eceff1;
+  color: #546e7a;
+}
