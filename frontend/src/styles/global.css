@@ -63,3 +63,23 @@ body {
   color: #999;
   font-size: 0.85rem;
 }
+
+.card-error {
+  border-color: #e74c3c;
+  background: #fff5f5;
+}
+
+.status-ok {
+  color: #27ae60;
+  font-weight: 600;
+}
+
+.status-fail {
+  color: #e74c3c;
+  font-weight: 600;
+}
+
+.text-dim {
+  color: #888;
+  font-size: 0.9rem;
+}
