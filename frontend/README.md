@@ -42,37 +42,23 @@ frontend/
 ├── .env.example              # VITE_API_BASE_URL template
 └── src/
     ├── vite-env.d.ts         # ImportMetaEnv type definitions
-    ├── main.tsx              # React root render (StrictMode)
-    ├── App.tsx               # Root component
+    ├── main.tsx              # React root render (QueryClient + Router)
+    ├── router.tsx            # React Router route definitions ✅
     ├── api/                  # API client and endpoint modules
-    │   ├── client.ts         # apiRequest<T>() with fetch
-    │   ├── types.ts          # Shared TypeScript types
-    │   ├── health.ts         # GET /api/health
-    │   ├── providers.ts      # Provider CRUD + test
-    │   ├── topics.ts         # Topic CRUD + provider binding
-    │   ├── documents.ts      # Document upload / get / delete
-    │   ├── parse.ts          # Parse, chapters, chunks, storage
-    │   ├── analysis.ts       # Analysis run, outputs, jobs
-    │   └── chat.ts           # Chat sessions, messages
+    │   ├── client.ts         # apiRequest<T>() with fetch ✅
+    │   ├── types.ts          # Shared TypeScript types ✅
+    │   └── health.ts         # GET /api/health ✅
     ├── components/           # Shared UI components
-    │   ├── HealthPanel.tsx
-    │   ├── LoadingBlock.tsx
-    │   ├── ErrorBlock.tsx
-    │   ├── EmptyState.tsx
-    │   ├── ConfirmButton.tsx
-    │   └── StatusBadge.tsx
+    │   └── HealthPanel.tsx   # Backend health status ✅
     ├── pages/                # Route page components
-    │   ├── DashboardPage.tsx
-    │   ├── ProvidersPage.tsx
-    │   ├── TopicsPage.tsx
-    │   ├── TopicDetailPage.tsx
-    │   ├── TopicChatPage.tsx
-    │   └── NotFoundPage.tsx
+    │   ├── DashboardPage.tsx # Health + workflow overview ✅
+    │   ├── ProvidersPage.tsx # Placeholder (Task 004)
+    │   ├── TopicsPage.tsx    # Placeholder (Task 005)
+    │   ├── TopicDetailPage.tsx # Placeholder (Task 006)
+    │   ├── TopicChatPage.tsx # Placeholder (Task 008)
+    │   └── NotFoundPage.tsx  # 404 ✅
     ├── layouts/              # Layout components
-    │   └── AppLayout.tsx     # Header, nav, main content area
-    ├── router.tsx            # React Router route definitions
-    ├── utils/                # Formatting helpers
-    │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
+    │   └── AppLayout.tsx     # Header, nav, main, footer ✅
     └── styles/
         └── global.css        # Global styles
 ```
