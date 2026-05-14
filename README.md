@@ -48,6 +48,32 @@ LongNovelInsight is a local tool. You provide your own LLM API key (DeepSeek or 
 | Quality  | pytest + Ruff                       |
 | Storage  | Local `data/` directory + SQLite    |
 
+## Quick Start
+
+```bash
+# Terminal 1 — Backend (Python + FastAPI)
+cd backend
+conda activate LongNovelInsight
+pip install -e ".[dev]"
+python -m uvicorn main:app --reload --port 8000
+# → http://localhost:8000/api/health
+
+# Terminal 2 — Frontend (React + TypeScript + Vite)
+cd frontend
+npm install
+npm run dev
+# → http://localhost:5173
+```
+
+Set your API key before running real LLM analysis or chat:
+
+```bash
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY = "sk-your-key-here"
+# Linux / macOS / Git Bash
+export DEEPSEEK_API_KEY="sk-your-key-here"
+```
+
 ## Development
 
 See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for the development process with Claude Code.

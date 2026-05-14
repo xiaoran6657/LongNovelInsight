@@ -13,6 +13,8 @@ node_modules/
 dist/
 build/
 .vite/
+frontend/.env.local
+frontend/.env.*.local
 
 # Local app data
 data/
