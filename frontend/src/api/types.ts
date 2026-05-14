@@ -34,6 +34,18 @@ export interface ModelProviderCreate {
   is_default?: boolean;
 }
 
+export interface ModelProviderUpdate {
+  name?: string;
+  provider_type?: string;
+  base_url?: string;
+  api_key?: string;
+  model_name?: string;
+  context_window?: number;
+  max_output_tokens?: number;
+  temperature?: number;
+  is_default?: boolean;
+}
+
 export interface ProviderTestResult {
   success: boolean;
   provider_id: string;

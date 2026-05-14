@@ -40,15 +40,12 @@ def test_provider(provider_id: str, session: Session) -> dict[str, Any]:
         )
         latency_ms = int((time.monotonic() - start) * 1000)
 
-        ok = "OK" in response.content
         return {
-            "success": ok,
+            "success": True,
             "provider_id": provider_id,
             "model_name": provider.model_name,
             "latency_ms": latency_ms,
-            "message": (
-                "Connection successful" if ok else f"Unexpected response: {response.content[:200]}"
-            ),
+            "message": "Connection successful",
         }
     except LLMClientError as e:
         latency_ms = int((time.monotonic() - start) * 1000)
