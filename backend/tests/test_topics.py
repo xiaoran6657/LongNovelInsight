@@ -227,6 +227,54 @@ def test_delete_topic_cascades_data(client):
     assert resp.status_code == 404
 
 
+def test_bind_provider_to_topic(client):
+    """PUT /api/topics/{id}/provider binds a provider to a topic."""
+    # Create provider
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "BindP",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.example.com",
+            "api_key": "sk-key",
+            "model_name": "m",
+        },
+    )
+    provider_id = r.json()["id"]
+
+    # Create topic without provider
+    r = client.post("/api/topics", json={"name": "Unbound"})
+    topic_id = r.json()["id"]
+    assert r.json()["provider_id"] is None
+
+    # Bind provider
+    r = client.put(
+        f"/api/topics/{topic_id}/provider",
+        json={"provider_id": provider_id},
+    )
+    assert r.status_code == 200
+    assert r.json()["provider_id"] == provider_id
+
+
+def test_bind_provider_to_nonexistent_topic_404(client):
+    r = client.put(
+        "/api/topics/nonexistent/provider",
+        json={"provider_id": "some-id"},
+    )
+    assert r.status_code == 404
+
+
+def test_bind_nonexistent_provider_404(client):
+    r = client.post("/api/topics", json={"name": "T"})
+    topic_id = r.json()["id"]
+
+    r = client.put(
+        f"/api/topics/{topic_id}/provider",
+        json={"provider_id": "nonexistent-id"},
+    )
+    assert r.status_code == 404
+
+
 def _mock_topic_analysis(messages, model, temperature, max_tokens, response_format):
     from services.llm_client import LLMResponse
 

@@ -127,7 +127,7 @@ The file is normalized and saved as UTF-8 on the server.
   "updated_at": "..."
 }
 ```
-**Errors:** `404` topic not found, `400` not a `.txt` file, `400` unsupported encoding (UTF-8 only), `409` topic already has a document, `413` file exceeds size limit.
+**Errors:** `404` topic not found, `400` not a `.txt` file, `400` unsupported encoding (UTF-8 only), `409` topic already has a document, `413` file exceeds size limit, `422` empty or whitespace-only file.
 
 ### `GET /api/topics/{topic_id}/documents/current`
 
@@ -458,36 +458,9 @@ Delete a chat session and all its messages.
 
 ---
 
-## Storage
-
-### `GET /api/storage`
-
-Get storage usage overview.
-
-**Response 200:**
-```json
-{
-  "total_disk_usage_bytes": 5242880,
-  "database_size_bytes": 204800,
-  "data_dir_size_bytes": 5038080,
-  "topics": [
-    {
-      "topic_id": "uuid",
-      "topic_name": "Three Kingdoms",
-      "novel_size_bytes": 1048576,
-      "chunks_size_bytes": 2097152,
-      "analyses_size_bytes": 512000,
-      "total_bytes": 3657728
-    }
-  ]
-}
-```
-
----
-
 ## Analysis Jobs (internal / dev)
 
-> The analysis jobs API tracks background tasks. In v0.1.0, jobs run synchronously as stubs. This is an internal API; the frontend should prefer `POST /api/topics/{id}/analysis/run` for analysis.
+> The analysis jobs API tracks task execution. In v0.1.0, jobs run synchronously with real LLM calls (for `analysis` type) or as stubs (for `parse` type). This is an internal API; the frontend should prefer `POST /api/topics/{id}/analysis/run` for analysis.
 
 ### `POST /api/topics/{topic_id}/analysis/jobs`
 

@@ -50,6 +50,31 @@ def get_topic(topic_id: str, session: Session = Depends(get_session)) -> dict:
     return _enrich_topic(topic, session)
 
 
+@router.put("/{topic_id}/provider")
+def bind_provider(
+    topic_id: str,
+    body: dict,
+    session: Session = Depends(get_session),
+) -> dict:
+    topic = session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    provider_id = body.get("provider_id") if body else None
+    if not provider_id:
+        raise HTTPException(status_code=422, detail="provider_id is required")
+
+    provider = session.get(ModelProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    topic.provider_id = provider_id
+    session.add(topic)
+    session.commit()
+    session.refresh(topic)
+    return _enrich_topic(topic, session)
+
+
 @router.delete("/{topic_id}")
 def delete_topic(topic_id: str, session: Session = Depends(get_session)) -> dict:
     topic = session.get(Topic, topic_id)
