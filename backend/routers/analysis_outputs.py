@@ -107,7 +107,7 @@ def run_analysis_async(
     thread.start()
 
     return {
-        "job": JobRead.model_validate(job).model_dump(),
+        "job": JobRead.from_db(job).model_dump(),
         "items": [JobItemRead.model_validate(i).model_dump() for i in items],
     }
 

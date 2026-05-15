@@ -668,58 +668,201 @@ def run_analysis_async(
     job_id: str,
     limit_chunks: int = 5,
 ) -> None:
-    """Run structured analysis in a background thread. Updates job and items."""
+    """Run structured analysis with bounded parallelism. Workers call LLM; main thread writes DB."""
+    import json as _json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from datetime import datetime, timezone
 
     from db import engine
     from models.job import Job
     from models.job_item import JobItem
+    from services.analysis_worker import (
+        ANALYSIS_MAX_TOKENS_BY_TYPE,
+        AnalysisTypeResult,
+        run_one_analysis_type,
+    )
+    from services.provider_config_service import _resolve_effective
 
+    # ── Phase 1: Load data in main thread ──
     with Session(engine) as session:
-        try:
-            job = session.get(Job, job_id)
-            if job is None:
-                return
-            job.status = "running"
-            job.started_at = datetime.now(timezone.utc)
-            session.add(job)
-            session.commit()
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+        job.status = "running"
+        job.started_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
 
-            items = session.exec(select(JobItem).where(JobItem.job_id == job_id)).all()
+        items = session.exec(select(JobItem).where(JobItem.job_id == job_id)).all()
+        item_map = {it.item_type: it for it in items}
 
-            outputs = run_structured_analysis(topic_id, session, limit_chunks=limit_chunks)
+        # Load chunks text (same for all types)
+        chunks = session.exec(
+            select(Chunk)
+            .where(Chunk.topic_id == topic_id)
+            .order_by(Chunk.chapter_index, Chunk.chunk_index)
+            .limit(limit_chunks)
+        ).all()
+        chunks_text = "\n\n".join(
+            f"[chunk_id={c.id} chapter={c.chapter_index} chunk={c.chunk_index}]\n{c.text}"
+            for c in chunks
+        )
+        all_chunk_ids = [c.id for c in chunks]
 
-            completed_types = {o.output_type for o in outputs}
-            for item in items:
-                if item.item_type in completed_types:
-                    item.status = "succeeded"
-                else:
-                    item.status = "failed"
-                    item.error_message = "Not produced by analysis run"
-                session.add(item)
-
-            job.status = "succeeded"
+        # Resolve effective config
+        effective = _resolve_effective(session, topic_id)
+        if not effective.is_ready:
+            job.status = "failed"
+            job.error_message = f"Provider not ready: {effective.missing_fields}"
             job.finished_at = datetime.now(timezone.utc)
-            job.progress_current = len(completed_types)
-            job.progress_total = len(items)
+            session.add(job)
+            session.commit()
+            return
+
+        delete_analysis_outputs(topic_id, session)
+        session.commit()
+
+        # Collect data for workers (no ORM objects passed)
+        base_url = effective.base_url or ""
+        provider = (
+            session.get(ModelProvider, effective.provider_id)
+            if effective.provider_id
+            else None
+        )
+        api_key = provider.api_key if provider else ""
+        model_name = effective.model_name or ""
+        temperature = effective.temperature or 0.1
+        thinking_mode = effective.thinking_mode or "disabled"
+        reasoning_effort = effective.reasoning_effort
+        parallelism = effective.analysis_parallelism
+
+        types_to_run = [
+            t for t in ["overview", "characters", "relations", "events", "causality", "themes"]
+            if t in item_map
+        ]
+
+        metadata: dict = {
+            "parallelism": parallelism,
+            "model_name": model_name,
+            "base_url_host": base_url.split("/")[-1] if "/" in base_url else base_url,
+            "thinking_mode": thinking_mode,
+            "analysis_types": types_to_run,
+            "type_timings": {},
+            "usage_by_type": {},
+            "finish_reason_by_type": {},
+            "failed_types": [],
+        }
+
+    # ── Phase 2: Run workers in parallel ──
+    results: dict[str, AnalysisTypeResult] = {}
+    with ThreadPoolExecutor(max_workers=parallelism, thread_name_prefix="analysis") as executor:
+        future_map = {}
+        for output_type in types_to_run:
+            max_tok = effective.max_output_tokens or ANALYSIS_MAX_TOKENS_BY_TYPE.get(
+                output_type, 2048
+            )
+            future = executor.submit(
+                run_one_analysis_type,
+                topic_id=topic_id,
+                output_type=output_type,
+                chunks_text=chunks_text,
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                max_tokens=max_tok,
+                temperature=temperature,
+                thinking_mode=thinking_mode,
+                reasoning_effort=reasoning_effort,
+            )
+            future_map[future] = output_type
+
+        for future in as_completed(future_map):
+            output_type = future_map[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = AnalysisTypeResult(
+                    output_type=output_type,
+                    ok=False,
+                    error=str(e),
+                )
+            result.output_type = output_type
+            results[output_type] = result
+
+    # ── Phase 3: Write results in new session ──
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+
+        completed = 0
+        failed = 0
+        for output_type, result in results.items():
+            metadata["type_timings"][output_type] = round(result.duration_seconds, 2)
+            metadata["usage_by_type"][output_type] = result.usage or {}
+            metadata["finish_reason_by_type"][output_type] = result.finish_reason
+
+            item = item_map.get(output_type)
+            if result.ok and result.parsed_json is not None:
+                # Save output
+                parsed = result.parsed_json
+                evidence_quotes = _extract_evidence(parsed)
+                source_ids = _extract_source_ids(parsed, all_chunk_ids)
+                confidence = _extract_confidence(parsed)
+
+                title_map = {
+                    "overview": parsed.get("title", "Work Overview"),
+                    "characters": f"Characters ({len(parsed.get('characters', []))} found)",
+                    "relations": f"Relationships ({len(parsed.get('relationships', []))} found)",
+                    "events": f"Events ({len(parsed.get('events', []))} found)",
+                    "causality": f"Causal Chains ({len(parsed.get('causal_chains', []))} found)",
+                    "themes": f"Themes ({len(parsed.get('themes', []))} found)",
+                }
+                usage_data = result.usage or {}
+                output = AnalysisOutput(
+                    topic_id=topic_id,
+                    output_type=output_type,
+                    title=title_map.get(output_type, output_type),
+                    content_json=_json.dumps(parsed, ensure_ascii=False),
+                    source_chunk_ids=_json.dumps(source_ids),
+                    evidence_quotes=_json.dumps(evidence_quotes, ensure_ascii=False),
+                    confidence=confidence,
+                    prompt_tokens=usage_data.get("prompt_tokens", 0),
+                    completion_tokens=usage_data.get("completion_tokens", 0),
+                )
+                session.add(output)
+                completed += 1
+                if item:
+                    item.status = "succeeded"
+                    session.add(item)
+            else:
+                failed += 1
+                metadata["failed_types"].append({
+                    "output_type": output_type,
+                    "error": result.error or "Unknown error",
+                })
+                if item:
+                    item.status = "failed"
+                    item.error_message = (result.error or "Unknown error")[:300]
+                    session.add(item)
+
+            # Update job progress incrementally
+            job.progress_current = completed
+            job.progress_failed = failed
+            job.progress_total = len(types_to_run)
+            job.current_type = output_type
+            job.metadata_json = _json.dumps(metadata, ensure_ascii=False)
             session.add(job)
             session.commit()
 
-        except Exception as e:
-            try:
-                job = session.get(Job, job_id)
-                if job:
-                    job.status = "failed"
-                    job.error_message = str(e)[:500]
-                    job.finished_at = datetime.now(timezone.utc)
-                    session.add(job)
-
-                    items = session.exec(select(JobItem).where(JobItem.job_id == job_id)).all()
-                    for item in items:
-                        if item.status == "pending":
-                            item.status = "failed"
-                            item.error_message = str(e)[:300]
-                            session.add(item)
-                    session.commit()
-            except Exception:
-                logger.exception("Failed to update job %s after error", job_id)
+        # Final status
+        if failed == 0:
+            job.status = "succeeded"
+        elif completed > 0:
+            job.status = "partial_success"
+        else:
+            job.status = "failed"
+        job.finished_at = datetime.now(timezone.utc)
+        job.metadata_json = _json.dumps(metadata, ensure_ascii=False)
+        session.add(job)
+        session.commit()

@@ -45,6 +45,7 @@ class OpenAICompatibleLLMClient:
         temperature: float = 0.2,
         max_tokens: int = 8192,
         response_format: dict | None = None,
+        extra_body: dict | None = None,
     ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -59,6 +60,8 @@ class OpenAICompatibleLLMClient:
         }
         if response_format is not None:
             payload["response_format"] = response_format
+        if extra_body is not None:
+            payload.update(extra_body)
 
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):

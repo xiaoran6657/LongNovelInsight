@@ -21,6 +21,7 @@ class JobStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PARTIAL_SUCCESS = "partial_success"
 
 
 class JobItemStatus(StrEnum):

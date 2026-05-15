@@ -57,7 +57,7 @@ def create_analysis_job(
     items = job_service.get_job_items(job.id, session)
 
     return {
-        "job": JobRead.model_validate(job).model_dump(),
+        "job": JobRead.from_db(job).model_dump(),
         "items": [JobItemRead.model_validate(i).model_dump() for i in items],
     }
 
@@ -75,16 +75,34 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
     jobs = job_service.get_topic_jobs(topic_id, session)
 
     latest_job = jobs[0] if jobs else None
-    completed_types = set()
-    if latest_job and latest_job.status == JobStatus.SUCCEEDED:
+    completed_types: set[str] = set()
+    if latest_job:
         items = job_service.get_job_items(latest_job.id, session)
-        completed_types = {i.item_type for i in items if i.status == JobStatus.SUCCEEDED}
+        completed_types = {
+            i.item_type
+            for i in items
+            if i.status in (JobStatus.SUCCEEDED,)
+        }
+
+    # Output counts by type
+    from models.analysis_output import AnalysisOutput
+
+    outputs = session.exec(
+        select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
+    ).all()
+    output_counts: dict[str, int] = {}
+    for o in outputs:
+        output_counts[o.output_type] = output_counts.get(o.output_type, 0) + 1
 
     return {
         "topic_id": topic_id,
         "has_jobs": len(jobs) > 0,
-        "latest_job": JobRead.model_validate(latest_job).model_dump() if latest_job else None,
+        "has_outputs": len(outputs) > 0,
+        "latest_job": JobRead.from_db(latest_job).model_dump()
+        if latest_job
+        else None,
         "analysis_types_completed": sorted(completed_types),
+        "output_counts_by_type": output_counts,
     }
 
 
@@ -96,7 +114,7 @@ def get_job_detail(job_id: str, session: Session = Depends(get_session)) -> dict
 
     items = job_service.get_job_items(job_id, session)
     return {
-        "job": JobRead.model_validate(job).model_dump(),
+        "job": JobRead.from_db(job).model_dump(),
         "items": [JobItemRead.model_validate(i).model_dump() for i in items],
     }
 
@@ -109,6 +127,6 @@ def cancel_job(job_id: str, session: Session = Depends(get_session)) -> dict:
 
     items = job_service.get_job_items(job_id, session)
     return {
-        "job": JobRead.model_validate(job).model_dump(),
+        "job": JobRead.from_db(job).model_dump(),
         "items": [JobItemRead.model_validate(i).model_dump() for i in items],
     }
