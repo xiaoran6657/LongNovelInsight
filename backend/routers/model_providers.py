@@ -29,8 +29,7 @@ def _validate_create(body: ModelProviderCreate) -> None:
         raise HTTPException(status_code=422, detail="base_url must not be empty")
     if not body.api_key.strip():
         raise HTTPException(status_code=422, detail="api_key must not be empty")
-    if not body.model_name.strip():
-        raise HTTPException(status_code=422, detail="model_name must not be empty")
+    # model_name is optional — can be set later or overridden per-topic
 
 
 def _set_default(session: Session, provider: ModelProvider) -> None:

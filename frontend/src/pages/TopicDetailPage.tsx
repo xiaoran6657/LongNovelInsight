@@ -280,7 +280,7 @@ export default function TopicDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["topics"] });
       queryClient.invalidateQueries({ queryKey: ["analysis-status", topicId] });
       setRunError("");
-      // Persist analysis summary with real token usage
+      // Persist analysis summary with real token usage and per-type stats
       const outputs = data.outputs ?? [];
       const completed = outputs.map((o) => o.output_type);
       const realInput = outputs.reduce((s, o) => s + (o.prompt_tokens ?? 0), 0);
@@ -288,11 +288,57 @@ export default function TopicDetailPage() {
         (s, o) => s + (o.completion_tokens ?? 0),
         0
       );
+      const typeStats: Record<string, TypeStat> = {};
+      for (const o of outputs) {
+        // Infer per-type confidence: top-level > 0 → use it,
+        // otherwise average item-level confidences from content_json
+        let conf: number | null = null;
+        if (o.confidence > 0) {
+          conf = o.confidence;
+        } else if (o.content_json) {
+          const items: number[] = [];
+          for (const [, v] of Object.entries(o.content_json)) {
+            if (Array.isArray(v)) {
+              for (const item of v) {
+                if (
+                  item &&
+                  typeof item === "object" &&
+                  typeof (item as Record<string, unknown>).confidence === "number"
+                ) {
+                  const c = (item as Record<string, unknown>).confidence as number;
+                  if (!isNaN(c)) items.push(c);
+                }
+              }
+            }
+          }
+          if (items.length > 0) {
+            conf = items.reduce((a, b) => a + b, 0) / items.length;
+          }
+        }
+        typeStats[o.output_type] = {
+          runs: 1,
+          inputTokens: o.prompt_tokens ?? 0,
+          outputTokens: o.completion_tokens ?? 0,
+          confidence: conf,
+        };
+      }
+      // Fill in failed types with zero runs
+      for (const t of ALL_TYPES) {
+        if (!typeStats[t]) {
+          typeStats[t] = {
+            runs: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            confidence: null,
+          };
+        }
+      }
       const summary = {
         elapsedSec,
         estimatedInputTokens: realInput,
         estimatedOutputTokens: realOutput,
         completedTypes: completed,
+        typeStats,
       };
       setRunSummary(summary);
       sessionStorage.setItem(summaryKey, JSON.stringify(summary));
@@ -329,14 +375,29 @@ export default function TopicDetailPage() {
       setRetryingType(null);
       setRunSummary((prev) => {
         if (!prev) return prev;
-        const newCompleted = [...new Set([...prev.completedTypes, data.output.output_type])];
+        const ot = data.output.output_type;
+        const oldStat = prev.typeStats[ot] ?? { runs: 0, inputTokens: 0, outputTokens: 0 };
+        const newCompleted = [...new Set([...prev.completedTypes, ot])];
         const updated = {
           ...prev,
+          elapsedSec: prev.elapsedSec + retryElapsed,
           completedTypes: newCompleted,
           estimatedInputTokens:
             prev.estimatedInputTokens + (data.output.prompt_tokens ?? 0),
           estimatedOutputTokens:
             prev.estimatedOutputTokens + (data.output.completion_tokens ?? 0),
+          typeStats: {
+            ...prev.typeStats,
+            [ot]: {
+              runs: oldStat.runs + 1,
+              inputTokens: oldStat.inputTokens + (data.output.prompt_tokens ?? 0),
+              outputTokens: oldStat.outputTokens + (data.output.completion_tokens ?? 0),
+              confidence:
+                data.output.confidence > 0
+                  ? data.output.confidence
+                  : oldStat.confidence,
+            },
+          },
         };
         sessionStorage.setItem(summaryKey, JSON.stringify(updated));
         return updated;
@@ -413,11 +474,18 @@ export default function TopicDetailPage() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [retryElapsed, setRetryElapsed] = useState(0);
 
+  type TypeStat = {
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    confidence: number | null;
+  };
   type RunSummary = {
     elapsedSec: number;
     estimatedInputTokens: number;
     estimatedOutputTokens: number;
     completedTypes: string[];
+    typeStats: Record<string, TypeStat>;
   } | null;
 
   const summaryKey = `analysis_summary_${topicId}`;
@@ -552,12 +620,22 @@ export default function TopicDetailPage() {
     const promptToksPerType = 600;
     const outToksPerType = 800;
     const typeCount = 6;
+    const emptyStats: Record<string, TypeStat> = {};
+    for (const t of ALL_TYPES) {
+      emptyStats[t] = {
+        runs: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        confidence: null,
+      };
+    }
     setRunSummary({
       elapsedSec: 0,
       estimatedInputTokens:
         typeCount * (chunkToksPerType + promptToksPerType),
       estimatedOutputTokens: typeCount * outToksPerType,
       completedTypes: [],
+      typeStats: emptyStats,
     });
     sessionStorage.removeItem(summaryKey);
     runAnalysisInFlightRef.current = true;
@@ -1314,7 +1392,7 @@ export default function TopicDetailPage() {
               <p>
                 <strong>Time:</strong>{" "}
                 {retryingType
-                  ? `${Math.floor(retryElapsed / 60)}m ${retryElapsed % 60}s`
+                  ? `${Math.floor((runSummary.elapsedSec + retryElapsed) / 60)}m ${(runSummary.elapsedSec + retryElapsed) % 60}s`
                   : `${Math.floor(runSummary.elapsedSec / 60)}m ${runSummary.elapsedSec % 60}s`}
               </p>
               <p>
@@ -1328,68 +1406,118 @@ export default function TopicDetailPage() {
                 total
               </p>
             </div>
-            <div style={{ marginTop: "0.4rem", fontSize: "0.83rem" }}>
-              {ALL_TYPES.map((t) => {
-                const ok = runSummary.completedTypes.includes(t);
-                return ok ? (
-                  <span
-                    key={t}
-                    style={{
-                      color: "#166534",
-                      marginRight: "0.6rem",
-                    }}
-                  >
-                    ✓ {t}
-                    <button
-                      onClick={() => handleRetryType(t, true)}
-                      disabled={retryingType === t || isAnalysisRunning}
-                      style={{
-                        marginLeft: "0.3rem",
-                        padding: "0.1em 0.4em",
-                        fontSize: "0.72rem",
-                        border: "1px solid #166534",
-                        borderRadius: 3,
-                        background: "#fff",
-                        color: "#166534",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {retryingType === t ? "Running..." : "Re-analyze"}
-                    </button>
-                  </span>
-                ) : (
-                  <span
-                    key={t}
-                    style={{
-                      color: "#dc2626",
-                      marginRight: "0.6rem",
-                    }}
-                  >
-                    ✗ {t}
-                    <span style={{ fontSize: "0.75rem", color: "#999" }}>
-                      {" "}
-                      — not generated
-                    </span>
-                    <button
-                      onClick={() => handleRetryType(t, false)}
-                      disabled={retryingType === t || isAnalysisRunning}
-                      style={{
-                        marginLeft: "0.3rem",
-                        padding: "0.1em 0.4em",
-                        fontSize: "0.72rem",
-                        border: "1px solid #dc2626",
-                        borderRadius: 3,
-                        background: "#fff",
-                        color: "#dc2626",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {retryingType === t ? "Retrying..." : "Retry"}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
+            {(() => {
+              const thStyle: React.CSSProperties = {
+                textAlign: "left",
+                padding: "0.25rem 0.5rem",
+                color: "#166534",
+                fontWeight: 600,
+                fontSize: "0.78rem",
+              };
+              const tdStyle: React.CSSProperties = {
+                padding: "0.3rem 0.5rem",
+                verticalAlign: "middle",
+              };
+              return (
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    marginTop: "0.5rem",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #bbf7d0" }}>
+                      <th style={thStyle}>Type</th>
+                      <th style={thStyle}>Runs</th>
+                      <th style={thStyle}>Tokens</th>
+                      <th style={thStyle}>Conf.</th>
+                      <th style={thStyle}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ALL_TYPES.map((t) => {
+                      const stat = runSummary.typeStats[t];
+                      const ok =
+                        runSummary.completedTypes.includes(t) &&
+                        stat &&
+                        stat.runs > 0;
+                      const conf =
+                        ok && stat.confidence != null
+                          ? stat.confidence >= 0.7
+                            ? {
+                                text: `${(stat.confidence * 100).toFixed(0)}%`,
+                                color: "#27ae60",
+                              }
+                            : stat.confidence >= 0.4
+                              ? {
+                                  text: `${(stat.confidence * 100).toFixed(0)}%`,
+                                  color: "#f57f17",
+                                }
+                              : {
+                                  text: `${(stat.confidence * 100).toFixed(0)}%`,
+                                  color: "#e74c3c",
+                                }
+                          : null;
+                      const tokensTotal =
+                        (stat?.inputTokens ?? 0) +
+                        (stat?.outputTokens ?? 0);
+                      return (
+                        <tr
+                          key={t}
+                          style={{
+                            borderBottom: "1px solid #dcfce7",
+                            color: ok ? "#166534" : "#dc2626",
+                          }}
+                        >
+                          <td style={tdStyle}>
+                            {ok ? "✓" : "✗"} {t}
+                          </td>
+                          <td style={tdStyle}>{stat?.runs ?? 0}</td>
+                          <td style={tdStyle}>
+                            {tokensTotal > 0
+                              ? tokensTotal.toLocaleString()
+                              : "—"}
+                          </td>
+                          <td
+                            style={{
+                              ...tdStyle,
+                              color: conf?.color ?? "#999",
+                            }}
+                          >
+                            {conf?.text ?? "—"}
+                          </td>
+                          <td style={tdStyle}>
+                            <button
+                              onClick={() => handleRetryType(t, ok)}
+                              disabled={
+                                retryingType === t || isAnalysisRunning
+                              }
+                              style={{
+                                padding: "0.1em 0.4em",
+                                fontSize: "0.72rem",
+                                border: `1px solid ${ok ? "#166534" : "#dc2626"}`,
+                                borderRadius: 3,
+                                background: "#fff",
+                                color: ok ? "#166534" : "#dc2626",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {retryingType === t
+                                ? "Running..."
+                                : ok
+                                  ? "Re-analyze"
+                                  : "Retry"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         )}
 

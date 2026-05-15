@@ -19,10 +19,10 @@ class ModelProvider(SQLModel, table=True):
     provider_type: str
     base_url: str
     api_key: str
-    model_name: str
-    context_window: int = 1_000_000
-    max_output_tokens: int = 8192
-    temperature: float = 0.2
+    model_name: str = ""
+    context_window: int = 0
+    max_output_tokens: int = 0
+    temperature: float = 0.0
     is_default: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -37,22 +37,24 @@ class ModelProviderCreate(SQLModel):
     provider_type: str
     base_url: str
     api_key: str
-    model_name: str
-    context_window: int = 1_000_000
-    max_output_tokens: int = 8192
-    temperature: float = 0.2
+    model_name: str = ""
+    context_window: int = 0
+    max_output_tokens: int = 0
+    temperature: float = 0.0
     is_default: bool = False
 
     @model_validator(mode="after")
     def _validate_fields(self) -> "ModelProviderCreate":
         if not self.name.strip():
             raise ValueError("name must not be empty")
-        if self.context_window <= 0:
-            raise ValueError("context_window must be > 0")
-        if self.max_output_tokens <= 0:
-            raise ValueError("max_output_tokens must be > 0")
-        if not (0.0 <= self.temperature <= 2.0):
-            raise ValueError("temperature must be between 0.0 and 2.0")
+        if self.model_name and not self.model_name.strip():
+            raise ValueError("model_name must not be empty if provided")
+        if self.context_window != 0 and self.context_window <= 0:
+            raise ValueError("context_window must be > 0 if provided")
+        if self.max_output_tokens != 0 and self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be > 0 if provided")
+        if self.temperature != 0.0 and not (0.0 <= self.temperature <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0 if provided")
         return self
 
 

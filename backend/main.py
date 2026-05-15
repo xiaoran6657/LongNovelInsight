@@ -30,12 +30,16 @@ from routers import (  # noqa: E402
     health,
     model_providers,
     parse,
+    provider_presets,
+    topic_provider_config,
     topics,
 )
 
 app.include_router(health.router, prefix="/api")
 app.include_router(topics.router, prefix="/api")
 app.include_router(model_providers.router, prefix="/api")
+app.include_router(provider_presets.router, prefix="/api")
+app.include_router(topic_provider_config.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(parse.router, prefix="/api")
 app.include_router(analysis_jobs.topic_router, prefix="/api")

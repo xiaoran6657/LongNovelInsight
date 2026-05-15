@@ -32,6 +32,8 @@ function inferConfidence(
   outputConfidence: number,
   json: Record<string, unknown> | null
 ): number | null {
+  // If insufficient_evidence flag is set, confidence is unreliable
+  if (json && json.insufficient_evidence) return null;
   // Top-level confidence > 0 → use it (e.g. overview has it)
   if (outputConfidence > 0) return outputConfidence;
   // Otherwise extract from item-level confidences

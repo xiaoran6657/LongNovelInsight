@@ -25,3 +25,5 @@ from .model_provider import ModelProviderUpdate as ModelProviderUpdate
 from .topic import Topic as Topic
 from .topic import TopicCreate as TopicCreate
 from .topic import TopicRead as TopicRead
+from .topic_provider_config import TopicProviderConfig as TopicProviderConfig
+from .topic_provider_config import TopicProviderConfigRead as TopicProviderConfigRead

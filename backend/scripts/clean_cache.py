@@ -1,4 +1,5 @@
 """Remove expired pytest/ruff cache files. Safe to run anytime."""
+
 import shutil
 import time
 from pathlib import Path
