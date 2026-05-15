@@ -11,6 +11,12 @@ export default function AppLayout() {
   const backendUrl =
     import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
+  function isActive(path: string): boolean {
+    const { pathname } = location;
+    if (path === "/") return pathname === "/";
+    return pathname === path || pathname.startsWith(path + "/");
+  }
+
   return (
     <div className="layout">
       <header className="header">
@@ -25,7 +31,7 @@ export default function AppLayout() {
           <Link
             key={item.path}
             to={item.path}
-            className={`nav-link${location.pathname === item.path ? " nav-link--active" : ""}`}
+            className={`nav-link${isActive(item.path) ? " nav-link--active" : ""}`}
           >
             {item.label}
           </Link>

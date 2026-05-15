@@ -15,6 +15,7 @@ build/
 .vite/
 frontend/.env.local
 frontend/.env.*.local
+*.tsbuildinfo
 
 # Local app data
 data/
@@ -54,3 +55,5 @@ CLAUDE.md
 build/
 dist/
 *.egg
+
+MVP&Prompts/

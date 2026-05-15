@@ -11,6 +11,7 @@ npm run dev           # → http://localhost:5173
 npm run typecheck     # TypeScript check
 npm run lint          # ESLint
 npm run build         # Production build → dist/
+npm run check         # All three checks at once
 ```
 
 The backend must be running separately:
@@ -34,7 +35,7 @@ Copy `.env.example` to `.env.local` and customize.
 
 ```
 frontend/
-├── index.html                # Vite entry point
+├── index.html
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
@@ -43,22 +44,29 @@ frontend/
 └── src/
     ├── vite-env.d.ts         # ImportMetaEnv type definitions
     ├── main.tsx              # React root render (QueryClient + Router)
-    ├── router.tsx            # React Router route definitions ✅
+    ├── router.tsx            # React Router route definitions
     ├── api/                  # API client and endpoint modules
-    │   ├── client.ts         # apiRequest<T>() with fetch ✅
-    │   ├── types.ts          # Shared TypeScript types ✅
-    │   └── health.ts         # GET /api/health ✅
+    │   ├── client.ts         # apiRequest<T>() with fetch
+    │   ├── types.ts          # Shared TypeScript types
+    │   ├── health.ts         # GET /api/health
+    │   ├── providers.ts      # Provider CRUD + test
+    │   ├── topics.ts         # Topic CRUD + provider binding
+    │   ├── documents.ts      # Document upload / delete
+    │   ├── parse.ts          # Parse / chapters / chunks / storage
+    │   ├── analysis.ts       # Analysis run / outputs / jobs
+    │   └── chat.ts           # Chat sessions / messages
     ├── components/           # Shared UI components
-    │   └── HealthPanel.tsx   # Backend health status ✅
+    │   ├── HealthPanel.tsx   # Backend health status
+    │   └── AnalysisOutputCard.tsx  # Type-specific analysis output rendering
     ├── pages/                # Route page components
-    │   ├── DashboardPage.tsx # Health + workflow overview ✅
-    │   ├── ProvidersPage.tsx # Placeholder (Task 004)
-    │   ├── TopicsPage.tsx    # Placeholder (Task 005)
-    │   ├── TopicDetailPage.tsx # Placeholder (Task 006)
-    │   ├── TopicChatPage.tsx # Placeholder (Task 008)
-    │   └── NotFoundPage.tsx  # 404 ✅
+    │   ├── DashboardPage.tsx # Health + workflow overview
+    │   ├── ProvidersPage.tsx # LLM provider CRUD
+    │   ├── TopicsPage.tsx    # Topic list + create
+    │   ├── TopicDetailPage.tsx # Document, parse, analysis, storage
+    │   ├── TopicChatPage.tsx # Evidence-based chat (Task 008)
+    │   └── NotFoundPage.tsx  # 404
     ├── layouts/              # Layout components
-    │   └── AppLayout.tsx     # Header, nav, main, footer ✅
+    │   └── AppLayout.tsx     # Header, nav, main, footer
     └── styles/
         └── global.css        # Global styles
 ```
@@ -74,11 +82,22 @@ frontend/
 | `/topics/:topicId/chat` | TopicChatPage | Evidence-based chat |
 | `*` | NotFoundPage | 404 |
 
+## Analysis Token Cost
+
+v0.1 structured analysis (Run Analysis) makes independent LLM calls for each of the 6 output types (overview, characters, relations, events, causality, themes). The selected chunk text is sent repeatedly — once per type. Each call also includes a system prompt and generates structured JSON output.
+
+For example, with N selected chunks totalling ~14,000 characters:
+- Per-type input: ~4,000 text tokens + ~600 prompt tokens
+- Total input: 6 × ~4,600 = ~27,600 tokens
+- Estimated output: 6 × ~800 = ~4,800 tokens
+
+**Recommendation**: Test with small `limit_chunks` values first (1–3) before running on larger selections.
+
 ## Key Design Decisions
 
-- **fetch over axios**: Keep dependencies minimal. A thin `apiRequest<T>()` wrapper handles base URL, JSON parsing, and error handling.
+- **fetch over axios**: Keep dependencies minimal. `apiRequest<T>()` handles base URL, JSON parsing, error handling, AbortSignal, and empty response.
 - **Plain CSS**: No Tailwind, no UI component library. Styles are minimal and functional.
-- **TanStack Query**: Used for server state management (queries, mutations, cache invalidation). Avoids manual `useEffect` + loading/error tracking.
+- **TanStack Query**: Used for server state management (queries, mutations, cache invalidation).
 - **api_key never stored**: The frontend submits api_key to the backend on create but never persists it in localStorage, sessionStorage, or state after form submission.
 - **masked_api_key only**: Provider lists display `masked_api_key` (e.g., `sk-...abcd`). Raw `api_key` is never present in backend responses.
 - **Real LLM warnings**: Buttons for Provider Test, Run Analysis, and Send Message display explicit warnings about API consumption.
@@ -88,10 +107,11 @@ frontend/
 | Script | Command | Description |
 |--------|---------|-------------|
 | `dev` | `vite` | Start dev server with HMR |
-| `build` | `tsc -b && vite build` | Type-check then production build |
+| `build` | `tsc --noEmit && vite build` | Type-check then production build |
 | `preview` | `vite preview` | Preview production build |
 | `typecheck` | `tsc --noEmit` | TypeScript check only |
 | `lint` | `eslint src/` | Lint source files |
+| `check` | `npm run typecheck && npm run lint && npm run build` | All checks |
 
 ## Dependencies
 
@@ -99,8 +119,8 @@ frontend/
 {
   "react": "^18.3.1",
   "react-dom": "^18.3.1",
-  "react-router-dom": "^6.x",
-  "@tanstack/react-query": "^5.x"
+  "react-router-dom": "^7.15.0",
+  "@tanstack/react-query": "^5.100.10"
 }
 ```
 

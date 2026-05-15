@@ -115,6 +115,21 @@ function getArray(v: unknown): unknown[] {
   return [];
 }
 
+function getStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((item) => (typeof item === "string" ? item : String(item ?? "")));
+}
+
+function hasAnyEvidence(items: unknown[]): boolean {
+  for (const item of items) {
+    if (item && typeof item === "object") {
+      const ev = (item as Record<string, unknown>).evidence_quotes;
+      if (Array.isArray(ev) && ev.length > 0) return true;
+    }
+  }
+  return false;
+}
+
 // ── Type-specific renderers ──
 
 function OverviewBlock({
@@ -190,9 +205,15 @@ function CharactersBlock({
     <div>
       {chars.map((c, i) => {
         const item = c as Record<string, unknown>;
+        const cKey =
+          getString(item.character_id_hint) !== "—"
+            ? String(item.character_id_hint)
+            : getString(item.name) !== "—"
+              ? String(item.name)
+              : `char-${i}`;
         return (
           <div
-            key={i}
+            key={cKey}
             style={{
               background: "#fff",
               border: "1px solid #eee",
@@ -226,10 +247,10 @@ function CharactersBlock({
               </p>
             )}
             {item.aliases != null &&
-              getArray(item.aliases).length > 0 && (
+              getStringArray(item.aliases).length > 0 && (
                 <p style={{ fontSize: "0.78rem", marginBottom: "0.15rem" }}>
                   <span style={{ color: "#888" }}>Aliases:</span>{" "}
-                  {getArray(item.aliases).join(", ")}
+                  {getStringArray(item.aliases).join(", ")}
                 </p>
               )}
             {item.description != null &&
@@ -246,13 +267,13 @@ function CharactersBlock({
               </p>
             )}
             <EvidenceBlock
-              quotes={getArray(item.evidence_quotes) as string[]}
+              quotes={getStringArray(item.evidence_quotes)}
             />
-            <ChunkTags ids={getArray(item.source_chunk_ids) as string[]} />
+            <ChunkTags ids={getStringArray(item.source_chunk_ids)} />
           </div>
         );
       })}
-      <EvidenceBlock quotes={evidence} />
+      {!hasAnyEvidence(chars) && <EvidenceBlock quotes={evidence} />}
       <ChunkTags ids={chunks} />
     </div>
   );
@@ -287,9 +308,10 @@ function RelationsBlock({
           getString(item.relation_type) !== "—"
             ? item.relation_type
             : getString(item.relationship);
+        const relKey = `${String(source)}-${String(target)}-${i}`;
         return (
           <div
-            key={i}
+            key={relKey}
             style={{
               background: "#fff",
               border: "1px solid #eee",
@@ -325,13 +347,13 @@ function RelationsBlock({
                 </p>
               )}
             <EvidenceBlock
-              quotes={getArray(item.evidence_quotes) as string[]}
+              quotes={getStringArray(item.evidence_quotes)}
             />
-            <ChunkTags ids={getArray(item.source_chunk_ids) as string[]} />
+            <ChunkTags ids={getStringArray(item.source_chunk_ids)} />
           </div>
         );
       })}
-      <EvidenceBlock quotes={evidence} />
+      {!hasAnyEvidence(rels) && <EvidenceBlock quotes={evidence} />}
       <ChunkTags ids={chunks} />
     </div>
   );
@@ -362,9 +384,13 @@ function EventsBlock({
               : getString(item.summary) !== "—"
                 ? item.summary
                 : `Event ${i + 1}`;
+        const evtKey =
+          getString(item.event_id_hint) !== "—"
+            ? `evt-${String(item.event_id_hint)}`
+            : `evt-${i}`;
         return (
           <div
-            key={i}
+            key={evtKey}
             style={{
               background: "#fff",
               border: "1px solid #eee",
@@ -410,7 +436,7 @@ function EventsBlock({
                 </p>
               )}
             {item.participants != null &&
-              getArray(item.participants).length > 0 && (
+              getStringArray(item.participants).length > 0 && (
                 <div
                   style={{
                     display: "flex",
@@ -419,7 +445,7 @@ function EventsBlock({
                     marginBottom: "0.15rem",
                   }}
                 >
-                  {getArray(item.participants).map((p, j) => (
+                  {getStringArray(item.participants).map((p, j) => (
                     <span
                       key={j}
                       style={{
@@ -436,13 +462,13 @@ function EventsBlock({
                 </div>
               )}
             <EvidenceBlock
-              quotes={getArray(item.evidence_quotes) as string[]}
+              quotes={getStringArray(item.evidence_quotes)}
             />
-            <ChunkTags ids={getArray(item.source_chunk_ids) as string[]} />
+            <ChunkTags ids={getStringArray(item.source_chunk_ids)} />
           </div>
         );
       })}
-      <EvidenceBlock quotes={evidence} />
+      {!hasAnyEvidence(evts) && <EvidenceBlock quotes={evidence} />}
       <ChunkTags ids={chunks} />
     </div>
   );
@@ -481,9 +507,10 @@ function CausalityBlock({
           getString(item.causal_strength) !== "—"
             ? item.causal_strength
             : getString(item.strength);
+        const causalKey = `${String(cause)}-${String(effect)}-${i}`;
         return (
           <div
-            key={i}
+            key={causalKey}
             style={{
               background: "#fff",
               border: "1px solid #eee",
@@ -527,13 +554,13 @@ function CausalityBlock({
               )}
             </p>
             <EvidenceBlock
-              quotes={getArray(item.evidence_quotes) as string[]}
+              quotes={getStringArray(item.evidence_quotes)}
             />
-            <ChunkTags ids={getArray(item.source_chunk_ids) as string[]} />
+            <ChunkTags ids={getStringArray(item.source_chunk_ids)} />
           </div>
         );
       })}
-      <EvidenceBlock quotes={evidence} />
+      {!hasAnyEvidence(chains) && <EvidenceBlock quotes={evidence} />}
       <ChunkTags ids={chunks} />
     </div>
   );
@@ -562,9 +589,10 @@ function ThemesBlock({
             : getString(item.name) !== "—"
               ? item.name
               : `Theme ${i + 1}`;
+        const themeKey = `theme-${String(name)}-${i}`;
         return (
           <div
-            key={i}
+            key={themeKey}
             style={{
               background: "#fff",
               border: "1px solid #eee",
@@ -607,13 +635,13 @@ function ThemesBlock({
               </p>
             )}
             <EvidenceBlock
-              quotes={getArray(item.evidence_quotes) as string[]}
+              quotes={getStringArray(item.evidence_quotes)}
             />
-            <ChunkTags ids={getArray(item.source_chunk_ids) as string[]} />
+            <ChunkTags ids={getStringArray(item.source_chunk_ids)} />
           </div>
         );
       })}
-      <EvidenceBlock quotes={evidence} />
+      {!hasAnyEvidence(themes) && <EvidenceBlock quotes={evidence} />}
       <ChunkTags ids={chunks} />
     </div>
   );

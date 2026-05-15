@@ -80,6 +80,19 @@ def list_chunks(
     return {"chunks": result}
 
 
+@router.get("/chunks/meta")
+def get_chunks_meta(topic_id: str, session: Session = Depends(get_session)) -> dict:
+    _check_topic(topic_id, session)
+    chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
+    total_chars = sum(c.char_count for c in chunks)
+    estimated_tokens = sum(c.estimated_tokens for c in chunks)
+    return {
+        "count": len(chunks),
+        "total_chars": total_chars,
+        "estimated_tokens": estimated_tokens,
+    }
+
+
 @router.get("/storage")
 def get_storage(topic_id: str, session: Session = Depends(get_session)) -> dict:
     _check_topic(topic_id, session)

@@ -15,10 +15,11 @@ import {
   listChapters,
   listChunks,
   getStorage,
+  getChunksMeta,
 } from "../api/parse";
 import {
   listAnalysisOutputs,
-  runAnalysis,
+  runAnalysisAsync,
   deleteAnalysisOutputs,
   getAnalysisStatus,
   runSingleAnalysis,
@@ -131,14 +132,13 @@ export default function TopicDetailPage() {
     enabled: !!topicId && !!hasDoc,
   });
 
-  const { data: allChunksMeta } = useQuery({
-    queryKey: ["chunks-count", topicId],
-    queryFn: () =>
-      listChunks(topicId!, { include_text: false, limit: 1000 }),
+  const { data: chunksMeta } = useQuery({
+    queryKey: ["chunks-meta", topicId],
+    queryFn: () => getChunksMeta(topicId!),
     enabled: !!topicId && !!hasDoc,
   });
 
-  const totalChunkCount = allChunksMeta?.chunks.length ?? 0;
+  const totalChunkCount = chunksMeta?.count ?? 0;
 
   // Clamp limitChunks to actual total (e.g. short text with < 5 chunks)
   useEffect(() => {
@@ -221,8 +221,7 @@ export default function TopicDetailPage() {
 
   const parseMut = useMutation({
     mutationFn: () => parseTopic(topicId!),
-    onSuccess: () => {
-      // Optimistically update topic status so UI updates immediately
+    onSuccess: (data) => {
       // Optimistically update topic status and chunk count so UI updates immediately
       queryClient.setQueryData(["topic", topicId], (old: unknown) => {
         if (old && typeof old === "object") {
@@ -230,20 +229,15 @@ export default function TopicDetailPage() {
         }
         return old;
       });
-      // Also set chunk count from parse result so limit-chunks max updates
-      if (parseMut.data) {
-        const fakeChunks = Array.from(
-          { length: parseMut.data.chunk_count },
-          (_, i) => ({ id: `opt-${i}`, char_count: 2000 })
-        );
-        queryClient.setQueryData(["chunks-count", topicId], {
-          chunks: fakeChunks,
-        });
-      }
+      queryClient.setQueryData(["chunks-meta", topicId], {
+        count: data.chunk_count,
+        total_chars: data.char_count,
+        estimated_tokens: data.estimated_tokens,
+      });
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
       queryClient.invalidateQueries({ queryKey: ["chapters", topicId] });
       queryClient.invalidateQueries({ queryKey: ["chunks", topicId] });
-      queryClient.invalidateQueries({ queryKey: ["chunks-count", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["chunks-meta", topicId] });
       queryClient.invalidateQueries({ queryKey: ["storage", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topics"] });
       setParseError("");
@@ -254,7 +248,29 @@ export default function TopicDetailPage() {
   const runAnalysisMut = useMutation({
     mutationFn: async () => {
       setRunning();
-      return runAnalysis(topicId!, limitChunks);
+      // Start async job (backend deletes old outputs internally)
+      await runAnalysisAsync(topicId!, limitChunks);
+      // Poll status until job completes (succeeded or failed)
+      let done = false;
+      while (!done) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const s = await getAnalysisStatus(topicId!);
+        const jobStatus = s?.latest_job?.status;
+        if (
+          jobStatus === "succeeded" ||
+          jobStatus === "failed" ||
+          jobStatus === "cancelled"
+        ) {
+          done = true;
+          if (jobStatus === "failed") {
+            throw new Error(
+              s.latest_job?.error_message ?? "Analysis job failed"
+            );
+          }
+        }
+      }
+      // Fetch completed outputs
+      return listAnalysisOutputs(topicId!);
     },
     onSuccess: (data) => {
       clearRunning();
@@ -349,23 +365,45 @@ export default function TopicDetailPage() {
     () => sessionStorage.getItem(runningKey) === "1"
   );
 
-  // On mount, if sessionStorage says running, poll for outputs until they appear
+  // On mount, if sessionStorage says running, poll until job completes
   useEffect(() => {
     if (!recoveredRunning || !topicId) return;
     const interval = setInterval(async () => {
       try {
-        const res = await listAnalysisOutputs(topicId);
-        if (res.outputs.length > 0) {
+        const status = await getAnalysisStatus(topicId);
+        const jobStatus = status?.latest_job?.status;
+        if (
+          jobStatus === "succeeded" ||
+          jobStatus === "failed" ||
+          jobStatus === "cancelled"
+        ) {
           clearInterval(interval);
           sessionStorage.removeItem(runningKey);
           setRecoveredRunning(false);
           queryClient.invalidateQueries({ queryKey: ["outputs", topicId] });
           queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+          return;
+        }
+        // Fallback: if status API unavailable, check if all types are present
+        if (!status || !status.latest_job) {
+          const ALL_TYPES_LOCAL = [
+            "overview", "characters", "relations",
+            "events", "causality", "themes",
+          ];
+          const res = await listAnalysisOutputs(topicId);
+          const present = new Set(res.outputs.map((o) => o.output_type));
+          if (ALL_TYPES_LOCAL.every((t) => present.has(t))) {
+            clearInterval(interval);
+            sessionStorage.removeItem(runningKey);
+            setRecoveredRunning(false);
+            queryClient.invalidateQueries({ queryKey: ["outputs", topicId] });
+            queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+          }
         }
       } catch {
         // backend may still be busy — keep polling
       }
-    }, 2000);
+    }, 3000);
     return () => clearInterval(interval);
   }, [recoveredRunning, topicId, runningKey, queryClient]);
 
@@ -505,15 +543,20 @@ export default function TopicDetailPage() {
         return;
     }
     // Save token estimate for summary bar
-    const selChunks = (allChunksMeta?.chunks ?? []).slice(0, limitChunks);
-    const selChars = selChunks.reduce((s, c) => s + c.char_count, 0);
-    const chunkToks = Math.round(selChars / 3.5);
-    const promptToks = 600 * 6;
-    const outToks = 800 * 6;
+    const meta = chunksMeta;
+    const selChars =
+      meta && meta.count > 0
+        ? Math.round((meta.total_chars * limitChunks) / meta.count)
+        : limitChunks * 2000;
+    const chunkToksPerType = Math.round(selChars / 3.5);
+    const promptToksPerType = 600;
+    const outToksPerType = 800;
+    const typeCount = 6;
     setRunSummary({
       elapsedSec: 0,
-      estimatedInputTokens: chunkToks + promptToks,
-      estimatedOutputTokens: outToks,
+      estimatedInputTokens:
+        typeCount * (chunkToksPerType + promptToksPerType),
+      estimatedOutputTokens: typeCount * outToksPerType,
       completedTypes: [],
     });
     sessionStorage.removeItem(summaryKey);
@@ -1009,18 +1052,17 @@ export default function TopicDetailPage() {
                   API tokens.
                 </p>
                 {totalChunkCount > 0 && (() => {
-                  const selectedChunks = (allChunksMeta?.chunks ?? []).slice(
-                    0,
-                    limitChunks
-                  );
-                  const selectedChars = selectedChunks.reduce(
-                    (s, c) => s + c.char_count,
-                    0
-                  );
-                  const chunkTokens = Math.round(selectedChars / 3.5);
-                  const promptTokens = 600 * 6;
-                  const inputTokens = chunkTokens + promptTokens;
-                  const outputTokens = 800 * 6;
+                  const meta = chunksMeta;
+                  const selectedChars =
+                    meta && meta.count > 0
+                      ? Math.round((meta.total_chars * limitChunks) / meta.count)
+                      : limitChunks * 2000;
+                  const typeCount = 6;
+                  const chunkTokensPerType = Math.round(selectedChars / 3.5);
+                  const promptTokensPerType = 600;
+                  const outputTokensPerType = 800;
+                  const totalInput = typeCount * (chunkTokensPerType + promptTokensPerType);
+                  const totalOutput = typeCount * outputTokensPerType;
                   return (
                     <div
                       style={{
@@ -1045,34 +1087,42 @@ export default function TopicDetailPage() {
                         <tbody>
                           <tr>
                             <td style={{ paddingRight: "0.75rem", color: "#666" }}>
-                              Chunk text ({selectedChars.toLocaleString()} chars)
+                              Selected text per type ({selectedChars.toLocaleString()} chars)
                             </td>
                             <td style={{ textAlign: "right" }}>
-                              ~{chunkTokens.toLocaleString()} tokens
+                              ~{chunkTokensPerType.toLocaleString()} tokens
                             </td>
                           </tr>
                           <tr>
                             <td style={{ paddingRight: "0.75rem", color: "#666" }}>
-                              System prompts (6 types × ~600)
+                              System prompt per type (~{promptTokensPerType})
                             </td>
                             <td style={{ textAlign: "right" }}>
-                              ~{promptTokens.toLocaleString()} tokens
+                              ~{promptTokensPerType.toLocaleString()} tokens
                             </td>
                           </tr>
                           <tr style={{ borderTop: "1px solid #eee" }}>
+                            <td style={{ paddingRight: "0.75rem", color: "#666" }}>
+                              Input per type (text + prompt)
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              ~{(chunkTokensPerType + promptTokensPerType).toLocaleString()} tokens
+                            </td>
+                          </tr>
+                          <tr>
                             <td style={{ paddingRight: "0.75rem", fontWeight: 600 }}>
-                              Total input
+                              Total input ({typeCount} types)
                             </td>
                             <td style={{ textAlign: "right", fontWeight: 600 }}>
-                              ~{inputTokens.toLocaleString()} tokens
+                              ~{totalInput.toLocaleString()} tokens
                             </td>
                           </tr>
                           <tr>
                             <td style={{ paddingRight: "0.75rem", color: "#666" }}>
-                              Estimated output (6 types × ~800)
+                              Estimated output ({typeCount} types × ~{outputTokensPerType})
                             </td>
                             <td style={{ textAlign: "right" }}>
-                              ~{outputTokens.toLocaleString()} tokens
+                              ~{totalOutput.toLocaleString()} tokens
                             </td>
                           </tr>
                           <tr style={{ borderTop: "1px solid #eee" }}>
@@ -1080,7 +1130,7 @@ export default function TopicDetailPage() {
                               Grand total
                             </td>
                             <td style={{ textAlign: "right", fontWeight: 600 }}>
-                              ~{(inputTokens + outputTokens).toLocaleString()} tokens
+                              ~{(totalInput + totalOutput).toLocaleString()} tokens
                             </td>
                           </tr>
                         </tbody>
@@ -1093,9 +1143,8 @@ export default function TopicDetailPage() {
                           fontStyle: "italic",
                         }}
                       >
-                        Rough estimate only — actual usage depends on chunk
-                        content and JSON output size. Chars→tokens uses ~3.5
-                        chars/token for mixed Chinese/English text.
+                        Each of the {typeCount} analysis types receives the full selected text independently.
+                        Rough estimate — actual usage depends on chunk content and JSON output size.
                       </p>
                     </div>
                   );

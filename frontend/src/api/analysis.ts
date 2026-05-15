@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { AnalysisOutput, Job } from "./types";
+import type { AnalysisOutput, Job, JobItem } from "./types";
 
 interface OutputListResponse {
   outputs: AnalysisOutput[];
@@ -77,6 +77,16 @@ export function cancelJob(jobId: string): Promise<JobDetailResponse> {
   return apiRequest<JobDetailResponse>(`/api/analysis/jobs/${jobId}/cancel`, {
     method: "POST",
   });
+}
+
+export function runAnalysisAsync(
+  topicId: string,
+  limitChunks: number = 5
+): Promise<{ job: Job; items: JobItem[] }> {
+  return apiRequest<{ job: Job; items: JobItem[] }>(
+    `/api/topics/${topicId}/analysis/run-async?limit_chunks=${limitChunks}`,
+    { method: "POST" }
+  );
 }
 
 export function runSingleAnalysis(

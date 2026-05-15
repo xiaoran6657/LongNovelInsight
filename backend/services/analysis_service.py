@@ -661,3 +661,65 @@ def _extract_confidence(parsed: dict) -> float:
         if confidences:
             return sum(confidences) / len(confidences)
     return 0.0
+
+
+def run_analysis_async(
+    topic_id: str,
+    job_id: str,
+    limit_chunks: int = 5,
+) -> None:
+    """Run structured analysis in a background thread. Updates job and items."""
+    from datetime import datetime, timezone
+
+    from db import engine
+    from models.job import Job
+    from models.job_item import JobItem
+
+    with Session(engine) as session:
+        try:
+            job = session.get(Job, job_id)
+            if job is None:
+                return
+            job.status = "running"
+            job.started_at = datetime.now(timezone.utc)
+            session.add(job)
+            session.commit()
+
+            items = session.exec(select(JobItem).where(JobItem.job_id == job_id)).all()
+
+            outputs = run_structured_analysis(topic_id, session, limit_chunks=limit_chunks)
+
+            completed_types = {o.output_type for o in outputs}
+            for item in items:
+                if item.item_type in completed_types:
+                    item.status = "succeeded"
+                else:
+                    item.status = "failed"
+                    item.error_message = "Not produced by analysis run"
+                session.add(item)
+
+            job.status = "succeeded"
+            job.finished_at = datetime.now(timezone.utc)
+            job.progress_current = len(completed_types)
+            job.progress_total = len(items)
+            session.add(job)
+            session.commit()
+
+        except Exception as e:
+            try:
+                job = session.get(Job, job_id)
+                if job:
+                    job.status = "failed"
+                    job.error_message = str(e)[:500]
+                    job.finished_at = datetime.now(timezone.utc)
+                    session.add(job)
+
+                    items = session.exec(select(JobItem).where(JobItem.job_id == job_id)).all()
+                    for item in items:
+                        if item.status == "pending":
+                            item.status = "failed"
+                            item.error_message = str(e)[:300]
+                            session.add(item)
+                    session.commit()
+            except Exception:
+                logger.exception("Failed to update job %s after error", job_id)

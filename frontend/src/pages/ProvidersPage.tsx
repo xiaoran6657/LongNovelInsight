@@ -32,6 +32,10 @@ export default function ProvidersPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<ModelProviderCreate>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState("");
+  const [testTargetId, setTestTargetId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [setDefaultTargetId, setSetDefaultTargetId] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["providers"],
@@ -61,9 +65,11 @@ export default function ProvidersPage() {
       setEditId(null);
       setForm(EMPTY_FORM);
       setFormErrors({});
+      setSetDefaultTargetId(null);
     },
     onError: (err: Error) => {
       setFormErrors((prev) => ({ ...prev, _form: err.message }));
+      setSetDefaultTargetId(null);
     },
   });
 
@@ -71,11 +77,23 @@ export default function ProvidersPage() {
     mutationFn: deleteProvider,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["providers"] });
+      setDeleteTargetId(null);
+      setActionError("");
+    },
+    onError: (err: Error) => {
+      setActionError(`Delete failed: ${err.message}`);
+      setDeleteTargetId(null);
     },
   });
 
   const testMut = useMutation({
     mutationFn: testProvider,
+    onSuccess: () => {
+      setTestTargetId(null);
+    },
+    onError: () => {
+      setTestTargetId(null);
+    },
   });
 
   function validate(): boolean {
@@ -139,16 +157,27 @@ export default function ProvidersPage() {
   }
 
   function handleSetDefault(id: string) {
+    setSetDefaultTargetId(id);
     updateMut.mutate({ id, data: { is_default: true } });
   }
 
   function handleDelete(id: string) {
-    if (window.confirm("Delete this provider?")) {
+    setActionError("");
+    if (window.confirm("Delete this provider? This cannot be undone.")) {
+      setDeleteTargetId(id);
       deleteMut.mutate(id);
     }
   }
 
   function handleTest(id: string) {
+    setActionError("");
+    if (
+      !window.confirm(
+        "This will call the provider API and may consume credits. Continue?"
+      )
+    )
+      return;
+    setTestTargetId(id);
     testMut.mutate(id);
   }
 
@@ -337,6 +366,12 @@ export default function ProvidersPage() {
         </div>
       )}
 
+      {actionError && (
+        <div className="card card-error" style={{ padding: "0.5rem 0.75rem", borderRadius: 4, fontSize: "0.9rem", marginBottom: "0.75rem" }}>
+          {actionError}
+        </div>
+      )}
+
       {!isLoading && !isError && providers.length === 0 && (
         <div className="card">
           <p className="text-dim">
@@ -380,27 +415,38 @@ export default function ProvidersPage() {
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.35rem", flexShrink: 0 }}>
-              <button onClick={() => handleTest(p.id)} disabled={testMut.isPending}>
-                {testMut.isPending && testMut.variables === p.id
+              <button
+                onClick={() => handleTest(p.id)}
+                disabled={testTargetId === p.id}
+              >
+                {testTargetId === p.id && testMut.isPending
                   ? "Testing..."
                   : "Test"}
               </button>
               <button onClick={() => startEdit(p)}>Edit</button>
               {!p.is_default && (
-                <button onClick={() => handleSetDefault(p.id)}>
-                  Set Default
+                <button
+                  onClick={() => handleSetDefault(p.id)}
+                  disabled={setDefaultTargetId === p.id && updateMut.isPending}
+                >
+                  {setDefaultTargetId === p.id && updateMut.isPending
+                    ? "Setting..."
+                    : "Set Default"}
                 </button>
               )}
               <button
                 className="btn-danger"
                 onClick={() => handleDelete(p.id)}
+                disabled={deleteTargetId === p.id && deleteMut.isPending}
               >
-                Delete
+                {deleteTargetId === p.id && deleteMut.isPending
+                  ? "Deleting..."
+                  : "Delete"}
               </button>
             </div>
           </div>
 
-          {testMut.data && testMut.variables === p.id && (
+          {testMut.data && testTargetId === p.id && (
             <div
               className={
                 testMut.data.success ? "test-result-ok" : "test-result-fail"
@@ -418,7 +464,7 @@ export default function ProvidersPage() {
             </div>
           )}
 
-          {testMut.isError && testMut.variables === p.id && (
+          {testMut.isError && testTargetId === p.id && (
             <div
               style={{
                 marginTop: "0.75rem",

@@ -40,6 +40,16 @@ export function listChunks(
   );
 }
 
+export interface ChunkMeta {
+  count: number;
+  total_chars: number;
+  estimated_tokens: number;
+}
+
+export function getChunksMeta(topicId: string): Promise<ChunkMeta> {
+  return apiRequest<ChunkMeta>(`/api/topics/${topicId}/chunks/meta`);
+}
+
 export function getStorage(topicId: string): Promise<StorageInfo> {
   return apiRequest<StorageInfo>(`/api/topics/${topicId}/storage`);
 }

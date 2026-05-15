@@ -1,8 +1,12 @@
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from db import get_session
 from models.analysis_output import AnalysisOutputRead
+from models.job import Job, JobRead
+from models.job_item import JobItem, JobItemRead
 from models.topic import Topic
 from services import analysis_service
 
@@ -48,6 +52,63 @@ def run_analysis(
     return {
         "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
         "count": len(outputs),
+    }
+
+
+@router.post("/run-async", status_code=201)
+def run_analysis_async(
+    topic_id: str,
+    limit_chunks: int = 5,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Start an async analysis job. Returns job immediately; poll /status for completion."""
+    _check_topic(topic_id, session)
+
+    if not analysis_service.acquire_topic_analysis_lock(topic_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Analysis is already running for this topic",
+        )
+
+    # Delete old outputs synchronously
+    analysis_service.delete_analysis_outputs(topic_id, session)
+
+    # Create job record
+    job = Job(
+        topic_id=topic_id,
+        job_type="analysis",
+        status="pending",
+        progress_total=6,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    # Create items for each type
+    types = ["overview", "characters", "relations", "events", "causality", "themes"]
+    items = []
+    for t in types:
+        item = JobItem(job_id=job.id, item_type=t, status="pending")
+        session.add(item)
+        items.append(item)
+    session.commit()
+    for item in items:
+        session.refresh(item)
+
+    # Release the lock — background thread will re-acquire
+    analysis_service.release_topic_analysis_lock(topic_id)
+
+    # Start background processing
+    thread = threading.Thread(
+        target=analysis_service.run_analysis_async,
+        args=(topic_id, job.id, limit_chunks),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "job": JobRead.model_validate(job).model_dump(),
+        "items": [JobItemRead.model_validate(i).model_dump() for i in items],
     }
 
 

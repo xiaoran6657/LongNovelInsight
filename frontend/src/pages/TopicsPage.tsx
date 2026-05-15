@@ -30,6 +30,8 @@ export default function TopicsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<TopicCreate>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
 
   const {
     data: topicData,
@@ -41,7 +43,11 @@ export default function TopicsPage() {
     queryFn: listTopics,
   });
 
-  const { data: providerData } = useQuery({
+  const {
+    data: providerData,
+    isError: providerError,
+    error: providerErr,
+  } = useQuery({
     queryKey: ["providers"],
     queryFn: listProviders,
   });
@@ -63,6 +69,12 @@ export default function TopicsPage() {
     mutationFn: deleteTopic,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["topics"] });
+      setDeleteTargetId(null);
+      setDeleteError("");
+    },
+    onError: (err: Error) => {
+      setDeleteError(`Delete failed: ${err.message}`);
+      setDeleteTargetId(null);
     },
   });
 
@@ -83,7 +95,9 @@ export default function TopicsPage() {
   }
 
   function handleDelete(id: string, name: string) {
+    setDeleteError("");
     if (window.confirm(`Delete topic "${name}"? This will remove all documents, analyses, and chat data.`)) {
+      setDeleteTargetId(id);
       deleteMut.mutate(id);
     }
   }
@@ -176,7 +190,15 @@ export default function TopicsPage() {
                   </option>
                 ))}
               </select>
-              {providers.length === 0 && (
+              {providerError && (
+                <span className="field-error">
+                  Could not load providers:{" "}
+                  {providerErr instanceof Error
+                    ? providerErr.message
+                    : "Unknown error"}
+                </span>
+              )}
+              {!providerError && providers.length === 0 && (
                 <span className="field-error">
                   No providers configured.{" "}
                   <Link to="/providers">Add one first</Link>.
@@ -217,6 +239,12 @@ export default function TopicsPage() {
           <p className="text-dim">
             {error instanceof Error ? error.message : "Unknown error"}
           </p>
+        </div>
+      )}
+
+      {deleteError && (
+        <div className="card card-error" style={{ padding: "0.5rem 0.75rem", borderRadius: 4, fontSize: "0.9rem", marginBottom: "0.75rem" }}>
+          {deleteError}
         </div>
       )}
 
@@ -278,8 +306,11 @@ export default function TopicsPage() {
               <button
                 className="btn-danger"
                 onClick={() => handleDelete(t.id, t.name)}
+                disabled={deleteTargetId === t.id && deleteMut.isPending}
               >
-                Delete
+                {deleteTargetId === t.id && deleteMut.isPending
+                  ? "Deleting..."
+                  : "Delete"}
               </button>
             </div>
           </div>
