@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 
 from sqlmodel import Session, select
 
@@ -23,6 +24,17 @@ PARTIAL_INSTRUCTION = (
     "ALWAYS include source_chunk_ids and evidence_quotes for every claim."
 )
 
+DEEPEN_INSTRUCTION = (
+    "\n\n## Deepen Mode\n"
+    "You previously produced the following analysis for the SAME text:\n"
+    "{previous_analysis}\n\n"
+    "Now re-read the excerpts and find any additional {output_type} you may have missed. "
+    "Pay special attention to minor/secondary entities, background details, and early mentions. "
+    "Merge your new findings with the previous analysis and output ONE complete result "
+    "matching the original schema exactly. Do NOT remove items from the previous analysis — "
+    "only add missing ones and correct any errors."
+)
+
 MERGE_INSTRUCTION = (
     "\n\n## Merge Mode\n"
     "You are merging multiple partial analysis results into one final output. "
@@ -36,6 +48,26 @@ MERGE_INSTRUCTION = (
 )
 
 MAX_MERGE_INPUTS = 12  # max partial results per merge level
+
+_TOPIC_ANALYSIS_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def acquire_topic_analysis_lock(topic_id: str) -> bool:
+    """Try to acquire the per-topic analysis lock. Returns True if acquired."""
+    with _LOCKS_GUARD:
+        if topic_id not in _TOPIC_ANALYSIS_LOCKS:
+            _TOPIC_ANALYSIS_LOCKS[topic_id] = threading.Lock()
+        lock = _TOPIC_ANALYSIS_LOCKS[topic_id]
+    return lock.acquire(blocking=False)
+
+
+def release_topic_analysis_lock(topic_id: str) -> None:
+    """Release the per-topic analysis lock."""
+    with _LOCKS_GUARD:
+        lock = _TOPIC_ANALYSIS_LOCKS.get(topic_id)
+    if lock is not None and lock.locked():
+        lock.release()
 
 
 def _select_provider(topic: Topic, session: Session) -> ModelProvider:
@@ -416,6 +448,10 @@ def run_structured_analysis(
         source_ids = _extract_source_ids(parsed, all_chunk_ids)
         confidence = _extract_confidence(parsed)
 
+        usage = response.usage or {}
+        prompt_tok = usage.get("prompt_tokens", 0)
+        completion_tok = usage.get("completion_tokens", 0)
+
         title_map = {
             "overview": parsed.get("title", "Work Overview"),
             "characters": f"Characters ({len(parsed.get('characters', []))} found)",
@@ -433,12 +469,124 @@ def run_structured_analysis(
             source_chunk_ids=json.dumps(source_ids),
             evidence_quotes=json.dumps(evidence_quotes, ensure_ascii=False),
             confidence=confidence,
+            prompt_tokens=prompt_tok,
+            completion_tokens=completion_tok,
         )
         session.add(output)
+        session.commit()
+        session.refresh(output)
         results.append(output)
 
-    session.commit()
     return results
+
+
+def run_single_output_type(
+    topic_id: str,
+    output_type: str,
+    session: Session,
+    limit_chunks: int = 5,
+    deepen: bool = False,
+) -> AnalysisOutput:
+    """Run analysis for a single output_type. If deepen=True, include previous output as context."""
+    topic = session.get(Topic, topic_id)
+    if topic is None:
+        raise ValueError("Topic not found")
+
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
+    if doc is None:
+        raise ValueError("No document uploaded")
+
+    chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).first()
+    if chunk is None:
+        raise ValueError("Document not parsed")
+
+    provider = _select_provider(topic, session)
+
+    context = _build_context(topic_id, limit_chunks, session)
+    all_chunk_ids = _chunk_ids_from_context(topic_id, limit_chunks, session)
+
+    client = OpenAICompatibleLLMClient(
+        base_url=provider.base_url,
+        api_key=provider.api_key,
+    )
+
+    prompt = load_prompt(output_type)
+
+    if deepen:
+        existing = session.exec(
+            select(AnalysisOutput).where(
+                AnalysisOutput.topic_id == topic_id,
+                AnalysisOutput.output_type == output_type,
+            )
+        ).first()
+        if existing:
+            try:
+                prev_json = json.loads(existing.content_json)
+                prev_str = json.dumps(prev_json, ensure_ascii=False, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                prev_str = existing.content_json
+            deepen_prompt = DEEPEN_INSTRUCTION.format(
+                previous_analysis=prev_str, output_type=output_type
+            )
+            prompt = prompt + deepen_prompt
+
+    system_msg = LLMMessage(role="system", content=prompt)
+    user_msg = LLMMessage(
+        role="user",
+        content=f"Analyze the following novel excerpts:\n\n{context}",
+    )
+
+    try:
+        response = client.chat(
+            messages=[system_msg, user_msg],
+            model=provider.model_name,
+            temperature=provider.temperature,
+            max_tokens=provider.max_output_tokens,
+            response_format={"type": "json_object"},
+        )
+    except LLMClientError as e:
+        safe = e.message.replace(provider.api_key, mask_api_key(provider.api_key))
+        raise ValueError(f"LLM error for {output_type}: {safe}") from e
+
+    try:
+        parsed = json.loads(response.content)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON response for {output_type}") from e
+
+    usage = response.usage or {}
+    prompt_tok = usage.get("prompt_tokens", 0)
+    completion_tok = usage.get("completion_tokens", 0)
+
+    evidence_quotes = _extract_evidence(parsed)
+    source_ids = _extract_source_ids(parsed, all_chunk_ids)
+    confidence = _extract_confidence(parsed)
+
+    title_map = {
+        "overview": parsed.get("title", "Work Overview"),
+        "characters": f"Characters ({len(parsed.get('characters', []))} found)",
+        "relations": f"Relationships ({len(parsed.get('relationships', []))} found)",
+        "events": f"Events ({len(parsed.get('events', []))} found)",
+        "causality": f"Causal Chains ({len(parsed.get('causal_chains', []))} found)",
+        "themes": f"Themes ({len(parsed.get('themes', []))} found)",
+    }
+
+    _delete_output_by_type(topic_id, output_type, session)
+
+    output = AnalysisOutput(
+        topic_id=topic_id,
+        output_type=output_type,
+        title=title_map.get(output_type, output_type),
+        content_json=json.dumps(parsed, ensure_ascii=False),
+        source_chunk_ids=json.dumps(source_ids),
+        evidence_quotes=json.dumps(evidence_quotes, ensure_ascii=False),
+        confidence=confidence,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+    )
+    session.add(output)
+    session.commit()
+    session.refresh(output)
+    return output
 
 
 def get_analysis_outputs(

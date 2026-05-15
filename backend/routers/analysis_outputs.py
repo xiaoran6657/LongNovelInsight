@@ -23,6 +23,13 @@ def run_analysis(
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
+
+    if not analysis_service.acquire_topic_analysis_lock(topic_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Analysis is already running for this topic",
+        )
+
     try:
         analysis_service.delete_analysis_outputs(topic_id, session)
         outputs = analysis_service.run_structured_analysis(
@@ -35,11 +42,57 @@ def run_analysis(
         else:
             status = 400
         raise HTTPException(status_code=status, detail=msg)
+    finally:
+        analysis_service.release_topic_analysis_lock(topic_id)
 
     return {
         "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
         "count": len(outputs),
     }
+
+
+@router.post("/run/{output_type}")
+def run_single_type_analysis(
+    topic_id: str,
+    output_type: str,
+    limit_chunks: int = 5,
+    deepen: bool = False,
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    valid_types = {"overview", "characters", "relations", "events", "causality", "themes"}
+    if output_type not in valid_types:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid output_type: {output_type}. Must be one of {sorted(valid_types)}",
+        )
+
+    if not analysis_service.acquire_topic_analysis_lock(topic_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Analysis is already running for this topic",
+        )
+
+    try:
+        output = analysis_service.run_single_output_type(
+            topic_id,
+            output_type,
+            session,
+            limit_chunks=limit_chunks,
+            deepen=deepen,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if any(kw in msg.lower() for kw in ("no document", "not parsed", "no provider")):
+            status = 409
+        else:
+            status = 400
+        raise HTTPException(status_code=status, detail=msg)
+    finally:
+        analysis_service.release_topic_analysis_lock(topic_id)
+
+    return {"output": AnalysisOutputRead.from_orm_with_json(output).model_dump()}
 
 
 @router.get("/outputs")

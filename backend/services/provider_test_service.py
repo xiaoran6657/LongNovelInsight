@@ -32,7 +32,7 @@ def test_provider(provider_id: str, session: Session) -> dict[str, Any]:
 
     start = time.monotonic()
     try:
-        response = client.chat(
+        client.chat(
             messages=messages,
             model=provider.model_name,
             temperature=0,

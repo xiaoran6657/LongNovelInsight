@@ -156,6 +156,8 @@ export interface AnalysisOutput {
   source_chunk_ids: string[];
   evidence_quotes: string[];
   confidence: number;
+  prompt_tokens: number;
+  completion_tokens: number;
   created_at: string;
   updated_at: string;
 }

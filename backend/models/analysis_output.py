@@ -21,6 +21,8 @@ class AnalysisOutput(SQLModel, table=True):
     source_chunk_ids: str
     evidence_quotes: str
     confidence: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -34,6 +36,8 @@ class AnalysisOutputCreate(SQLModel):
     source_chunk_ids: str
     evidence_quotes: str
     confidence: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class AnalysisOutputRead(SQLModel):
@@ -46,6 +50,8 @@ class AnalysisOutputRead(SQLModel):
     source_chunk_ids: list[str]
     evidence_quotes: list[str]
     confidence: float
+    prompt_tokens: int
+    completion_tokens: int
     created_at: datetime
     updated_at: datetime
 
@@ -63,6 +69,8 @@ class AnalysisOutputRead(SQLModel):
             source_chunk_ids=_safe_json_parse(obj.source_chunk_ids),
             evidence_quotes=_safe_json_parse(obj.evidence_quotes),
             confidence=obj.confidence,
+            prompt_tokens=obj.prompt_tokens,
+            completion_tokens=obj.completion_tokens,
             created_at=obj.created_at,
             updated_at=obj.updated_at,
         )
