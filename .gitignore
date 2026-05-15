@@ -1,5 +1,8 @@
 # Python
 __pycache__/
+
+# Tool caches
+.cache/
 *.py[cod]
 *.pyo
 *.pyd
@@ -46,7 +49,7 @@ outputs/
 **/.claude/settings.local.json
 
 # Claude / AI local workflow memory
-agent/**
+agent/
 CLAUDE.md
 
 # Python packaging / build artifacts
