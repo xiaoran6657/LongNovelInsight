@@ -22,22 +22,26 @@ backend/
 ├── config.py                # DATA_DIR, DB_PATH, UPLOAD_MAX_BYTES (200MB)
 ├── db.py                    # SQLite engine + get_session() dependency
 ├── pyproject.toml           # Dependencies: fastapi, uvicorn, sqlmodel, httpx, python-multipart
+├── provider_presets.py      # Provider preset catalog (DeepSeek, OpenAI, Qwen, Moonshot)
 ├── models/
 │   ├── enums.py             # StrEnum: AnalysisType, JobType, JobStatus, etc.
 │   ├── __init__.py          # Exports all table models → SQLModel.metadata
 │   ├── topic.py             # Topic (provider_id FK→model_provider)
 │   ├── model_provider.py    # ModelProvider (masked_api_key @property, validators)
+│   ├── topic_provider_config.py # TopicProviderConfig (topic-level config overrides)
 │   ├── document.py          # Document (topic_id unique, status, encoding)
 │   ├── chapter.py           # Chapter (chapter_index, title, char offsets)
 │   ├── chunk.py             # Chunk (text in SQLite, estimated_tokens)
 │   ├── analysis_output.py   # AnalysisOutput (content_json, evidence, confidence)
 │   ├── chat.py              # ChatSession, ChatMessage (+ ChatMessageCreate validation)
-│   ├── job.py               # Job (job_type: parse|analysis, progress)
+│   ├── job.py               # Job (job_type: parse|analysis, progress, metadata)
 │   └── job_item.py          # JobItem (item_type: AnalysisType values)
 ├── routers/
 │   ├── health.py            # GET /api/health
 │   ├── topics.py            # CRUD + enriched list/detail (document, analysis_summary)
 │   ├── model_providers.py   # CRUD + POST test (prefix: /api/providers)
+│   ├── provider_presets.py  # GET presets catalog + detect by base_url
+│   ├── topic_provider_config.py # Per-topic config, effective config, recommendation
 │   ├── documents.py         # upload, get current, delete (with cascade)
 │   ├── parse.py             # parse, chapters, chunks, storage
 │   ├── analysis_jobs.py     # job CRUD, status, cancel (two routers)
@@ -47,7 +51,9 @@ backend/
 │   ├── llm_client.py        # OpenAICompatibleLLMClient (httpx, 2 retries, 120s timeout)
 │   ├── prompt_loader.py     # Load prompt templates from prompts/ dir
 │   ├── analysis_service.py  # run_single_analysis_output + batch-map-merge pipeline
-│   ├── job_service.py       # run_analysis_job (real execution, item-level status)
+│   ├── analysis_worker.py   # Worker: run_one_analysis_type (no DB, pure LLM + retry)
+│   ├── job_service.py       # run_analysis_job (async parallel execution, bounded pool)
+│   ├── provider_config_service.py # Effective config resolution + recommendations
 │   ├── document_service.py  # upload (multi-encoding→UTF-8), delete with cascade
 │   ├── chat_service.py      # send_user_message (evidence retrieval + history + LLM)
 │   ├── retrieval_service.py # Keyword retrieval (stopwords, _make_excerpt, top_k=8)
@@ -61,10 +67,11 @@ backend/
     └── smoke_backend.py     # End-to-end smoke test (safe + --real-llm modes)
 ```
 
-## Data Model (10 tables)
+## Data Model (11 tables)
 
 ```
 ModelProvider  ?──*  Topic
+Topic          1──1  TopicProviderConfig
 Topic          1──1  Document
 Document       1──*  Chapter
 Chapter        1──*  Chunk
@@ -102,6 +109,22 @@ Job            1──*  JobItem
 | PATCH | `/api/providers/{id}` | Update |
 | DELETE | `/api/providers/{id}` | Delete (blocked if in use by Topic) |
 | POST | `/api/providers/{id}/test` | Connection test |
+
+### Provider Presets (`/api/provider-presets`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/provider-presets` | List all provider presets (DeepSeek, OpenAI, Qwen, Moonshot, Custom) |
+| GET | `/api/provider-presets/{key}` | Get one preset by provider_key |
+| GET | `/api/provider-presets/detect?base_url=...` | Detect provider preset by base_url (normalizes trailing slash) |
+
+### Topic Provider Config (`/api/topics/{id}`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/topics/{id}/provider-config` | Get topic-level config overrides |
+| PUT | `/api/topics/{id}/provider-config` | Upsert topic config overrides (model, tokens, temp, thinking, parallelism) |
+| GET | `/api/topics/{id}/provider-config/effective` | Resolve effective config (topic > provider > preset) |
+| GET | `/api/topics/{id}/analysis/recommendation` | Get model recommendation based on document size |
+| POST | `/api/topics/{id}/provider-config/apply-recommendation` | Apply recommendation to topic config |
 
 ### Topics
 | Method | Path | Description |
@@ -151,7 +174,66 @@ Job            1──*  JobItem
 | POST | `/api/chat/sessions/{id}/messages` | Send message (content validation, 422 on null/empty/non-string) |
 | DELETE | `/api/chat/sessions/{id}` | Delete session + messages |
 
-## Test Summary (159 tests, all passing)
+## Analysis Workflow
+
+### Provider Config Resolution
+
+```
+TopicProviderConfig override  >  ModelProvider default  >  ProviderPreset default
+```
+
+1. **Providers page** stores credentials and global defaults (base_url, model_name, temperature, etc.).
+2. **Topic page** stores per-novel overrides in `TopicProviderConfig` — model_name, max_output_tokens, temperature, thinking_mode, parallelism.
+3. **Effective config** merges at analysis/chat runtime. Editing a Topic's config does NOT mutate the global Provider.
+
+### Analysis Modes
+
+| Mode | Condition | Behavior |
+|------|-----------|----------|
+| `preview` | Small/medium text, limit_chunks set | Runs analysis on a subset of chunks. Fast, low cost. |
+| `direct` | Up to ~300k chars | Runs all 6 analysis types on selected chunks via async parallel jobs. |
+| `map_reduce_required` | >1M chars | Disabled in v0.1 — use preview mode or wait for v0.2 map-reduce pipeline. |
+
+**Recommendation engine** (`GET /api/topics/{id}/analysis/recommendation`) inspects document size, chunk count, estimated tokens, and selected provider to recommend: model, max_output_tokens, temperature, thinking_mode, parallelism, limit_chunks, and analysis mode.
+
+### Async Job Flow
+
+```
+POST /api/topics/{id}/analysis/jobs  →  202 (job pending)
+Frontend polls GET /api/topics/{id}/analysis/status  →  progress, timings, token usage
+Job: pending → running → succeeded / partial_success / failed / cancelled
+```
+
+- Worker threads call LLM only; main thread writes DB results.
+- Bounded parallelism via `ThreadPoolExecutor(max_workers=1-6, default=3)`.
+- Per-type retry: max 2 attempts, exponential backoff, JSON-length doubling.
+- Partial success: failed types stored in metadata; successful outputs saved.
+- Cancel marks job cancelled; in-flight LLM calls may still complete but results are discarded.
+
+### Job Metadata (token usage + timings)
+
+```json
+{
+  "parallelism": 3,
+  "model_name": "deepseek-v4-flash",
+  "thinking_mode": "disabled",
+  "type_timings": { "overview": 35.2, "characters": 68.1 },
+  "usage_by_type": {
+    "overview": { "prompt_tokens": 12000, "completion_tokens": 1000, "total_tokens": 13000 }
+  },
+  "failed_types": [{ "output_type": "causality", "error": "JSON parse failed" }]
+}
+```
+
+### Performance Recommendations
+
+- **Use fast non-thinking model** for structured extraction (e.g., `deepseek-v4-flash` with thinking disabled). Thinking mode adds latency and cost without benefiting structured JSON extraction.
+- **Set bounded parallelism** (default 3). Higher values (>4) may trigger provider rate limits.
+- **Enable thinking only when quality requires it** — primarily for complex reasoning tasks, not structured extraction.
+- **Large novels (>300k chars)** should use preview mode with limited chunks. Full direct analysis on large texts repeats selected chunks ~6 times, consuming significant API credits.
+- **v0.1 limitation**: Direct structured analysis sends selected chunks once per output_type (6 separate LLM calls with identical prefix). A future v0.2 map-reduce pipeline will reduce this overhead.
+
+## Test Summary (162 tests, all passing)
 
 | File | Tests | Key areas |
 |------|-------|-----------|
@@ -160,9 +242,9 @@ Job            1──*  JobItem
 | `test_model_providers.py` | 16 | CRUD, default uniqueness, api_key masking |
 | `test_analysis_outputs.py` | 17 | 6-type outputs, evidence, batch-merge, late characters |
 | `test_parser_service.py` | 17 | Chapter detection (CN/EN), chunking, token estimation |
-| `test_chat.py` | 15 | Session CRUD, send/validate, evidence, history, malformed JSON |
+| `test_chat.py` | 17 | Session CRUD, send/validate, evidence, history, malformed JSON |
 | `test_parse_api.py` | 13 | Parse API, chunks pagination, storage, idempotent |
-| `test_topics.py` | 13 | CRUD, provider FK, document/analysis summaries, cascade delete |
+| `test_topics.py` | 17 | CRUD, provider FK, topic config, effective config, cascade delete |
 | `test_retrieval_service.py` | 8 | Keyword match, stopwords filter, excerpt position, empty query |
 | `test_llm_client.py` | 8 | Normal/401/network/invalid JSON/empty choices/retry/api_key leak |
 | `test_model_provider_test.py` | 4 | Provider test success/404/LLM error/api_key leak |
@@ -172,10 +254,15 @@ All tests mock LLM calls. No real external API calls in CI.
 
 ## Key Design Decisions
 
+- **Provider presets**: Built-in catalog of known providers (DeepSeek, OpenAI, Qwen/Alibaba, Kimi/Moonshot) with base URLs and model metadata. Custom OpenAI-compatible providers also supported. See `provider_presets.py`.
+- **Provider vs. Topic config**: Provider stores credentials and global defaults. `TopicProviderConfig` stores per-Topic overrides (model, tokens, temperature, thinking mode, parallelism). Effective config resolves Topic override > Provider default > Preset default. Editing a Topic's config never mutates the global Provider.
+- **Async parallel jobs**: Analysis runs the 6 output types in parallel via `ThreadPoolExecutor` (bounded 1-6). Worker threads only call LLM; the main thread writes DB results. Status pollable via `GET /api/topics/{id}/analysis/status`.
+- **Prompt-cache-friendly construction**: Shared system instructions and novel chunks form a stable prefix across all 6 output-type LLM calls. Task-specific schema and instructions are appended last, maximizing cache hit rates on providers that support prompt caching.
+- **Per-type token budgets**: Each of the 6 analysis types has a tuned `max_tokens` limit (overview: 1024, characters: 3072, relations: 2048, events: 3072, causality: 2048, themes: 1536). Overridable by effective config.
+- **Retry policy**: Per-type retries (max 2) with exponential backoff for 429/5xx/timeout/rate-limit errors. JSON parse failures retry once with doubled max_tokens.
+- **Thinking mode**: DeepSeek-compatible `extra_body={"thinking": {"type": "enabled/disabled"}}`. Only sent when provider preset supports thinking. Non-thinking (disabled) recommended for structured extraction — faster, cheaper, and temperature has effect.
 - **No file-per-chunk**: v0.1 stores chunk text and analysis JSON in SQLite columns. Migration to disk files planned for v0.2.
-- **Sync execution**: Analysis and chat are synchronous. No background workers, Celery, or Redis.
 - **Batch-map-merge**: For novels with many chunks, analysis uses a two-stage pipeline: partial analysis per batch, then multi-level merge.
-- **Provider selection**: Prefers `topic.provider_id`, falls back to `is_default=True`.
 - **api_key safety**: `ModelProvider.masked_api_key` @property; all API responses exclude raw `api_key`; errors use `mask_api_key()` before logging.
 - **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()` instead of string `startswith`.
 - **Keyword retrieval**: Substring + Chinese character overlap (filtered by ~70 stopwords) + English word overlap. No vector DB.

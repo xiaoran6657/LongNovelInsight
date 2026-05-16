@@ -1,7 +1,7 @@
 # Python
 __pycache__/
 
-# Tool caches
+# Tool caches (unified under .cache/)
 .cache/
 *.py[cod]
 *.pyo

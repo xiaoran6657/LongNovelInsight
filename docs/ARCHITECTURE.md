@@ -46,13 +46,16 @@ backend/
   main.py                — FastAPI app, CORS, lifespan
   config.py              — Settings (data dir, DB path, etc.)
   db.py                  — SQLite engine + session factory
+  provider_presets.py   — Provider preset catalog (DeepSeek, OpenAI, Qwen, Moonshot)
   routers/
     health.py             — GET /api/health
     topics.py             — Topic CRUD
     documents.py          — Novel upload
     parse.py              — Chapter/chunk operations
     model_providers.py    — LLM provider config CRUD + test
-    analysis_jobs.py      — Analysis job creation & status
+    provider_presets.py   — Provider preset catalog API
+    topic_provider_config.py — Per-topic config, effective config, recommendations
+    analysis_jobs.py      — Async analysis job creation & status
     analysis_outputs.py   — Structured analysis run & results
     chat.py               — Chat sessions & messages
   models/
@@ -63,6 +66,7 @@ backend/
     chapter.py
     chunk.py
     model_provider.py
+    topic_provider_config.py — Topic-level provider config overrides
     analysis_output.py
     chat.py
     job.py
@@ -71,11 +75,13 @@ backend/
     storage.py            — File storage helpers
     document_service.py   — Upload/delete logic
     parser_service.py     — Chapter splitting, chunking, encoding detection
-    job_service.py        — Job create, list, cancel, run
+    job_service.py        — Job create, list, cancel, async parallel run
     llm_client.py         — OpenAI-compatible API client wrapper
     provider_test_service.py — Provider connection test
     prompt_loader.py      — Prompt template loading
     analysis_service.py   — Analysis pipeline orchestration
+    analysis_worker.py    — Worker: run_one_analysis_type (no DB, pure LLM + retry)
+    provider_config_service.py — Effective config resolution + recommendations
     chat_service.py       — Chat context assembly & LLM call
     retrieval_service.py  — Keyword-based chunk/analysis retrieval
   prompts/
@@ -88,7 +94,8 @@ The backend uses a flat `backend/` structure. There is no nested `backend/app/` 
 
 **Key Design Decisions:**
 - All LLM calls go through `llm_client.py` — a single thin wrapper around the OpenAI-compatible chat completions API.
-- The analysis pipeline runs analysis types as independent jobs. Each job calls the LLM, parses the structured output, and saves results to both SQLite and `data/analyses/`.
+- Analysis runs the 6 output types as parallel async jobs via `ThreadPoolExecutor`. Worker threads only call LLM; the main thread writes DB results.
+- Provider configuration has three layers: Preset catalog (built-in) → Provider (credentials + defaults) → TopicProviderConfig (per-novel overrides). Effective config resolves Topic > Provider > Preset.
 - Chat answers are assembled by: (1) keyword-matching the user's question against analysis outputs, (2) retrieving the top-N relevant chunks, (3) sending everything as context to the LLM.
 
 ### SQLite Database
@@ -97,6 +104,7 @@ Single file: `data/longnovelinsight.sqlite` (location configured in `config.py`)
 
 Tables:
 - `topic`
+- `topic_provider_config`
 - `document`
 - `chapter`
 - `chunk`
@@ -123,35 +131,70 @@ data/
 
 ### LLM Provider
 
-The backend communicates with any OpenAI-compatible chat completions API. Default: DeepSeek (`https://api.deepseek.com/v1/chat/completions`).
+The backend communicates with any OpenAI-compatible chat completions API. Default: DeepSeek (`https://api.deepseek.com`).
 
-**Provider Configuration (stored in `model_provider` table):**
-- `base_url` — API base URL
-- `api_key` — user's API key (stored locally, never transmitted elsewhere)
-- `model_name` — model identifier string
-- `temperature` — sampling temperature for analysis vs. chat
+**Provider Configuration Layers:**
+
+| Layer | Source | Stores |
+|-------|--------|--------|
+| Preset Catalog | `provider_presets.py` | Base URLs, model metadata, thinking support, defaults |
+| Provider | `model_provider` table | Credentials (api_key) + global defaults (model_name, temperature, etc.) |
+| Topic Config | `topic_provider_config` table | Per-novel overrides (model, tokens, temp, thinking, parallelism) |
+
+**Effective Config Resolution:** Topic override > Provider default > Preset default. Editing a Topic's config never mutates the global Provider.
+
+**Built-in Provider Presets:**
+- **DeepSeek** — `https://api.deepseek.com`, models: V4 Flash, V4 Pro, Chat (legacy). 1M context, JSON output, thinking mode support.
+- **OpenAI** — `https://api.openai.com/v1`, model list editable.
+- **Qwen / Alibaba Model Studio** — Singapore, Beijing, US Virginia, Hong Kong regions.
+- **Kimi / Moonshot** — `https://api.moonshot.ai/v1`.
+- **OpenAI-compatible custom** — Manual base URL, any model.
 
 **LLM Call Pattern:**
 1. Build a system prompt describing the analysis task and output format (JSON).
-2. Send chunk texts / analysis context as user messages.
+2. Send chunk texts / analysis context as user messages. Shared instructions and chunks form a stable prefix for prompt caching.
 3. Parse the JSON response. Validate required fields (`source_chunk_ids`, `evidence_quotes`, `confidence`).
 4. Store structured output.
 
 ### Analysis Pipeline
 
-1. **Parse** — Split novel into chapters (regex), then each chapter into overlapping chunks (fixed token window, e.g., 4000 tokens with 200 overlap).
-2. **Analyze** — For each of the 6 analysis types, send relevant chunks + a structured prompt to the LLM. Analysis types are independent and run in sequence (v0.1.0 — no parallel execution needed for single-user).
-3. **Store** — Save each analysis output to `data/analyses/{analysis_id}.json` and metadata to SQLite `analysis_output` table.
+1. **Recommendation** — Inspect document size, chunk count, estimated tokens, and provider to recommend model, parallelism, and analysis mode (preview/direct/map_reduce_required).
+2. **Parse** — Split novel into chapters (regex), then each chapter into overlapping chunks (fixed token window, e.g., 4000 tokens with 200 overlap).
+3. **Analyze** — For each of the 6 analysis types, send selected chunks + a structured prompt to the LLM. Analysis types run in parallel via `ThreadPoolExecutor` (bounded 1-6, default 3). Workers only call LLM and return a result dataclass; the main thread writes DB rows.
+4. **Store** — Save each analysis output to SQLite `analysis_output` table. Job metadata records per-type timings and token usage.
+
+Per-type max output tokens: overview 1024, characters 3072, relations 2048, events 3072, causality 2048, themes 1536.
+
+Retry policy: max 2 attempts per type for retryable errors (429, 5xx, timeout, rate-limit). JSON parse failures retry once with doubled max_tokens.
 
 See [LLM_PIPELINE.md](LLM_PIPELINE.md) for detailed prompt design and output schemas.
+
+### Analysis Modes
+
+| Mode | Condition | Description |
+|------|-----------|-------------|
+| `preview` | Small/medium + limit_chunks | Subset of chunks, fast and low cost |
+| `direct` | Up to ~300k chars | Full 6-type analysis via async parallel jobs |
+| `map_reduce_required` | >1M chars | Blocked in v0.1 — use preview or wait for v0.2 |
 
 ### Job System
 
 Long-running operations (parse novel, run analysis) are tracked as jobs.
 
-**Job Lifecycle:** `pending` → `running` → `done` / `failed`
-**Polling:** Frontend polls `GET /api/jobs/{job_id}` every 1-2 seconds during active jobs.
-**Implementation:** In-process background threads (v0.1.0 — no external task queue).
+**Job Lifecycle:** `pending` → `running` → `succeeded` / `partial_success` / `failed` / `cancelled`
+
+**Analysis Job Flow:**
+1. `POST /api/topics/{id}/analysis/jobs` → returns 201 with job in `pending` state.
+2. Frontend polls `GET /api/topics/{id}/analysis/status` every 2-3 seconds.
+3. Worker threads execute the 6 output types in parallel.
+4. Main thread collects results, writes AnalysisOutput rows, updates job status.
+5. If all types succeed → `succeeded`. Some fail → `partial_success` (successful outputs saved, failed types in metadata). All fail → `failed`.
+
+**Job Metadata:** Stores per-type timings (`type_timings`), token usage (`usage_by_type` with prompt/completion/cache hit/cache miss tokens), parallelism, model name, thinking mode, and failed type details.
+
+**Cancellation:** `POST /api/analysis/jobs/{id}/cancel` marks job cancelled. In-flight LLM calls may complete but results are discarded. Only pending/running jobs are cancellable.
+
+**Implementation:** In-process `ThreadPoolExecutor` (v0.1.0 — no external task queue). Worker threads do NOT receive a DB session.
 
 ## Technology Boundaries (v0.1.0)
 
