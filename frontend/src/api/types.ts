@@ -27,7 +27,7 @@ export interface ModelProviderCreate {
   provider_type: string;
   base_url: string;
   api_key: string;
-  model_name: string;
+  model_name?: string;
   context_window?: number;
   max_output_tokens?: number;
   temperature?: number;
@@ -44,6 +44,37 @@ export interface ModelProviderUpdate {
   max_output_tokens?: number;
   temperature?: number;
   is_default?: boolean;
+}
+
+// Provider Presets
+export interface ProviderModelPreset {
+  model_name: string;
+  display_name: string;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  recommended_max_output_tokens?: number | null;
+  default_temperature?: number | null;
+  supports_json_output: boolean;
+  supports_thinking: boolean;
+  default_thinking_mode: string;
+  notes?: string | null;
+  tags: string[];
+}
+
+export interface ProviderBaseUrlPreset {
+  label: string;
+  base_url: string;
+  region?: string | null;
+  provider_key: string;
+}
+
+export interface ProviderPreset {
+  provider_key: string;
+  display_name: string;
+  api_format: string;
+  base_urls: ProviderBaseUrlPreset[];
+  models: ProviderModelPreset[];
+  default_model_name?: string | null;
 }
 
 export interface ProviderTestResult {
@@ -188,6 +219,58 @@ export interface JobItem {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Topic Provider Config
+export interface TopicProviderConfigData {
+  id?: string;
+  topic_id: string;
+  provider_id?: string | null;
+  base_url_override?: string | null;
+  model_name_override?: string | null;
+  context_window_override?: number | null;
+  max_output_tokens_override?: number | null;
+  temperature_override?: number | null;
+  thinking_mode_override?: string | null;
+  reasoning_effort_override?: string | null;
+  analysis_parallelism_override?: number | null;
+  recommended_profile?: string | null;
+}
+
+export interface EffectiveProviderConfig {
+  provider_id?: string | null;
+  provider_name?: string | null;
+  provider_key?: string | null;
+  base_url?: string | null;
+  model_name?: string | null;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  temperature?: number | null;
+  thinking_mode: string;
+  reasoning_effort?: string | null;
+  analysis_parallelism: number;
+  supports_json_output: boolean;
+  supports_thinking: boolean;
+  is_ready: boolean;
+  missing_fields: string[];
+  warnings: string[];
+}
+
+export interface AnalysisRecommendation {
+  size_category: string;
+  total_chars?: number | null;
+  estimated_input_tokens?: number | null;
+  chunk_count?: number | null;
+  recommended_model_name?: string | null;
+  recommended_context_window?: number | null;
+  recommended_max_output_tokens: number;
+  recommended_temperature: number;
+  recommended_thinking_mode: string;
+  recommended_parallelism: number;
+  recommended_limit_chunks?: number | null;
+  recommended_analysis_mode: string;
+  warnings: string[];
+  rationale: string[];
 }
 
 // Chat

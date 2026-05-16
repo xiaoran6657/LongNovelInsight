@@ -3,8 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AnalysisOutput } from "../api/types";
 import AnalysisOutputCard from "../components/AnalysisOutputCard";
-import { getTopic, bindProvider } from "../api/topics";
-import { listProviders } from "../api/providers";
+import {
+  getTopic,
+  bindProvider,
+  getEffectiveConfig,
+  getAnalysisRecommendation,
+  updateTopicProviderConfig,
+} from "../api/topics";
+import { listProviders, listProviderPresets } from "../api/providers";
 import {
   uploadDocument,
   getCurrentDocument,
@@ -71,6 +77,66 @@ export default function TopicDetailPage() {
   const [bindProviderId, setBindProviderId] = useState("");
   const [bindError, setBindError] = useState("");
 
+  // Topic-level config editing
+  const [editModel, setEditModel] = useState("");
+  const [editMaxTokens, setEditMaxTokens] = useState("");
+  const [editTemp, setEditTemp] = useState("");
+  const [editThinking, setEditThinking] = useState("");
+  const [editParallel, setEditParallel] = useState("");
+  const [configDirty, setConfigDirty] = useState(false);
+  const [configSaveError, setConfigSaveError] = useState("");
+  const [configErrors, setConfigErrors] = useState<Record<string, string>>({});
+
+  function validateConfig(): boolean {
+    const errs: Record<string, string> = {};
+    if (editMaxTokens && (isNaN(Number(editMaxTokens)) || Number(editMaxTokens) <= 0)) {
+      errs.maxTokens = "Must be > 0";
+    }
+    if (editTemp) {
+      const t = Number(editTemp);
+      if (isNaN(t) || t < 0 || t > 2) errs.temp = "Must be 0–2";
+    }
+    if (editParallel) {
+      const p = Number(editParallel);
+      if (isNaN(p) || p < 1 || p > 6) errs.parallel = "Must be 1–6";
+    }
+    setConfigErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  function handleSaveConfig() {
+    if (!validateConfig()) return;
+    saveConfigMut.mutate();
+  }
+
+  function markDirty(field?: string) {
+    if (!configDirty) setConfigDirty(true);
+    setConfigSaveError("");
+    if (field && configErrors[field]) {
+      setConfigErrors((prev) => {
+        const n = { ...prev };
+        delete n[field];
+        return n;
+      });
+    }
+  }
+
+  function applyPreset(
+    model: string,
+    maxTok: number,
+    temp: number,
+    thinking: string,
+    parallel: number,
+  ) {
+    setEditModel(model);
+    setEditMaxTokens(String(maxTok));
+    setEditTemp(String(temp));
+    setEditThinking(thinking);
+    setEditParallel(String(parallel));
+    setConfigDirty(true);
+    setConfigSaveError("");
+  }
+
   // Document state
   const [uploadError, setUploadError] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -103,6 +169,51 @@ export default function TopicDetailPage() {
     queryFn: listProviders,
   });
 
+  const { data: effectiveConfig } = useQuery({
+    queryKey: ["effective-config", topicId],
+    queryFn: () => getEffectiveConfig(topicId!),
+    enabled: !!topicId,
+  });
+
+  const { data: presetData } = useQuery({
+    queryKey: ["provider-presets"],
+    queryFn: listProviderPresets,
+  });
+
+  const activePresetModels =
+    presetData?.presets.find(
+      (pr) => pr.provider_key === effectiveConfig?.provider_key
+    )?.models ?? [];
+
+  // Sync edit fields when effective config loads
+  useEffect(() => {
+    if (!effectiveConfig) return;
+    setEditModel(effectiveConfig.model_name || "");
+    setEditMaxTokens(effectiveConfig.max_output_tokens?.toString() || "");
+    setEditTemp(effectiveConfig.temperature?.toString() || "");
+    setEditThinking(effectiveConfig.thinking_mode || "disabled");
+    setEditParallel(effectiveConfig.analysis_parallelism?.toString() || "3");
+    setConfigDirty(false);
+    setConfigSaveError("");
+  }, [effectiveConfig]);
+
+  const saveConfigMut = useMutation({
+    mutationFn: () =>
+      updateTopicProviderConfig(topicId!, {
+        model_name_override: editModel || null,
+        max_output_tokens_override: editMaxTokens ? Number(editMaxTokens) : null,
+        temperature_override: editTemp ? Number(editTemp) : null,
+        thinking_mode_override: editThinking || null,
+        analysis_parallelism_override: editParallel ? Number(editParallel) : null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["effective-config", topicId] });
+      setConfigDirty(false);
+      setConfigSaveError("");
+    },
+    onError: (err: Error) => setConfigSaveError(err.message),
+  });
+
   const {
     data: doc,
     isLoading: docLoading,
@@ -115,6 +226,12 @@ export default function TopicDetailPage() {
   });
 
   const hasDoc = !!doc && !docError && !("detail" in doc);
+
+  const { data: recommendation } = useQuery({
+    queryKey: ["recommendation", topicId],
+    queryFn: () => getAnalysisRecommendation(topicId!),
+    enabled: !!topicId && !!hasDoc,
+  });
 
   const { data: chapterData } = useQuery({
     queryKey: ["chapters", topicId],
@@ -183,6 +300,8 @@ export default function TopicDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topics"] });
+      queryClient.invalidateQueries({ queryKey: ["effective-config", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation", topicId] });
       setBindError("");
       setBindProviderId("");
     },
@@ -240,6 +359,7 @@ export default function TopicDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["chunks-meta", topicId] });
       queryClient.invalidateQueries({ queryKey: ["storage", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topics"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation", topicId] });
       setParseError("");
     },
     onError: (err: Error) => setParseError(err.message),
@@ -712,28 +832,16 @@ export default function TopicDetailPage() {
         </p>
       </div>
 
-      {/* Provider */}
+      {/* Provider + Topic Config */}
       <div className="card">
         <h3>Provider</h3>
-        {boundProvider ? (
-          <div>
-            <p>
-              <strong>Bound:</strong> {boundProvider.name} (
-              {boundProvider.model_name})
-            </p>
-            <p className="text-dim" style={{ fontSize: "0.85rem" }}>
-              {boundProvider.base_url} · API Key:{" "}
-              <code>{boundProvider.masked_api_key}</code>
-            </p>
-          </div>
-        ) : (
-          <p className="text-dim">No provider bound.</p>
-        )}
+
+        {/* Provider binding */}
         <div
           style={{
             display: "flex",
             gap: "0.5rem",
-            marginTop: "0.75rem",
+            marginBottom: "0.75rem",
             alignItems: "flex-start",
           }}
         >
@@ -747,7 +855,7 @@ export default function TopicDetailPage() {
             <option value="">Select provider...</option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.model_name}){p.is_default ? " [default]" : ""}
+                {p.name}
               </option>
             ))}
           </select>
@@ -760,6 +868,405 @@ export default function TopicDetailPage() {
           </button>
           {bindError && <span className="field-error">{bindError}</span>}
         </div>
+
+        {/* Editable topic-level config */}
+        {effectiveConfig && boundProvider && (
+          <div
+            style={{
+              background: "#f9f9f9",
+              borderRadius: 4,
+              padding: "0.6rem 0.75rem",
+              fontSize: "0.83rem",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "0.4rem",
+              }}
+            >
+              <p style={{ fontWeight: 600 }}>
+                Topic Config{" "}
+                <span
+                  style={{
+                    color: effectiveConfig.is_ready ? "#27ae60" : "#e74c3c",
+                    fontSize: "0.78rem",
+                    fontWeight: 400,
+                  }}
+                >
+                  {effectiveConfig.is_ready ? "ready" : "incomplete"}
+                  {effectiveConfig.missing_fields.length > 0 &&
+                    ` (missing: ${effectiveConfig.missing_fields.join(", ")})`}
+                </span>
+              </p>
+              {configDirty && (
+                <button
+                  onClick={handleSaveConfig}
+                  disabled={saveConfigMut.isPending}
+                  style={{ fontSize: "0.78rem", padding: "0.2em 0.5em" }}
+                >
+                  {saveConfigMut.isPending ? "Saving..." : "Save"}
+                </button>
+              )}
+            </div>
+            {configSaveError && (
+              <p style={{ color: "#e74c3c", fontSize: "0.76rem", marginBottom: "0.3rem" }}>
+                {configSaveError}
+              </p>
+            )}
+            <div className="topic-config-grid">
+              {/* Model — select from presets or type manually */}
+              <label>
+                {configErrors.model && (
+                  <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
+                )}
+                Model
+                {activePresetModels.length > 0 ? (
+                  <>
+                    <select
+                      value={
+                        activePresetModels.some(
+                          (m) => m.model_name === editModel
+                        )
+                          ? editModel
+                          : editModel
+                            ? "__other__"
+                            : ""
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "__other__") {
+                          setEditModel("");
+                          markDirty("model");
+                          return;
+                        }
+                        if (!v) {
+                          setEditModel("");
+                          markDirty("model");
+                          return;
+                        }
+                        setEditModel(v);
+                        const m = activePresetModels.find(
+                          (pm) => pm.model_name === v
+                        );
+                        if (m) {
+                          if (m.recommended_max_output_tokens)
+                            setEditMaxTokens(
+                              String(m.recommended_max_output_tokens)
+                            );
+                          if (m.default_temperature != null)
+                            setEditTemp(String(m.default_temperature));
+                        }
+                        markDirty("model");
+                      }}
+                    >
+                      <option value="">Select model...</option>
+                      {activePresetModels.map((m) => (
+                        <option key={m.model_name} value={m.model_name}>
+                          {m.display_name}
+                        </option>
+                      ))}
+                      <option value="__other__">Other (type manually)...</option>
+                    </select>
+                    {(editModel === "" ||
+                      !activePresetModels.some(
+                        (m) => m.model_name === editModel
+                      )) && (
+                      <input
+                        type="text"
+                        value={
+                          activePresetModels.some(
+                            (m) => m.model_name === editModel
+                          )
+                            ? ""
+                            : editModel
+                        }
+                        onChange={(e) => {
+                          setEditModel(e.target.value);
+                          markDirty("model");
+                        }}
+                        placeholder="Type custom model name..."
+                        style={{ marginTop: "0.25rem" }}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    value={editModel}
+                    onChange={(e) => {
+                      setEditModel(e.target.value);
+                      markDirty("model");
+                    }}
+                    placeholder={
+                      effectiveConfig.model_name || "e.g. deepseek-chat"
+                    }
+                  />
+                )}
+              </label>
+
+              {/* Max Tokens */}
+              <label>
+                {configErrors.maxTokens && (
+                  <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
+                )}
+                Max Tokens
+                <input
+                  type="number"
+                  min={1}
+                  value={editMaxTokens}
+                  onChange={(e) => {
+                    setEditMaxTokens(e.target.value);
+                    markDirty("maxTokens");
+                  }}
+                  placeholder={
+                    effectiveConfig.max_output_tokens?.toString() || "2048"
+                  }
+                />
+                {configErrors.maxTokens && (
+                  <span className="field-error">{configErrors.maxTokens}</span>
+                )}
+              </label>
+
+              {/* Temperature */}
+              <label>
+                {configErrors.temp && (
+                  <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
+                )}
+                Temperature (0–2)
+                <input
+                  type="number"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={editTemp}
+                  onChange={(e) => {
+                    setEditTemp(e.target.value);
+                    markDirty("temp");
+                  }}
+                  placeholder={
+                    effectiveConfig.temperature?.toString() || "0.1"
+                  }
+                />
+                {configErrors.temp && (
+                  <span className="field-error">{configErrors.temp}</span>
+                )}
+              </label>
+
+              {/* Thinking */}
+              <label>
+                Thinking
+                <select
+                  value={editThinking}
+                  onChange={(e) => {
+                    setEditThinking(e.target.value);
+                    markDirty();
+                  }}
+                >
+                  <option value="disabled">Disabled</option>
+                  <option value="enabled">Enabled</option>
+                  <option value="provider_default">Provider Default</option>
+                </select>
+              </label>
+
+              {/* Parallelism */}
+              <label>
+                {configErrors.parallel && (
+                  <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
+                )}
+                Parallelism (1–6)
+                <input
+                  type="number"
+                  min={1}
+                  max={6}
+                  value={editParallel}
+                  onChange={(e) => {
+                    setEditParallel(e.target.value);
+                    markDirty("parallel");
+                  }}
+                  placeholder={
+                    effectiveConfig.analysis_parallelism?.toString() || "3"
+                  }
+                />
+                {configErrors.parallel && (
+                  <span className="field-error">{configErrors.parallel}</span>
+                )}
+              </label>
+            </div>
+          </div>
+        )}
+
+        {!boundProvider && (
+          <p className="text-dim" style={{ marginBottom: "0.5rem" }}>
+            Select a provider above to configure analysis settings.
+          </p>
+        )}
+
+        {/* Recommendation — only when parsed */}
+        {recommendation && isParsed && (() => {
+          const sz = recommendation.size_category;
+          const isLarge = sz === "large" || sz === "huge";
+          // Larger files → denser first N chunks → more characters/events
+          // → need more output tokens to fit the JSON. Parallelism scales
+          // down for larger files to reduce API rate pressure.
+          const fastTokens =
+            sz === "small" ? 2048 : sz === "medium" ? 3072 : sz === "large" ? 4096 : 5120;
+          const fastParallel =
+            sz === "small" ? 6 : sz === "medium" ? 4 : sz === "large" ? 3 : 2;
+          const qualityTokens =
+            sz === "small" ? 4096 : sz === "medium" ? 8192 : sz === "large" ? 12288 : 16384;
+          const qualityParallel =
+            sz === "small" ? 4 : sz === "medium" ? 3 : 2;
+          const limitC = recommendation.recommended_limit_chunks;
+
+          return (
+            <div style={{ fontSize: "0.82rem" }}>
+              <p style={{ fontWeight: 600, marginBottom: "0.4rem" }}>
+                Recommended Configs (
+                {recommendation.total_chars != null
+                  ? `${(recommendation.total_chars / 1000).toFixed(0)}K chars · `
+                  : ""}
+                {sz} text)
+              </p>
+
+              {isLarge && (
+                <p
+                  style={{
+                    color: "#dc2626",
+                    fontSize: "0.78rem",
+                    fontWeight: 600,
+                    marginBottom: "0.5rem",
+                    background: "#fef2f2",
+                    padding: "0.35rem 0.5rem",
+                    borderRadius: 4,
+                  }}
+                >
+                  Large file detected — direct analysis sends selected chunks 6×.
+                  Start with small limit_chunks (1–3) to test before scaling up.
+                </p>
+              )}
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "0.5rem",
+                }}
+              >
+                {/* Fast mode */}
+                <div
+                  style={{
+                    border: "1px solid #86efac",
+                    borderRadius: 6,
+                    padding: "0.5rem 0.65rem",
+                    background: "#f0fdf4",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontWeight: 600,
+                      color: "#166534",
+                      fontSize: "0.82rem",
+                      marginBottom: "0.2rem",
+                    }}
+                  >
+                    Fast · Low Cost
+                  </p>
+                  <div
+                    style={{
+                      fontSize: "0.76rem",
+                      color: "#555",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <p>Model: deepseek-v4-flash</p>
+                    <p>Tokens: {fastTokens.toLocaleString()} · Temp: 0.1</p>
+                    <p>Thinking: disabled</p>
+                    <p>Parallel: {fastParallel}</p>
+                    {limitC != null && <p>Chunks: {limitC}</p>}
+                  </div>
+                  <button
+                    onClick={() =>
+                      applyPreset("deepseek-v4-flash", fastTokens, 0.1, "disabled", fastParallel)
+                    }
+                    disabled={saveConfigMut.isPending}
+                    style={{
+                      marginTop: "0.3rem",
+                      fontSize: "0.72rem",
+                      padding: "0.15em 0.5em",
+                      width: "100%",
+                    }}
+                  >
+                    Apply Fast
+                  </button>
+                </div>
+
+                {/* Quality mode */}
+                <div
+                  style={{
+                    border: "1px solid #fcd34d",
+                    borderRadius: 6,
+                    padding: "0.5rem 0.65rem",
+                    background: "#fffbeb",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontWeight: 600,
+                      color: "#92400e",
+                      fontSize: "0.82rem",
+                      marginBottom: "0.2rem",
+                    }}
+                  >
+                    Quality · Detailed
+                  </p>
+                  <div
+                    style={{
+                      fontSize: "0.76rem",
+                      color: "#555",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <p>Model: deepseek-v4-pro</p>
+                    <p>Tokens: {qualityTokens.toLocaleString()} · Temp: 0.0</p>
+                    <p>Thinking: disabled</p>
+                    <p>Parallel: {qualityParallel}</p>
+                    {limitC != null && <p>Chunks: {limitC}</p>}
+                  </div>
+                  <button
+                    onClick={() =>
+                      applyPreset("deepseek-v4-pro", qualityTokens, 0.0, "disabled", qualityParallel)
+                    }
+                    disabled={saveConfigMut.isPending}
+                    style={{
+                      marginTop: "0.3rem",
+                      fontSize: "0.72rem",
+                      padding: "0.15em 0.5em",
+                      width: "100%",
+                    }}
+                  >
+                    Apply Quality
+                  </button>
+                </div>
+              </div>
+
+              {recommendation.warnings.length > 0 && (
+                <p
+                  style={{
+                    color: "#dc2626",
+                    fontSize: "0.76rem",
+                    marginTop: "0.4rem",
+                  }}
+                >
+                  {recommendation.warnings.join(" ")}
+                </p>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Document */}

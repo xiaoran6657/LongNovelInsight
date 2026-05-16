@@ -32,7 +32,9 @@ def _resolve_effective(
         select(TopicProviderConfig).where(TopicProviderConfig.topic_id == topic_id)
     ).first()
 
-    provider_id = tpc.provider_id if tpc else topic.provider_id
+    provider_id = (
+        tpc.provider_id if (tpc and tpc.provider_id) else topic.provider_id
+    )
     provider = None
     if provider_id:
         provider = session.get(ModelProvider, provider_id)

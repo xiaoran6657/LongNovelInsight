@@ -442,3 +442,37 @@ a:hover {
   padding: 0.1em 0.4em;
   border-radius: 3px;
 }
+
+/* ── Topic config ── */
+
+.topic-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem 0.75rem;
+}
+
+.topic-config-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #666;
+}
+
+.topic-config-grid input[type="text"],
+.topic-config-grid input[type="number"],
+.topic-config-grid select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.topic-config-grid input:focus,
+.topic-config-grid select:focus {
+  outline: none;
+  border-color: #4fc3f7;
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.2);
+}

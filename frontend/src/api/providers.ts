@@ -3,6 +3,7 @@ import type {
   ModelProvider,
   ModelProviderCreate,
   ModelProviderUpdate,
+  ProviderPreset,
   ProviderTestResult,
 } from "./types";
 
@@ -47,4 +48,26 @@ export function testProvider(id: string): Promise<ProviderTestResult> {
   return apiRequest<ProviderTestResult>(`/api/providers/${id}/test`, {
     method: "POST",
   });
+}
+
+// Provider Presets
+
+interface PresetListResponse {
+  presets: ProviderPreset[];
+}
+
+export function listProviderPresets(): Promise<PresetListResponse> {
+  return apiRequest<PresetListResponse>("/api/provider-presets");
+}
+
+export function getProviderPreset(providerKey: string): Promise<ProviderPreset> {
+  return apiRequest<ProviderPreset>(`/api/provider-presets/${providerKey}`);
+}
+
+export function detectProviderPreset(
+  baseUrl: string
+): Promise<ProviderPreset> {
+  return apiRequest<ProviderPreset>(
+    `/api/provider-presets/detect?base_url=${encodeURIComponent(baseUrl)}`
+  );
 }
