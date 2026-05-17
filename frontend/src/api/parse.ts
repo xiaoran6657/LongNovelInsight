@@ -15,8 +15,12 @@ interface ChunkListParams {
   offset?: number;
 }
 
-export function parseTopic(topicId: string): Promise<ParseResult> {
-  return apiRequest<ParseResult>(`/api/topics/${topicId}/parse`, {
+export function parseTopic(
+  topicId: string,
+  force?: boolean
+): Promise<ParseResult> {
+  const qs = force ? "?force=true" : "";
+  return apiRequest<ParseResult>(`/api/topics/${topicId}/parse${qs}`, {
     method: "POST",
   });
 }

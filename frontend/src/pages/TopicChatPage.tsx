@@ -9,8 +9,15 @@ import {
   deleteChatMessage,
   deleteChatSession,
 } from "../api/chat";
-import { getTopic } from "../api/topics";
-import type { ChatSessionRead, ChatMessageRead } from "../api/types";
+import { getTopic, getEffectiveConfig, updateTopicProviderConfig } from "../api/topics";
+import { listProviderPresets } from "../api/providers";
+import { listChunks } from "../api/parse";
+import type {
+  ChatSessionRead,
+  ChatMessageRead,
+  EffectiveProviderConfig,
+  ProviderPreset,
+} from "../api/types";
 
 function fmtTime(iso: string): string {
   try {
@@ -106,6 +113,10 @@ export default function TopicChatPage() {
         content,
         evidence_json: null,
         uncertainty: null,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        model_used: null,
         created_at: new Date().toISOString(),
       };
       queryClient.setQueryData(["chatMessages", activeSessionId], {
@@ -168,6 +179,10 @@ export default function TopicChatPage() {
         content,
         evidence_json: null,
         uncertainty: null,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        model_used: null,
         created_at: new Date().toISOString(),
       };
       queryClient.setQueryData(["chatMessages", activeSessionId], {
@@ -192,6 +207,119 @@ export default function TopicChatPage() {
   });
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [rightTab, setRightTab] = useState<"config" | "source">("config");
+
+  // Resizable panel widths (pixels)
+  const [sidebarWidth, setSidebarWidth] = useState(220);
+  const [rightPanelWidth, setRightPanelWidth] = useState(280);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const rightPanelRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{
+    side: "left" | "right";
+    startX: number;
+    startW: number;
+    el: HTMLElement;
+  } | null>(null);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!dragRef.current) return;
+      const delta = e.clientX - dragRef.current.startX;
+      const w =
+        dragRef.current.side === "left"
+          ? Math.max(140, Math.min(500, dragRef.current.startW + delta))
+          : Math.max(180, Math.min(500, dragRef.current.startW - delta));
+      dragRef.current.el.style.width = w + "px";
+      dragRef.current.el.style.transition = "none";
+    }
+    function onUp() {
+      if (!dragRef.current) return;
+      dragRef.current.el.style.transition = "";
+      if (dragRef.current.side === "left") {
+        setSidebarWidth(parseInt(dragRef.current.el.style.width));
+      } else {
+        setRightPanelWidth(parseInt(dragRef.current.el.style.width));
+      }
+      dragRef.current = null;
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  // Effective provider config for right panel
+  const effConfigQuery = useQuery({
+    queryKey: ["effectiveConfig", topicId],
+    queryFn: () => getEffectiveConfig(topicId!),
+    enabled: !!topicId && rightPanelOpen,
+  });
+
+  // Chunks with text for source tab
+  const chunksQuery = useQuery({
+    queryKey: ["chunksWithText", topicId],
+    queryFn: () => listChunks(topicId!, { include_text: true }),
+    enabled: !!topicId && rightPanelOpen && rightTab === "source",
+  });
+
+  // Usage stats from messages
+  const usageStats = computeUsageStats(
+    messagesQuery.data?.messages ?? [],
+    effConfigQuery.data
+  );
+
+  // Provider presets for model dropdown
+  const presetsQuery = useQuery({
+    queryKey: ["providerPresets"],
+    queryFn: listProviderPresets,
+    enabled: rightPanelOpen,
+  });
+
+  // Editable config state
+  const [editModel, setEditModel] = useState("");
+  const [editMaxTokens, setEditMaxTokens] = useState("");
+  const [editTemp, setEditTemp] = useState("");
+  const [editThinking, setEditThinking] = useState("");
+  const [configDirty, setConfigDirty] = useState(false);
+  const [configSaveError, setConfigSaveError] = useState("");
+
+  // Init edit state from effective config
+  const configDirtyRef = useRef(false);
+  useEffect(() => {
+    if (!effConfigQuery.data || configDirtyRef.current) return;
+    setEditModel(effConfigQuery.data.model_name || "");
+    setEditMaxTokens(effConfigQuery.data.max_output_tokens?.toString() || "");
+    setEditTemp(effConfigQuery.data.temperature?.toString() || "");
+    setEditThinking(effConfigQuery.data.thinking_mode || "disabled");
+  }, [effConfigQuery.data]);
+
+  function markDirty() {
+    if (!configDirty) { setConfigDirty(true); configDirtyRef.current = true; }
+    setConfigSaveError("");
+  }
+
+  const saveConfigMut = useMutation({
+    mutationFn: () =>
+      updateTopicProviderConfig(topicId!, {
+        model_name_override: editModel || null,
+        max_output_tokens_override: editMaxTokens ? Number(editMaxTokens) : null,
+        temperature_override: editTemp ? Number(editTemp) : null,
+        thinking_mode_override:
+          (editThinking as "enabled" | "disabled" | "provider_default") || null,
+      }),
+    onSuccess: () => {
+      setConfigDirty(false);
+      configDirtyRef.current = false;
+      setConfigSaveError("");
+      queryClient.invalidateQueries({ queryKey: ["effectiveConfig", topicId] });
+    },
+    onError: (err) => {
+      setConfigSaveError((err as Error)?.message || "Save failed");
+    },
+  });
 
   const sessions: ChatSessionRead[] = sessionsQuery.data?.sessions ?? [];
 
@@ -218,12 +346,15 @@ export default function TopicChatPage() {
       <div className="chat-layout">
         {/* ── Session sidebar ── */}
         <aside
+          ref={sidebarRef}
           className="chat-sidebar"
           style={{
-            width: sidebarOpen ? "14rem" : "2.2rem",
+            width: sidebarOpen ? sidebarWidth : 36,
+            minWidth: sidebarOpen ? 140 : 36,
             paddingRight: sidebarOpen ? "0.75rem" : "0.3rem",
             overflow: sidebarOpen ? "auto" : "visible",
-            transition: "width 0.2s, padding-right 0.2s",
+            borderRight: "none",
+            transition: dragRef.current ? "none" : "width 0.2s, min-width 0.2s",
           }}
         >
           <div
@@ -338,6 +469,24 @@ export default function TopicChatPage() {
             </>
           )}
         </aside>
+
+        {/* Divider: sidebar ↔ chat */}
+        <div
+          onMouseDown={(e) => {
+            const el = sidebarRef.current;
+            if (!el) return;
+            dragRef.current = { side: "left", startX: e.clientX, startW: el.offsetWidth, el };
+          }}
+          style={{
+            width: 6,
+            flexShrink: 0,
+            cursor: "col-resize",
+            background: dragRef.current?.side === "left" ? "#4fc3f7" : "#e0e0e0",
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => { if (!dragRef.current) (e.target as HTMLElement).style.background = "#bbb"; }}
+          onMouseLeave={(e) => { if (!dragRef.current) (e.target as HTMLElement).style.background = "#e0e0e0"; }}
+        />
 
         {/* ── Messages panel ── */}
         <section className="chat-messages-panel">
@@ -460,7 +609,563 @@ export default function TopicChatPage() {
             </>
           )}
         </section>
+
+        {/* Divider: chat ↔ right panel */}
+        <div
+          onMouseDown={(e) => {
+            const el = rightPanelRef.current;
+            if (!el) return;
+            dragRef.current = { side: "right", startX: e.clientX, startW: el.offsetWidth, el };
+          }}
+          style={{
+            width: 6,
+            flexShrink: 0,
+            cursor: "col-resize",
+            background: dragRef.current?.side === "right" ? "#4fc3f7" : "#e0e0e0",
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => { if (!dragRef.current) (e.target as HTMLElement).style.background = "#bbb"; }}
+          onMouseLeave={(e) => { if (!dragRef.current) (e.target as HTMLElement).style.background = "#e0e0e0"; }}
+        />
+
+        {/* ── Right panel ── */}
+        <aside
+          ref={rightPanelRef}
+          style={{
+            width: rightPanelOpen ? rightPanelWidth : 36,
+            minWidth: rightPanelOpen ? 180 : 36,
+            flexShrink: 0,
+            paddingLeft: rightPanelOpen ? "0.75rem" : "0.3rem",
+            display: "flex",
+            flexDirection: "column",
+            overflow: rightPanelOpen ? "auto" : "visible",
+            transition: dragRef.current ? "none" : "width 0.2s, padding-left 0.2s",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: rightPanelOpen ? "space-between" : "center",
+              marginBottom: "0.5rem",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={() => setRightPanelOpen((v) => !v)}
+              title={rightPanelOpen ? "Collapse panel" : "Expand panel"}
+              style={{
+                fontSize: "0.8rem",
+                padding: "0.15rem 0.35rem",
+                lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              {rightPanelOpen ? "▶" : "◀"}
+            </button>
+          </div>
+
+          {rightPanelOpen && (
+            <>
+              {/* Tabs */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 0,
+                  borderBottom: "1px solid #e0e0e0",
+                  marginBottom: "0.5rem",
+                  flexShrink: 0,
+                }}
+              >
+                <button
+                  onClick={() => setRightTab("config")}
+                  style={{
+                    flex: 1,
+                    padding: "0.3rem 0.4rem",
+                    fontSize: "0.75rem",
+                    fontWeight: rightTab === "config" ? 700 : 400,
+                    border: "none",
+                    borderBottom:
+                      rightTab === "config"
+                        ? "2px solid #4fc3f7"
+                        : "2px solid transparent",
+                    background: "transparent",
+                    cursor: "pointer",
+                    borderRadius: 0,
+                    color: rightTab === "config" ? "#333" : "#888",
+                  }}
+                >
+                  Config & Usage
+                </button>
+                <button
+                  onClick={() => setRightTab("source")}
+                  style={{
+                    flex: 1,
+                    padding: "0.3rem 0.4rem",
+                    fontSize: "0.75rem",
+                    fontWeight: rightTab === "source" ? 700 : 400,
+                    border: "none",
+                    borderBottom:
+                      rightTab === "source"
+                        ? "2px solid #4fc3f7"
+                        : "2px solid transparent",
+                    background: "transparent",
+                    cursor: "pointer",
+                    borderRadius: 0,
+                    color: rightTab === "source" ? "#333" : "#888",
+                  }}
+                >
+                  Source
+                </button>
+              </div>
+
+              {/* Tab content */}
+              <div style={{ flex: 1, overflow: "auto", fontSize: "0.78rem" }}>
+                {rightTab === "config" ? (
+                  <RightConfigTab
+                    config={effConfigQuery.data ?? null}
+                    loading={effConfigQuery.isLoading}
+                    usage={usageStats}
+                    presets={presetsQuery.data?.presets ?? []}
+                    editModel={editModel}
+                    editMaxTokens={editMaxTokens}
+                    editTemp={editTemp}
+                    editThinking={editThinking}
+                    configDirty={configDirty}
+                    configSaveError={configSaveError}
+                    savePending={saveConfigMut.isPending}
+                    onModelChange={(v) => { setEditModel(v); markDirty(); }}
+                    onMaxTokensChange={(v) => { setEditMaxTokens(v); markDirty(); }}
+                    onTempChange={(v) => { setEditTemp(v); markDirty(); }}
+                    onThinkingChange={(v) => { setEditThinking(v); markDirty(); }}
+                    onSave={() => saveConfigMut.mutate()}
+                    onCancel={() => {
+                      const c = effConfigQuery.data;
+                      setEditModel(c?.model_name || "");
+                      setEditMaxTokens(c?.max_output_tokens?.toString() || "");
+                      setEditTemp(c?.temperature?.toString() || "");
+                      setEditThinking(c?.thinking_mode || "disabled");
+                      setConfigDirty(false);
+                      configDirtyRef.current = false;
+                      setConfigSaveError("");
+                    }}
+                  />
+                ) : (
+                  <RightSourceTab
+                    chunks={chunksQuery.data?.chunks ?? null}
+                    loading={chunksQuery.isLoading}
+                    error={chunksQuery.isError}
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </aside>
       </div>
+    </div>
+  );
+}
+
+/* ── Usage stats helper ── */
+
+interface ModelUsage {
+  questions: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+function computeUsageStats(
+  messages: ChatMessageRead[],
+  _config: EffectiveProviderConfig | undefined | null
+) {
+  const byModel: Record<string, ModelUsage> = {};
+
+  for (const m of messages) {
+    if (m.role !== "user") {
+      const model = m.model_used || "unknown";
+      if (!byModel[model]) byModel[model] = { questions: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      byModel[model].promptTokens += m.prompt_tokens;
+      byModel[model].completionTokens += m.completion_tokens;
+      byModel[model].totalTokens += m.total_tokens;
+    }
+  }
+
+  // Count questions per model by finding user messages that precede each assistant message
+  const assistantMessages = messages.filter((m) => m.role === "assistant");
+  for (const am of assistantMessages) {
+    const model = am.model_used || "unknown";
+    if (byModel[model]) byModel[model].questions += 1;
+  }
+
+  return { byModel };
+}
+
+/* ── Right panel: Config & Usage tab ── */
+
+function RightConfigTab({
+  config,
+  loading,
+  usage,
+  presets,
+  editModel,
+  editMaxTokens,
+  editTemp,
+  editThinking,
+  configDirty,
+  configSaveError,
+  savePending,
+  onModelChange,
+  onMaxTokensChange,
+  onTempChange,
+  onThinkingChange,
+  onSave,
+  onCancel,
+}: {
+  config: EffectiveProviderConfig | null;
+  loading: boolean;
+  usage: ReturnType<typeof computeUsageStats>;
+  presets: ProviderPreset[];
+  editModel: string;
+  editMaxTokens: string;
+  editTemp: string;
+  editThinking: string;
+  configDirty: boolean;
+  configSaveError: string;
+  savePending: boolean;
+  onModelChange: (v: string) => void;
+  onMaxTokensChange: (v: string) => void;
+  onTempChange: (v: string) => void;
+  onThinkingChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  if (loading) return <p className="text-dim">Loading...</p>;
+  if (!config)
+    return <p className="text-dim">No provider configured for this Topic.</p>;
+
+  const currentPreset = presets.find(
+    (p) => p.provider_key === config.provider_key
+  );
+  const presetModels = currentPreset?.models ?? [];
+  const isManualModel =
+    !!editModel && !presetModels.some((m) => m.model_name === editModel);
+
+  return (
+    <div>
+      {/* Provider config card */}
+      <div
+        style={{
+          border: "1px solid #e0e0e0",
+          borderRadius: 6,
+          padding: "0.5rem",
+          marginBottom: "0.75rem",
+          background: "#fafafa",
+        }}
+      >
+        <p style={{ fontWeight: 600, fontSize: "0.8rem", marginBottom: "0.35rem" }}>
+          Provider Config
+        </p>
+
+        {/* Model */}
+        <FieldLabel>Model</FieldLabel>
+        {presetModels.length > 0 ? (
+          <>
+            <select
+              value={
+                presetModels.some((m) => m.model_name === editModel)
+                  ? editModel
+                  : editModel
+                    ? "__other__"
+                    : ""
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__other__") { onModelChange(""); return; }
+                if (!v) { onModelChange(""); return; }
+                onModelChange(v);
+              }}
+              style={fieldInputStyle}
+            >
+              <option value="">Inherit ({config.model_name || "none"})</option>
+              {presetModels.map((m) => (
+                <option key={m.model_name} value={m.model_name}>
+                  {m.display_name}
+                </option>
+              ))}
+              <option value="__other__">Other (type)...</option>
+            </select>
+            {isManualModel && (
+              <input
+                type="text"
+                value={editModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                placeholder="Custom model name..."
+                style={{ ...fieldInputStyle, marginTop: "0.2rem" }}
+              />
+            )}
+          </>
+        ) : (
+          <input
+            type="text"
+            value={editModel}
+            onChange={(e) => onModelChange(e.target.value)}
+            placeholder={config.model_name || "e.g. deepseek-chat"}
+            style={fieldInputStyle}
+          />
+        )}
+
+        {/* Max Tokens */}
+        <FieldLabel>Max Tokens</FieldLabel>
+        <div style={{ display: "flex", gap: "0.15rem", alignItems: "center" }}>
+          <button
+            type="button"
+            onMouseDown={() => {
+              const v = Number(editMaxTokens) || config.max_output_tokens || 2048;
+              onMaxTokensChange(String(Math.max(512, v - 1)));
+            }}
+            style={miniBtnStyle}
+          >
+            −
+          </button>
+          <input
+            type="number"
+            min={512}
+            max={16384}
+            value={editMaxTokens}
+            onChange={(e) => onMaxTokensChange(e.target.value)}
+            onBlur={(e) => {
+              const v = Number(e.target.value);
+              if (e.target.value && !isNaN(v))
+                onMaxTokensChange(String(Math.max(512, Math.min(16384, v))));
+            }}
+            placeholder={config.max_output_tokens?.toString() || "2048"}
+            className="no-spinner"
+            style={{ ...fieldInputStyle, textAlign: "center", width: "100%" }}
+          />
+          <button
+            type="button"
+            onMouseDown={() => {
+              const v = Number(editMaxTokens) || config.max_output_tokens || 2048;
+              onMaxTokensChange(String(Math.min(16384, v + 1)));
+            }}
+            style={miniBtnStyle}
+          >
+            +
+          </button>
+        </div>
+
+        {/* Temperature */}
+        <FieldLabel>Temperature (0–2)</FieldLabel>
+        <input
+          type="number"
+          min={0}
+          max={2}
+          step={0.1}
+          value={editTemp}
+          onChange={(e) => onTempChange(e.target.value)}
+          placeholder={config.temperature?.toString() || "0.1"}
+          style={fieldInputStyle}
+        />
+
+        {/* Thinking */}
+        <FieldLabel>Thinking</FieldLabel>
+        <select
+          value={editThinking}
+          onChange={(e) => onThinkingChange(e.target.value)}
+          style={fieldInputStyle}
+        >
+          <option value="disabled">disabled</option>
+          <option value="enabled">enabled</option>
+          <option value="provider_default">provider default</option>
+        </select>
+
+        {/* Base URL (read-only) */}
+        <FieldLabel>Base URL</FieldLabel>
+        <p style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.1rem", wordBreak: "break-all" }}>
+          {config.base_url || "—"}
+        </p>
+
+        {/* Save / Cancel */}
+        {configDirty && (
+          <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.5rem" }}>
+            <button
+              onClick={onSave}
+              disabled={savePending}
+              style={{ flex: 1, fontSize: "0.72rem" }}
+            >
+              {savePending ? "Saving..." : "Save"}
+            </button>
+            <button
+              onClick={onCancel}
+              disabled={savePending}
+              style={{ flex: 1, fontSize: "0.72rem" }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {configSaveError && (
+          <p className="field-error" style={{ marginTop: "0.25rem" }}>
+            {configSaveError}
+          </p>
+        )}
+        <p
+          style={{
+            fontSize: "0.6rem",
+            color: "#aaa",
+            marginTop: "0.35rem",
+            fontStyle: "italic",
+          }}
+        >
+          Edits apply to this Topic only and affect subsequent chat messages.
+        </p>
+      </div>
+
+      {/* Usage card */}
+      <div
+        style={{
+          border: "1px solid #e0e0e0",
+          borderRadius: 6,
+          padding: "0.5rem",
+          background: "#fafafa",
+        }}
+      >
+        <p style={{ fontWeight: 600, fontSize: "0.8rem", marginBottom: "0.35rem" }}>
+          Chat Usage
+        </p>
+        {Object.keys(usage.byModel).length === 0 ? (
+          <p className="text-dim" style={{ fontSize: "0.72rem" }}>
+            No messages yet.
+          </p>
+        ) : (
+          Object.entries(usage.byModel).map(([model, stats], i) => (
+            <div
+              key={model}
+              style={{
+                marginBottom: i < Object.keys(usage.byModel).length - 1 ? "0.5rem" : 0,
+              }}
+            >
+              <p
+                style={{
+                  fontWeight: 600,
+                  fontSize: "0.72rem",
+                  color: "#1565c0",
+                  marginBottom: "0.2rem",
+                  wordBreak: "break-all",
+                }}
+              >
+                {model}
+              </p>
+              <UsageRow label="Requests" value={String(stats.questions)} />
+              <UsageRow label="Prompt" value={`${stats.promptTokens.toLocaleString()} tok`} />
+              <UsageRow label="Completion" value={`${stats.completionTokens.toLocaleString()} tok`} />
+              <UsageRow label="Total" value={`${stats.totalTokens.toLocaleString()} tok`} last />
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+const fieldInputStyle: React.CSSProperties = {
+  width: "100%",
+  fontSize: "0.75rem",
+  padding: "0.25rem 0.35rem",
+  border: "1px solid #ccc",
+  borderRadius: 4,
+  fontFamily: "inherit",
+  marginTop: "0.1rem",
+  marginBottom: "0.35rem",
+};
+
+const miniBtnStyle: React.CSSProperties = {
+  width: "1.4rem",
+  height: "1.4rem",
+  fontSize: "0.85rem",
+  fontWeight: 700,
+  lineHeight: 1,
+  cursor: "pointer",
+  flexShrink: 0,
+  padding: 0,
+};
+
+function FieldLabel({ children }: { children: string }) {
+  return (
+    <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#888" }}>
+      {children}
+    </span>
+  );
+}
+
+function UsageRow({
+  label,
+  value,
+  last,
+}: {
+  label: string;
+  value: string;
+  last?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        padding: "0.18rem 0",
+        borderBottom: last ? "none" : "1px solid #f0f0f0",
+      }}
+    >
+      <span style={{ color: "#888" }}>{label}</span>
+      <span style={{ fontWeight: 500, textAlign: "right", wordBreak: "break-all" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/* ── Right panel: Source text tab ── */
+
+function RightSourceTab({
+  chunks,
+  loading,
+  error,
+}: {
+  chunks: { id: string; chapter_index: number; text: string }[] | null;
+  loading: boolean;
+  error: boolean;
+}) {
+  if (loading) return <p className="text-dim">Loading source text...</p>;
+  if (error) return <p className="field-error">Failed to load source text.</p>;
+  if (!chunks || chunks.length === 0)
+    return <p className="text-dim">No parsed content for this Topic.</p>;
+
+  return (
+    <div style={{ fontSize: "0.78rem", lineHeight: 1.7 }}>
+      {chunks.map((chunk) => (
+        <div
+          key={chunk.id}
+          style={{
+            marginBottom: "0.75rem",
+            padding: "0.4rem 0.5rem",
+            border: "1px solid #f0f0f0",
+            borderRadius: 4,
+            background: "#fafafa",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "0.65rem",
+              color: "#999",
+              marginBottom: "0.2rem",
+            }}
+          >
+            Chapter {chunk.chapter_index} — Chunk {chunk.id.slice(0, 8)}
+          </p>
+          <p style={{ whiteSpace: "pre-wrap" }}>{chunk.text}</p>
+        </div>
+      ))}
     </div>
   );
 }

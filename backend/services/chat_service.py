@@ -215,6 +215,8 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
             max_tokens=provider.max_output_tokens,
             response_format={"type": "json_object"},
         )
+        usage = response.usage or {}
+        model_used = response.model or provider.model_name
     except LLMClientError as e:
         logger.error(
             "LLM call failed for chat: %s",
@@ -242,6 +244,10 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
             content=response.content,
             evidence_json=None,
             uncertainty="LLM response was not valid JSON",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            model_used=model_used,
         )
         session.add(assistant_msg)
         session.commit()
@@ -258,6 +264,10 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         content=answer,
         evidence_json=(json.dumps(evidence_list, ensure_ascii=False) if evidence_list else None),
         uncertainty=uncertainty,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        total_tokens=usage.get("total_tokens", 0),
+        model_used=model_used,
     )
     session.add(assistant_msg)
     session.commit()

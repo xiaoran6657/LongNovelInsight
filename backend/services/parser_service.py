@@ -3,6 +3,7 @@ import re
 
 from sqlmodel import Session, select
 
+from models.analysis_output import AnalysisOutput
 from models.chapter import Chapter
 from models.chunk import Chunk
 from models.document import Document
@@ -40,6 +41,15 @@ def _estimate_tokens(char_count: int) -> int:
     return max(1, math.ceil(char_count / 1.5))
 
 
+def _normalize_text(text: str) -> str:
+    """Collapse excessive blank lines and trim per-line trailing whitespace."""
+    import re
+
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)  # strip trailing spaces
+    text = re.sub(r"\n{3,}", "\n\n", text)  # max 1 blank line between paragraphs
+    return text.strip("\n")
+
+
 def _split_into_chunks(text: str, chapter_start: int, chapter_end: int) -> list[tuple[int, int]]:
     length = chapter_end - chapter_start
     if length <= MAX_CHUNK_CHARS:
@@ -63,7 +73,7 @@ def _get_doc_by_topic(topic_id: str, session: Session) -> Document | None:
     return session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
 
-def parse_novel(topic_id: str, session: Session) -> dict:
+def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
     topic = session.get(Topic, topic_id)
     if topic is None:
         raise ValueError("Topic not found")
@@ -75,6 +85,33 @@ def parse_novel(topic_id: str, session: Session) -> dict:
     txt_path = storage.get_original_txt_path(topic_id)
     if not txt_path.exists():
         raise ValueError("Original text file not found")
+
+    # Check if already parsed
+    existing_chunk = session.exec(
+        select(Chunk).where(Chunk.topic_id == topic_id).limit(1)
+    ).first()
+    has_outputs = (
+        session.exec(
+            select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
+        ).first()
+        is not None
+    )
+
+    if existing_chunk and not force:
+        chapters = session.exec(
+            select(Chapter).where(Chapter.topic_id == topic_id)
+        ).all()
+        chunks = session.exec(
+            select(Chunk).where(Chunk.topic_id == topic_id)
+        ).all()
+        return {
+            "already_parsed": True,
+            "chapter_count": len(chapters),
+            "chunk_count": len(chunks),
+            "char_count": sum(c.char_count for c in chunks),
+            "estimated_tokens": sum(c.estimated_tokens for c in chunks),
+            "has_outputs": has_outputs,
+        }
 
     text = txt_path.read_text(encoding="utf-8")
 
@@ -118,7 +155,7 @@ def parse_novel(topic_id: str, session: Session) -> dict:
 
         chunk_spans = _split_into_chunks(text, ch_start, ch_end)
         for ci, (cs, ce) in enumerate(chunk_spans):
-            chunk_text = text[cs:ce]
+            chunk_text = _normalize_text(text[cs:ce])
             chunk = Chunk(
                 topic_id=topic_id,
                 document_id=doc.id,
@@ -146,9 +183,15 @@ def parse_novel(topic_id: str, session: Session) -> dict:
 
     total_estimated_tokens = sum(c.estimated_tokens for c in all_chunks)
 
-    return {
+    result: dict = {
         "chapter_count": len(chapter_models),
         "chunk_count": len(all_chunks),
         "char_count": total_chars,
         "estimated_tokens": total_estimated_tokens,
     }
+    if force and has_outputs:
+        result["warning"] = (
+            "Re-parse completed. Existing analysis outputs reference old chunk IDs "
+            "and should be re-run to stay consistent with the new parse."
+        )
+    return result

@@ -28,7 +28,11 @@ def _check_document(topic_id: str, session: Session) -> Document:
 
 
 @router.post("/parse")
-def parse(topic_id: str, session: Session = Depends(get_session)) -> dict:
+def parse(
+    topic_id: str,
+    force: bool = Query(False),
+    session: Session = Depends(get_session),
+) -> dict:
     _check_topic(topic_id, session)
     _check_document(topic_id, session)
 
@@ -37,7 +41,7 @@ def parse(topic_id: str, session: Session = Depends(get_session)) -> dict:
         raise HTTPException(status_code=409, detail="Original text file not found on disk")
 
     try:
-        result = parser_service.parse_novel(topic_id, session)
+        result = parser_service.parse_novel(topic_id, session, force=force)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 

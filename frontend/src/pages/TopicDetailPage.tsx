@@ -389,7 +389,7 @@ export default function TopicDetailPage() {
   });
 
   const parseMut = useMutation({
-    mutationFn: () => parseTopic(topicId!),
+    mutationFn: (force?: boolean) => parseTopic(topicId!, force),
     onSuccess: (data) => {
       // Optimistically update topic status and chunk count so UI updates immediately
       queryClient.setQueryData(["topic", topicId], (old: unknown) => {
@@ -759,9 +759,9 @@ export default function TopicDetailPage() {
     }
   }
 
-  function handleParse() {
+  function handleParse(force?: boolean) {
     setParseError("");
-    parseMut.mutate();
+    parseMut.mutate(force);
   }
 
   function handleRunAnalysis() {
@@ -1468,7 +1468,7 @@ export default function TopicDetailPage() {
       <div className="card">
         <h3>Parse</h3>
         <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", alignItems: "center" }}>
-          <button onClick={handleParse} disabled={!hasDoc || parseMut.isPending}>
+          <button onClick={() => handleParse()} disabled={!hasDoc || parseMut.isPending}>
             {parseMut.isPending ? "Parsing..." : "Parse Document"}
           </button>
           {!hasDoc && (
@@ -1495,19 +1495,41 @@ export default function TopicDetailPage() {
         {parseMut.isSuccess && (
           <div
             style={{
-              background: "#f0fff5",
+              background: parseMut.data.already_parsed ? "#f0f4ff" : "#f0fff5",
               padding: "0.75rem",
               borderRadius: 4,
               fontSize: "0.88rem",
             }}
           >
-            <p className="status-ok">Parse complete</p>
+            <p className="status-ok">
+              {parseMut.data.already_parsed ? "Already parsed" : "Parse complete"}
+            </p>
             <p>
               <strong>Chapters:</strong> {parseMut.data.chapter_count} ·{" "}
               <strong>Chunks:</strong> {parseMut.data.chunk_count} ·{" "}
               <strong>Estimated tokens:</strong>{" "}
               {parseMut.data.estimated_tokens.toLocaleString()}
             </p>
+            {parseMut.data.already_parsed && (
+              <button
+                onClick={() => handleParse(true)}
+                style={{ marginTop: "0.5rem", fontSize: "0.78rem" }}
+              >
+                Force Re-parse
+              </button>
+            )}
+            {parseMut.data.warning && (
+              <p
+                style={{
+                  marginTop: "0.5rem",
+                  color: "#b45309",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                }}
+              >
+                {parseMut.data.warning}
+              </p>
+            )}
           </div>
         )}
 

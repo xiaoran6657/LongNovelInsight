@@ -133,10 +133,13 @@ export interface Document {
 
 // Parse
 export interface ParseResult {
+  already_parsed?: boolean;
   chapter_count: number;
   chunk_count: number;
   char_count: number;
   estimated_tokens: number;
+  has_outputs?: boolean;
+  warning?: string;
 }
 
 export interface Chapter {
@@ -289,6 +292,10 @@ export interface ChatMessageRead {
   content: string;
   evidence_json: string | null;
   uncertainty: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  model_used: string | null;
   created_at: string;
 }
 

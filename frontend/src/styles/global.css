@@ -490,6 +490,11 @@ a:hover {
 
 /* ── Chat page ── */
 
+.main:has(.chat-layout) {
+  max-width: none;
+  padding: 1rem 1.5rem;
+}
+
 .chat-layout {
   display: flex;
   gap: 1rem;

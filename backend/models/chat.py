@@ -24,6 +24,10 @@ class ChatMessage(SQLModel, table=True):
     content: str
     evidence_json: str | None = None
     uncertainty: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    model_used: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -66,6 +70,10 @@ class ChatMessageRead(SQLModel):
     content: str
     evidence_json: str | None = None
     uncertainty: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    model_used: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
