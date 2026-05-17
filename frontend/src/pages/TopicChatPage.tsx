@@ -342,10 +342,23 @@ export default function TopicChatPage() {
 
               {/* Input box */}
               <div className="chat-input-area">
-                <div style={{ display: "flex", gap: "0.35rem" }}>
+                <div style={{ display: "flex", gap: "0.35rem", alignItems: "flex-end" }}>
                   <textarea
+                    ref={(el) => {
+                      if (el) {
+                        el.style.height = "auto";
+                        el.style.height = el.scrollHeight + "px";
+                      }
+                    }}
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      requestAnimationFrame(() => {
+                        const t = e.target;
+                        t.style.height = "auto";
+                        t.style.height = t.scrollHeight + "px";
+                      });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
@@ -361,8 +374,29 @@ export default function TopicChatPage() {
                         : "Ask a question about the novel... (Enter to send, Shift+Enter for newline)"
                     }
                     disabled={sendMut.isPending}
-                    rows={2}
-                    style={{ flex: 1, resize: "none", fontSize: "0.85rem" }}
+                    rows={1}
+                    style={{
+                      flex: 1,
+                      fontSize: "0.85rem",
+                      fontFamily: "inherit",
+                      padding: "0.5rem 0.6rem",
+                      border: "1px solid #bdbdbd",
+                      borderRadius: 6,
+                      background: "#fafafa",
+                      outline: "none",
+                      resize: "none",
+                      overflow: "hidden",
+                      transition: "border-color 0.15s",
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = "#4fc3f7";
+                      e.target.style.boxShadow =
+                        "0 0 0 2px rgba(79,195,247,0.2)";
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = "#bdbdbd";
+                      e.target.style.boxShadow = "none";
+                    }}
                   />
                   <button
                     onClick={() => {
