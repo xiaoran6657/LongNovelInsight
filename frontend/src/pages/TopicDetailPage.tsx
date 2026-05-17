@@ -72,6 +72,8 @@ export default function TopicDetailPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const runAnalysisInFlightRef = useRef(false);
+  const maxTokensTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const maxTokensHoldRef = useRef(0);
 
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
@@ -89,8 +91,8 @@ export default function TopicDetailPage() {
 
   function validateConfig(): boolean {
     const errs: Record<string, string> = {};
-    if (editMaxTokens && (isNaN(Number(editMaxTokens)) || Number(editMaxTokens) <= 0)) {
-      errs.maxTokens = "Must be > 0";
+    if (editMaxTokens && (isNaN(Number(editMaxTokens)) || Number(editMaxTokens) < 512)) {
+      errs.maxTokens = "Minimum 512 tokens";
     }
     if (editTemp) {
       const t = Number(editTemp);
@@ -118,6 +120,54 @@ export default function TopicDetailPage() {
         delete n[field];
         return n;
       });
+    }
+  }
+
+  function maxTokensWarning(raw: string): string | null {
+    const v = Number(raw);
+    if (!raw || isNaN(v)) return null;
+    if (v < 512) return null; // error state, handled by validation
+    if (v < 1024)
+      return "Below 1024 — JSON output may be truncated for complex types like characters or events.";
+    if (v > 12288)
+      return "Above 12288 — unnecessary for structured extraction; consider lowering to reduce API cost.";
+    return null;
+  }
+
+  function clampTokens(v: number) {
+    return Math.max(512, Math.min(16384, v));
+  }
+
+  function startMaxTokensChange(direction: 1 | -1) {
+    const input = document.querySelector(
+      '[data-max-tokens-input]'
+    ) as HTMLInputElement | null;
+    const read = (): number => {
+      const raw = input?.value || input?.placeholder || "2048";
+      const v = Number(raw);
+      return isNaN(v) ? 2048 : v;
+    };
+
+    const current = read();
+    setEditMaxTokens(String(clampTokens(current + direction)));
+    markDirty("maxTokens");
+
+    maxTokensHoldRef.current = Date.now();
+    maxTokensTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - maxTokensHoldRef.current;
+      const val = read();
+      let step = 1;
+      if (elapsed > 3000) step = 100;
+      else if (elapsed > 1000) step = 10;
+      setEditMaxTokens(String(clampTokens(val + direction * step)));
+      markDirty("maxTokens");
+    }, 60);
+  }
+
+  function stopMaxTokensChange() {
+    if (maxTokensTimerRef.current !== null) {
+      clearInterval(maxTokensTimerRef.current);
+      maxTokensTimerRef.current = null;
     }
   }
 
@@ -1010,25 +1060,95 @@ export default function TopicDetailPage() {
 
               {/* Max Tokens */}
               <label>
-                {configErrors.maxTokens && (
-                  <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
-                )}
-                Max Tokens
-                <input
-                  type="number"
-                  min={1}
-                  value={editMaxTokens}
-                  onChange={(e) => {
-                    setEditMaxTokens(e.target.value);
-                    markDirty("maxTokens");
+                <span>
+                  {configErrors.maxTokens && (
+                    <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>
+                  )}
+                  Max Tokens
+                </span>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
                   }}
-                  placeholder={
-                    effectiveConfig.max_output_tokens?.toString() || "2048"
-                  }
-                />
-                {configErrors.maxTokens && (
+                >
+                  <button
+                    type="button"
+                    onMouseDown={() => startMaxTokensChange(-1)}
+                    onMouseUp={stopMaxTokensChange}
+                    onMouseLeave={stopMaxTokensChange}
+                    onContextMenu={(e) => e.preventDefault()}
+                    style={{
+                      width: "1.65rem",
+                      height: "1.65rem",
+                      fontSize: "0.95rem",
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      cursor: "pointer",
+                      userSelect: "none",
+                      flexShrink: 0,
+                    }}
+                    title="Hold to decrease continuously"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min={512}
+                    max={16384}
+                    value={editMaxTokens}
+                    onChange={(e) => {
+                      setEditMaxTokens(e.target.value);
+                      markDirty("maxTokens");
+                    }}
+                    onBlur={(e) => {
+                      const v = Number(e.target.value);
+                      if (e.target.value && !isNaN(v)) {
+                        setEditMaxTokens(String(clampTokens(v)));
+                      }
+                    }}
+                    placeholder={
+                      effectiveConfig.max_output_tokens?.toString() || "2048"
+                    }
+                    className="no-spinner"
+                    style={{ flex: 1, textAlign: "center", minWidth: 0 }}
+                    data-max-tokens-input
+                  />
+                  <button
+                    type="button"
+                    onMouseDown={() => startMaxTokensChange(1)}
+                    onMouseUp={stopMaxTokensChange}
+                    onMouseLeave={stopMaxTokensChange}
+                    onContextMenu={(e) => e.preventDefault()}
+                    style={{
+                      width: "1.65rem",
+                      height: "1.65rem",
+                      fontSize: "0.95rem",
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      cursor: "pointer",
+                      userSelect: "none",
+                      flexShrink: 0,
+                    }}
+                    title="Hold to increase continuously"
+                  >
+                    +
+                  </button>
+                </div>
+                {configErrors.maxTokens ? (
                   <span className="field-error">{configErrors.maxTokens}</span>
-                )}
+                ) : maxTokensWarning(editMaxTokens) ? (
+                  <span
+                    style={{
+                      color: "#b45309",
+                      fontSize: "0.72rem",
+                      fontWeight: 400,
+                    }}
+                  >
+                    {maxTokensWarning(editMaxTokens)}
+                  </span>
+                ) : null}
               </label>
 
               {/* Temperature */}
@@ -1232,13 +1352,13 @@ export default function TopicDetailPage() {
                   >
                     <p>Model: deepseek-v4-pro</p>
                     <p>Tokens: {qualityTokens.toLocaleString()} · Temp: 0.0</p>
-                    <p>Thinking: disabled</p>
+                    <p>Thinking: enabled</p>
                     <p>Parallel: {qualityParallel}</p>
                     {limitC != null && <p>Chunks: {limitC}</p>}
                   </div>
                   <button
                     onClick={() =>
-                      applyPreset("deepseek-v4-pro", qualityTokens, 0.0, "disabled", qualityParallel)
+                      applyPreset("deepseek-v4-pro", qualityTokens, 0.0, "enabled", qualityParallel)
                     }
                     disabled={saveConfigMut.isPending}
                     style={{

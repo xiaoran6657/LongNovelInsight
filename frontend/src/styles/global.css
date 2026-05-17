@@ -476,3 +476,14 @@ a:hover {
   border-color: #4fc3f7;
   box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.2);
 }
+
+/* Hide native number-input spinner arrows */
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.no-spinner::-webkit-inner-spin-button,
+.no-spinner::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
