@@ -13,7 +13,10 @@ import type { ChatSessionRead, ChatMessageRead } from "../api/types";
 
 function fmtTime(iso: string): string {
   try {
-    const d = new Date(iso);
+    // Backend stores UTC; if the ISO string lacks a timezone marker, append Z
+    const normalized = /[+\-Zz]\d*$/.test(iso.trimEnd()) ? iso : iso + "Z";
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return iso;
     return d.toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -82,14 +85,46 @@ export default function TopicChatPage() {
 
   // Send message
   const [draft, setDraft] = useState("");
+  const optimisticIdRef = useRef(0);
   const sendMut = useMutation({
     mutationFn: ({ sid, content }: { sid: string; content: string }) =>
       sendChatMessage(sid, content),
-    onSuccess: () => {
+    onMutate: async ({ content }) => {
+      setDraft("");
+      await queryClient.cancelQueries({
+        queryKey: ["chatMessages", activeSessionId],
+      });
+      const prev = queryClient.getQueryData<{
+        messages: ChatMessageRead[];
+        total: number;
+      }>(["chatMessages", activeSessionId]);
+      const opt: ChatMessageRead = {
+        id: `optimistic-${++optimisticIdRef.current}`,
+        session_id: activeSessionId!,
+        role: "user",
+        content,
+        evidence_json: null,
+        uncertainty: null,
+        created_at: new Date().toISOString(),
+      };
+      queryClient.setQueryData(["chatMessages", activeSessionId], {
+        messages: [...(prev?.messages ?? []), opt],
+        total: (prev?.total ?? 0) + 1,
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) {
+        queryClient.setQueryData(
+          ["chatMessages", activeSessionId],
+          ctx.prev
+        );
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: ["chatMessages", activeSessionId],
       });
-      setDraft("");
     },
   });
 
@@ -320,8 +355,8 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
           maxWidth: "82%",
           padding: "0.5rem 0.7rem",
           borderRadius: 8,
-          background: isUser ? "#e3f2fd" : "#f5f5f5",
-          border: isUser ? "1px solid #bbdefb" : "1px solid #e0e0e0",
+          background: isUser ? "#e3f2fd" : "#fff8e1",
+          border: isUser ? "1px solid #bbdefb" : "1px solid #ffe0b2",
           fontSize: "0.85rem",
           lineHeight: 1.55,
           whiteSpace: "pre-wrap",
