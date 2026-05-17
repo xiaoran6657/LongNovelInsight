@@ -543,18 +543,33 @@ function ChatBubble({
 
         {/* Content or edit mode */}
         {editing ? (
-          <div>
+          <div style={{ minWidth: "28rem", maxWidth: "100%" }}>
             <textarea
+              ref={(el) => {
+                if (el) {
+                  el.style.height = "auto";
+                  el.style.height = el.scrollHeight + "px";
+                }
+              }}
               value={editText}
-              onChange={(e) => setEditText(e.target.value)}
-              rows={Math.max(2, editText.split("\n").length)}
+              onChange={(e) => {
+                setEditText(e.target.value);
+                // Auto-resize on next tick after React re-render
+                requestAnimationFrame(() => {
+                  const t = e.target;
+                  t.style.height = "auto";
+                  t.style.height = t.scrollHeight + "px";
+                });
+              }}
+              rows={1}
               disabled={isResending}
               style={{
                 width: "100%",
+                minWidth: "28rem",
                 fontSize: "0.85rem",
-                resize: "vertical",
                 fontFamily: "inherit",
                 padding: "0.35rem",
+                overflow: "hidden",
               }}
             />
             <div
