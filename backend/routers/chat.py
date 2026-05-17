@@ -94,3 +94,14 @@ def delete_session(
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": True}
+
+
+@session_router.delete("/messages/{message_id}")
+def delete_message(
+    message_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    ok = chat_service.delete_chat_message(message_id, session)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"deleted": True}

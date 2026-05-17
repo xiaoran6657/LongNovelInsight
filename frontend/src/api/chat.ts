@@ -46,6 +46,15 @@ export function sendChatMessage(
   );
 }
 
+export function deleteChatMessage(
+  messageId: string
+): Promise<{ deleted: boolean }> {
+  return apiRequest<{ deleted: boolean }>(
+    `/api/chat/sessions/messages/${messageId}`,
+    { method: "DELETE" }
+  );
+}
+
 export function deleteChatSession(
   sessionId: string
 ): Promise<{ deleted: boolean }> {

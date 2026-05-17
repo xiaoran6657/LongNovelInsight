@@ -6,6 +6,7 @@ import {
   listChatSessions,
   listChatMessages,
   sendChatMessage,
+  deleteChatMessage,
   deleteChatSession,
 } from "../api/chat";
 import { getTopic } from "../api/topics";
@@ -89,6 +90,68 @@ export default function TopicChatPage() {
   const sendMut = useMutation({
     mutationFn: ({ sid, content }: { sid: string; content: string }) =>
       sendChatMessage(sid, content),
+    onMutate: async ({ content }) => {
+      setDraft("");
+      await queryClient.cancelQueries({
+        queryKey: ["chatMessages", activeSessionId],
+      });
+      const prev = queryClient.getQueryData<{
+        messages: ChatMessageRead[];
+        total: number;
+      }>(["chatMessages", activeSessionId]);
+      const opt: ChatMessageRead = {
+        id: `optimistic-${++optimisticIdRef.current}`,
+        session_id: activeSessionId!,
+        role: "user",
+        content,
+        evidence_json: null,
+        uncertainty: null,
+        created_at: new Date().toISOString(),
+      };
+      queryClient.setQueryData(["chatMessages", activeSessionId], {
+        messages: [...(prev?.messages ?? []), opt],
+        total: (prev?.total ?? 0) + 1,
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) {
+        queryClient.setQueryData(
+          ["chatMessages", activeSessionId],
+          ctx.prev
+        );
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["chatMessages", activeSessionId],
+      });
+    },
+  });
+
+  // Delete message (with confirmation handled in ChatBubble)
+  const deleteMsgMut = useMutation({
+    mutationFn: (msgId: string) => deleteChatMessage(msgId),
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["chatMessages", activeSessionId],
+      });
+    },
+  });
+
+  // Edit & resend: delete old pair, then send new content
+  const editResendMut = useMutation({
+    mutationFn: async ({
+      oldMsgId,
+      content,
+    }: {
+      oldMsgId: string;
+      content: string;
+    }) => {
+      await deleteChatMessage(oldMsgId);
+      await new Promise((r) => setTimeout(r, 100)); // let backend commit
+      return sendChatMessage(activeSessionId!, content);
+    },
     onMutate: async ({ content }) => {
       setDraft("");
       await queryClient.cancelQueries({
@@ -262,7 +325,15 @@ export default function TopicChatPage() {
                       </p>
                     )}
                     {(messagesQuery.data?.messages ?? []).map((msg: ChatMessageRead) => (
-                      <ChatBubble key={msg.id} message={msg} />
+                      <ChatBubble
+                        key={msg.id}
+                        message={msg}
+                        onDelete={(id) => deleteMsgMut.mutate(id)}
+                        onEditResend={(id, content) =>
+                          editResendMut.mutate({ oldMsgId: id, content })
+                        }
+                        isResending={editResendMut.isPending}
+                      />
                     ))}
                     <div ref={messagesEndRef} />
                   </>
@@ -326,11 +397,87 @@ export default function TopicChatPage() {
 
 /* ── Chat bubble ── */
 
-function ChatBubble({ message }: { message: ChatMessageRead }) {
+const ACTION_BTN_STYLE: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid transparent",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontSize: "0.9rem",
+  padding: "0.1rem 0.3rem",
+  lineHeight: 1,
+  position: "relative",
+};
+
+function ActionBtn({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        style={{
+          ...ACTION_BTN_STYLE,
+          background: hover ? "#eee" : "transparent",
+        }}
+      >
+        {icon}
+      </button>
+      {hover && (
+        <span
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            fontSize: "0.6rem",
+            color: "#555",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            marginTop: 2,
+          }}
+        >
+          {label}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ChatBubble({
+  message,
+  onDelete,
+  onEditResend,
+  isResending,
+}: {
+  message: ChatMessageRead;
+  onDelete: (id: string) => void;
+  onEditResend: (id: string, content: string) => void;
+  isResending: boolean;
+}) {
   const isUser = message.role === "user";
+  const isOptimistic = message.id.startsWith("optimistic-");
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(message.content);
+  const [hover, setHover] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   let evidence: unknown = null;
   let uncertainty: string | null = null;
-
   if (!isUser) {
     try {
       evidence = message.evidence_json
@@ -342,6 +489,20 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
     uncertainty = message.uncertainty;
   }
 
+  function handleCopy() {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  function handleEditSend() {
+    const trimmed = editText.trim();
+    if (!trimmed || isResending) return;
+    onEditResend(message.id, trimmed);
+    setEditing(false);
+  }
+
   return (
     <div
       style={{
@@ -349,6 +510,8 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
         justifyContent: isUser ? "flex-end" : "flex-start",
         marginBottom: "0.6rem",
       }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
       <div
         style={{
@@ -361,6 +524,8 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
           lineHeight: 1.55,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
+          position: "relative",
+          opacity: isOptimistic ? 0.7 : 1,
         }}
       >
         {/* Role label */}
@@ -373,65 +538,108 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
           }}
         >
           {isUser ? "You" : "Assistant"}
+          {isOptimistic && " (sending...)"}
         </div>
 
-        {/* Content */}
-        <div>{message.content}</div>
-
-        {/* Evidence */}
-        {!isUser && Array.isArray(evidence) && (evidence as unknown[]).length > 0 && (
-          <div
-            style={{
-              marginTop: "0.5rem",
-              borderTop: "1px solid #ddd",
-              paddingTop: "0.35rem",
-              fontSize: "0.75rem",
-              color: "#555",
-            }}
-          >
-            <p style={{ fontWeight: 600, marginBottom: "0.2rem" }}>
-              Evidence ({String((evidence as unknown[]).length)})
-            </p>
-            <ul style={{ paddingLeft: "1.2rem", margin: 0 }}>
-              {(evidence as unknown[]).map((eq, i) => (
-                <li key={i} style={{ marginBottom: "0.15rem" }}>
-                  {typeof eq === "string" ? eq : JSON.stringify(eq)}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Uncertainty */}
-        {!isUser && uncertainty && (
-          <div
-            style={{
-              marginTop: "0.5rem",
-              borderTop: "1px solid #fcd34d",
-              paddingTop: "0.35rem",
-              fontSize: "0.73rem",
-              color: "#92400e",
-              fontStyle: "italic",
-            }}
-          >
-            Uncertainty: {uncertainty}
-          </div>
-        )}
-
-        {/* Evidence empty state */}
-        {!isUser &&
-          (!evidence ||
-            (Array.isArray(evidence) && (evidence as unknown[]).length === 0)) && (
+        {/* Content or edit mode */}
+        {editing ? (
+          <div>
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={Math.max(2, editText.split("\n").length)}
+              disabled={isResending}
+              style={{
+                width: "100%",
+                fontSize: "0.85rem",
+                resize: "vertical",
+                fontFamily: "inherit",
+                padding: "0.35rem",
+              }}
+            />
             <div
               style={{
+                display: "flex",
+                gap: "0.35rem",
                 marginTop: "0.35rem",
-                fontSize: "0.7rem",
-                color: "#999",
+                justifyContent: "flex-end",
               }}
             >
-              No evidence cited
+              <button
+                onClick={() => {
+                  setEditing(false);
+                  setEditText(message.content);
+                }}
+                disabled={isResending}
+                style={{ fontSize: "0.72rem" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditSend}
+                disabled={!editText.trim() || isResending}
+                style={{ fontSize: "0.72rem" }}
+              >
+                {isResending ? "..." : "Resend"}
+              </button>
             </div>
-          )}
+          </div>
+        ) : (
+          <div>{message.content}</div>
+        )}
+
+        {/* Evidence — assistant only */}
+        {!isUser && !editing && (
+          <>
+            {Array.isArray(evidence) &&
+            (evidence as unknown[]).length > 0 ? (
+              <div
+                style={{
+                  marginTop: "0.5rem",
+                  borderTop: "1px solid #ddd",
+                  paddingTop: "0.35rem",
+                  fontSize: "0.75rem",
+                  color: "#555",
+                }}
+              >
+                <p style={{ fontWeight: 600, marginBottom: "0.2rem" }}>
+                  Evidence ({String((evidence as unknown[]).length)})
+                </p>
+                <ul style={{ paddingLeft: "1.2rem", margin: 0 }}>
+                  {(evidence as unknown[]).map((eq, i) => (
+                    <li key={i} style={{ marginBottom: "0.15rem" }}>
+                      {typeof eq === "string" ? eq : JSON.stringify(eq)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: "0.35rem",
+                  fontSize: "0.7rem",
+                  color: "#999",
+                }}
+              >
+                No evidence cited
+              </div>
+            )}
+            {uncertainty && (
+              <div
+                style={{
+                  marginTop: "0.5rem",
+                  borderTop: "1px solid #fcd34d",
+                  paddingTop: "0.35rem",
+                  fontSize: "0.73rem",
+                  color: "#92400e",
+                  fontStyle: "italic",
+                }}
+              >
+                Uncertainty: {uncertainty}
+              </div>
+            )}
+          </>
+        )}
 
         {/* Timestamp */}
         <div
@@ -440,6 +648,68 @@ function ChatBubble({ message }: { message: ChatMessageRead }) {
         >
           {fmtTime(message.created_at)}
         </div>
+
+        {/* Action buttons — shown on hover */}
+        {hover && !editing && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "0.25rem",
+              right: "0.3rem",
+              display: "flex",
+              gap: "0.15rem",
+              background: "rgba(255,255,255,0.85)",
+              borderRadius: 6,
+              padding: "0.1rem 0.2rem",
+            }}
+          >
+            <ActionBtn
+              icon={copied ? "✓" : "⎘"}
+              label={copied ? "Copied" : "Copy"}
+              onClick={handleCopy}
+            />
+            {isUser && !isOptimistic && (
+              <>
+                <ActionBtn
+                  icon={"✎"}
+                  label="Edit"
+                  onClick={() => {
+                    setEditText(message.content);
+                    setEditing(true);
+                  }}
+                />
+                <ActionBtn
+                  icon={"✗"}
+                  label="Delete"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Delete this message and the LLM response below it?\n\nThis cannot be undone."
+                      )
+                    ) {
+                      onDelete(message.id);
+                    }
+                  }}
+                />
+              </>
+            )}
+            {!isUser && !isOptimistic && (
+              <ActionBtn
+                icon={"✗"}
+                label="Delete"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Delete this LLM response? The question will remain."
+                    )
+                  ) {
+                    onDelete(message.id);
+                  }
+                }}
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

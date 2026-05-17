@@ -61,6 +61,30 @@ def get_chat_messages(session_id: str, session: Session) -> list[ChatMessage]:
     )
 
 
+def delete_chat_message(message_id: str, session: Session) -> bool:
+    """Delete a user message and the assistant response immediately after it."""
+    msg = session.get(ChatMessage, message_id)
+    if msg is None:
+        return False
+    session_id = msg.session_id
+
+    # Find the next message (chronologically) — if it's an assistant reply, delete it too
+    next_msgs = list(
+        session.exec(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .where(ChatMessage.created_at > msg.created_at)
+            .order_by(ChatMessage.created_at)
+            .limit(1)
+        ).all()
+    )
+    if next_msgs and next_msgs[0].role == "assistant":
+        session.delete(next_msgs[0])
+    session.delete(msg)
+    session.commit()
+    return True
+
+
 def delete_chat_session(session_id: str, session: Session) -> bool:
     s = session.get(ChatSession, session_id)
     if s is None:
