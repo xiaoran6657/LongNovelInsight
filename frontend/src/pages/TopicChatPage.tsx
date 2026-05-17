@@ -191,6 +191,8 @@ export default function TopicChatPage() {
     },
   });
 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   const sessions: ChatSessionRead[] = sessionsQuery.data?.sessions ?? [];
 
   return (
@@ -215,91 +217,125 @@ export default function TopicChatPage() {
 
       <div className="chat-layout">
         {/* ── Session sidebar ── */}
-        <aside className="chat-sidebar">
-          <h3 style={{ fontSize: "0.9rem", marginBottom: "0.5rem" }}>
-            Chat Sessions
-          </h3>
-
-          {/* New session form */}
-          <div style={{ display: "flex", gap: "0.25rem", marginBottom: "0.5rem" }}>
-            <input
-              type="text"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newTitle.trim()) {
-                  newSessionMut.mutate(newTitle.trim());
-                }
-              }}
-              placeholder="Session title..."
-              disabled={newSessionMut.isPending}
-              style={{ flex: 1, minWidth: 0, fontSize: "0.78rem", padding: "0.3rem 0.4rem" }}
-            />
+        <aside
+          className="chat-sidebar"
+          style={{
+            width: sidebarOpen ? "14rem" : "2.2rem",
+            paddingRight: sidebarOpen ? "0.75rem" : "0.3rem",
+            overflow: sidebarOpen ? "auto" : "visible",
+            transition: "width 0.2s, padding-right 0.2s",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: "0.5rem",
+            }}
+          >
+            {sidebarOpen && (
+              <h3 style={{ fontSize: "0.9rem", margin: 0 }}>Chat Sessions</h3>
+            )}
             <button
-              onClick={() => newTitle.trim() && newSessionMut.mutate(newTitle.trim())}
-              disabled={!newTitle.trim() || newSessionMut.isPending}
-              style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
+              onClick={() => setSidebarOpen((v) => !v)}
+              title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              style={{
+                fontSize: "0.8rem",
+                padding: "0.15rem 0.35rem",
+                lineHeight: 1,
+                flexShrink: 0,
+                marginLeft: sidebarOpen ? "0.25rem" : 0,
+              }}
             >
-              {newSessionMut.isPending ? "..." : "New"}
+              {sidebarOpen ? "◀" : "▶"}
             </button>
           </div>
-          {newSessionMut.isError && (
-            <p className="field-error">
-              {(newSessionMut.error as Error)?.message || "Failed to create session"}
-            </p>
-          )}
 
-          {/* Session list */}
-          {sessionsQuery.isLoading ? (
-            <p className="text-dim">Loading...</p>
-          ) : sessionsQuery.isError ? (
-            <p className="field-error">Failed to load sessions</p>
-          ) : sessions.length === 0 ? (
-            <p className="text-dim">No sessions yet. Create one.</p>
-          ) : (
-            <ul className="chat-session-list">
-              {sessions.map((s) => (
-                <li
-                  key={s.id}
-                  onClick={() => setActiveSessionId(s.id)}
-                  className={
-                    s.id === activeSessionId
-                      ? "chat-session-item chat-session-item--active"
-                      : "chat-session-item"
-                  }
+          {sidebarOpen && (
+            <>
+              {/* New session form */}
+              <div style={{ display: "flex", gap: "0.25rem", marginBottom: "0.5rem" }}>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newTitle.trim()) {
+                      newSessionMut.mutate(newTitle.trim());
+                    }
+                  }}
+                  placeholder="Session title..."
+                  disabled={newSessionMut.isPending}
+                  style={{ flex: 1, minWidth: 0, fontSize: "0.78rem", padding: "0.3rem 0.4rem" }}
+                />
+                <button
+                  onClick={() => newTitle.trim() && newSessionMut.mutate(newTitle.trim())}
+                  disabled={!newTitle.trim() || newSessionMut.isPending}
+                  style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        fontSize: "0.82rem",
-                        fontWeight: 600,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {s.title}
-                    </p>
-                    <p className="text-dim" style={{ fontSize: "0.68rem" }}>
-                      {fmtTime(s.created_at)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm("Delete this session and all messages?")) {
-                        deleteMut.mutate(s.id);
+                  {newSessionMut.isPending ? "..." : "New"}
+                </button>
+              </div>
+              {newSessionMut.isError && (
+                <p className="field-error">
+                  {(newSessionMut.error as Error)?.message || "Failed to create session"}
+                </p>
+              )}
+
+              {/* Session list */}
+              {sessionsQuery.isLoading ? (
+                <p className="text-dim">Loading...</p>
+              ) : sessionsQuery.isError ? (
+                <p className="field-error">Failed to load sessions</p>
+              ) : sessions.length === 0 ? (
+                <p className="text-dim">No sessions yet. Create one.</p>
+              ) : (
+                <ul className="chat-session-list">
+                  {sessions.map((s) => (
+                    <li
+                      key={s.id}
+                      onClick={() => setActiveSessionId(s.id)}
+                      className={
+                        s.id === activeSessionId
+                          ? "chat-session-item chat-session-item--active"
+                          : "chat-session-item"
                       }
-                    }}
-                    disabled={deleteMut.isPending && deleteMut.variables === s.id}
-                    className="btn-danger"
-                    style={{ fontSize: "0.65rem", padding: "0.1rem 0.35rem" }}
-                  >
-                    Del
-                  </button>
-                </li>
-              ))}
-            </ul>
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p
+                          style={{
+                            fontSize: "0.82rem",
+                            fontWeight: 600,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {s.title}
+                        </p>
+                        <p className="text-dim" style={{ fontSize: "0.68rem" }}>
+                          {fmtTime(s.created_at)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm("Delete this session and all messages?")) {
+                            deleteMut.mutate(s.id);
+                          }
+                        }}
+                        disabled={deleteMut.isPending && deleteMut.variables === s.id}
+                        className="btn-danger"
+                        style={{ fontSize: "0.65rem", padding: "0.1rem 0.35rem" }}
+                      >
+                        Del
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </aside>
 
