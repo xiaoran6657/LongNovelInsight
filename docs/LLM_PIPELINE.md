@@ -27,15 +27,18 @@ Before any LLM call, the novel is processed:
    - Target chunk size: ~4000 tokens (estimated via character count / 1.5 for Chinese, character count / 4 for English).
    - Overlap: ~200 tokens between consecutive chunks.
    - Chunks never cross chapter boundaries.
-   - Each chunk is saved as `data/chunks/{chunk_id}.txt`.
+   - Chunk text is stored in SQLite (`chunk.text` column) in v0.1. Migration to disk files planned for v0.2.
+4. **Whitespace normalization**: Before storing, chunk text has excessive blank lines collapsed (3+ consecutive newlines → 2) and per-line trailing whitespace stripped, reducing token waste in LLM prompts.
 
 ### Step 1–6: LLM Analysis Types
 
-Each analysis type uses a two-part prompt:
-- **System prompt**: Describes the role, task, output JSON schema, and anti-fabrication rules.
-- **User prompt**: Contains the chunk texts (up to context window limit) and instructs the model to analyze them.
+The 6 analysis types run in **parallel via `ThreadPoolExecutor`** (bounded 1–6, default 3 concurrency). Each worker thread calls the LLM independently and returns a result dataclass; the main thread writes all DB results. The effective provider config is resolved at runtime: Topic override > Provider default > Preset default.
 
-If the novel has more chunks than fit in a single context window, the caller batches chunks into multiple LLM calls and merges/deduplicates the results.
+Each analysis type uses a two-part prompt:
+- **Shared system instructions**: Common extraction rules, evidence requirements, and output format rules form a stable prefix shared across all 6 types for prompt-cache friendliness.
+- **Task-specific schema**: Output JSON schema and type-specific instructions appended after the shared prefix.
+
+If the novel has more chunks than fit in a single context window, the caller batches chunks into multiple LLM calls and merges/deduplicates the results (batch-map-merge pipeline).
 
 ---
 

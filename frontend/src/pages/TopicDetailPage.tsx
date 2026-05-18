@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AnalysisOutput } from "../api/types";
 import AnalysisOutputCard from "../components/AnalysisOutputCard";
+import LoadingBlock from "../components/LoadingBlock";
+import ErrorBlock from "../components/ErrorBlock";
 import {
   getTopic,
   bindProvider,
@@ -820,24 +822,19 @@ export default function TopicDetailPage() {
   }
 
   if (topicLoading) {
-    return (
-      <div className="card">
-        <p className="text-dim">Loading topic...</p>
-      </div>
-    );
+    return <LoadingBlock text="Loading topic..." />;
   }
 
   if (topicError || !topic) {
     return (
       <div>
         <Link to="/topics">&larr; Back to Topics</Link>
-        <div className="card card-error" style={{ marginTop: "1rem" }}>
-          <p>
-            <strong>
-              {topicErr instanceof Error ? topicErr.message : "Topic not found"}
-            </strong>
-          </p>
-        </div>
+        <ErrorBlock
+          title="Topic not found"
+          message={
+            topicErr instanceof Error ? topicErr.message : "The topic may have been deleted."
+          }
+        />
       </div>
     );
   }

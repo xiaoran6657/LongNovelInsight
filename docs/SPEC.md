@@ -25,16 +25,16 @@ LongNovelInsight is a local-first web application that uses LLMs to analyze long
 
 ## Feature Scope (v0.1.0)
 
-1. **LLM Provider Configuration** — Users can add, edit, and delete LLM provider configurations (API base URL, API key, model name). Default: DeepSeek (`https://api.deepseek.com`).
+1. **LLM Provider Configuration** — Users add, edit, delete LLM providers. Built-in preset catalog (DeepSeek, OpenAI, Qwen/Alibaba, Kimi/Moonshot, Custom OpenAI-compatible) auto-fills base URL and model options. API key is masked (`sk-...abcd`) and never returned by the API.
 2. **Topic CRUD** — Create, list, update, and delete Topics. A Topic groups one novel and all its analysis/chat data. Provider binding is optional at creation; required before running analysis or chat.
-3. **Novel Upload (.txt only)** — Upload one `.txt` file per Topic. Accepts UTF-8 and GBK encodings. Auto-detects encoding.
+3. **Novel Upload (.txt only)** — Upload one `.txt` file per Topic. Accepts UTF-8 / UTF-8-SIG / GB18030 / GBK / GB2312 / UTF-16 encodings. Auto-detects and normalizes to UTF-8.
 4. **Novel Parsing** — Split the novel into chapters (by regex patterns: "第X章", "Chapter X", etc.) and chunks (fixed token window with overlap). Compute token count, word count, and disk size for each chunk.
-5. **LLM Analysis Pipeline** — Run six analysis types against the configured LLM. All outputs MUST include `source_chunk_ids`, `evidence_quotes`, and `confidence` fields. See [LLM_PIPELINE.md](LLM_PIPELINE.md).
+5. **LLM Analysis Pipeline** — Run six analysis types in parallel against the bound LLM provider. Topic-level config overrides (Model, Max Tokens, Temperature, Thinking, Parallelism) are resolved at runtime without mutating the global provider. All outputs include `source_chunk_ids`, `evidence_quotes`, and `confidence`. See [LLM_PIPELINE.md](LLM_PIPELINE.md).
 6. **Topic Chat (Q&A)** — Users can ask questions within a Topic. The system retrieves relevant analysis outputs and source chunks, then sends them as context to the LLM for grounded answers.
 7. **Local Data Storage** — All data stored in SQLite database and `data/` directory. No network calls except to the configured LLM API.
 8. **Delete Operations** — Users can delete a Topic (cascading: novel file, analysis results, chat history). Users can also delete individual chat sessions or analysis outputs.
 9. **Storage & Progress UI** — Frontend displays: total disk usage, per-Topic usage, token/word/chunk counts, analysis job status (pending/running/done/failed).
-10. **Job System** — Long-running operations (novel parsing, analysis pipeline) run as background jobs with status tracking. The frontend polls job status.
+10. **Job System** — Long-running operations run as async jobs with status tracking. Analysis jobs use `ThreadPoolExecutor` for parallel execution (1–6 workers). Frontend polls `GET /api/topics/{id}/analysis/status` for progress, timings, and token usage.
 11. **Health Check** — `GET /api/health` returns backend status and basic stats.
 
 ## Non-Goals (v0.1.0)

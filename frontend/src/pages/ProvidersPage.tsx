@@ -14,10 +14,10 @@ import type {
   ModelProviderUpdate,
   ProviderModelPreset,
 } from "../api/types";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
+import { formatDateTime } from "../utils/format";
+import LoadingBlock from "../components/LoadingBlock";
+import ErrorBlock from "../components/ErrorBlock";
+import EmptyState from "../components/EmptyState";
 
 export default function ProvidersPage() {
   const queryClient = useQueryClient();
@@ -526,27 +526,25 @@ export default function ProvidersPage() {
         </form>
       )}
 
-      {isLoading && (
-        <div className="card">
-          <p className="text-dim">Loading providers...</p>
-        </div>
-      )}
+      {isLoading && <LoadingBlock text="Loading providers..." />}
 
       {isError && (
-        <div className="card card-error">
-          <p><strong>Failed to load providers.</strong></p>
-          <p className="text-dim">
-            {error instanceof Error ? error.message : "Unknown error"}
-          </p>
-        </div>
+        <ErrorBlock
+          title="Failed to load providers"
+          message={error instanceof Error ? error.message : "Unknown error"}
+        />
       )}
 
       {!isLoading && !isError && providers.length === 0 && (
-        <div className="card">
-          <p className="text-dim">
-            No providers configured yet. Add one to get started.
-          </p>
-        </div>
+        <EmptyState
+          title="No providers configured"
+          description="Add one to get started with LLM analysis."
+          action={
+            showForm
+              ? undefined
+              : { label: "Add Provider", onClick: startCreate }
+          }
+        />
       )}
 
       {providers.map((p) => (
@@ -582,7 +580,7 @@ export default function ProvidersPage() {
                 </p>
               )}
               <p className="text-dim" style={{ fontSize: "0.8rem" }}>
-                Created: {formatDate(p.created_at)}
+                Created: {formatDateTime(p.created_at)}
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.35rem", flexShrink: 0 }}>

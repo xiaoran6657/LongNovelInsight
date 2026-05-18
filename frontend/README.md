@@ -55,9 +55,15 @@ frontend/
     │   ├── parse.ts          # Parse / chapters / chunks / storage
     │   ├── analysis.ts       # Analysis run / outputs / jobs / status
     │   └── chat.ts           # Chat sessions / messages / delete message
+    ├── utils/                # Shared utilities
+    │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
     ├── components/           # Shared UI components
     │   ├── HealthPanel.tsx   # Backend health status
-    │   └── AnalysisOutputCard.tsx  # Type-specific analysis output rendering
+    │   ├── AnalysisOutputCard.tsx  # Type-specific analysis output rendering
+    │   ├── LoadingBlock.tsx  # Standard loading state
+    │   ├── ErrorBlock.tsx    # Standard error state (with retry)
+    │   ├── EmptyState.tsx    # Standard empty state (with action)
+    │   └── StatusBadge.tsx   # Color-coded status label
     ├── pages/                # Route page components
     │   ├── DashboardPage.tsx # Health + workflow overview
     │   ├── ProvidersPage.tsx # LLM provider CRUD + presets + flexible fields

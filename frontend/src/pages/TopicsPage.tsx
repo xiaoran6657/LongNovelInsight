@@ -4,20 +4,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listTopics, createTopic, deleteTopic } from "../api/topics";
 import { listProviders } from "../api/providers";
 import type { TopicCreate } from "../api/types";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.min(
-    Math.floor(Math.log(bytes) / Math.log(1024)),
-    units.length - 1
-  );
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-}
+import { formatBytes, formatDateTime } from "../utils/format";
+import LoadingBlock from "../components/LoadingBlock";
+import ErrorBlock from "../components/ErrorBlock";
+import EmptyState from "../components/EmptyState";
 
 const EMPTY_FORM: TopicCreate = {
   name: "",
@@ -225,21 +215,13 @@ export default function TopicsPage() {
         </form>
       )}
 
-      {isLoading && (
-        <div className="card">
-          <p className="text-dim">Loading topics...</p>
-        </div>
-      )}
+      {isLoading && <LoadingBlock text="Loading topics..." />}
 
       {isError && (
-        <div className="card card-error">
-          <p>
-            <strong>Failed to load topics.</strong>
-          </p>
-          <p className="text-dim">
-            {error instanceof Error ? error.message : "Unknown error"}
-          </p>
-        </div>
+        <ErrorBlock
+          title="Failed to load topics"
+          message={error instanceof Error ? error.message : "Unknown error"}
+        />
       )}
 
       {deleteError && (
@@ -249,11 +231,15 @@ export default function TopicsPage() {
       )}
 
       {!isLoading && !isError && topics.length === 0 && (
-        <div className="card">
-          <p className="text-dim">
-            No topics yet. Create one to start analyzing a novel.
-          </p>
-        </div>
+        <EmptyState
+          title="No topics yet"
+          description="Create one to start analyzing a novel."
+          action={
+            showForm
+              ? undefined
+              : { label: "Create Topic", onClick: startCreate }
+          }
+        />
       )}
 
       {topics.map((t) => (
@@ -299,7 +285,7 @@ export default function TopicsPage() {
                       t.provider_id}
                   </>
                 )}
-                {" "}&middot; Created: {formatDate(t.created_at)}
+                {" "}&middot; Created: {formatDateTime(t.created_at)}
               </p>
             </div>
             <div style={{ display: "flex", gap: "0.35rem", flexShrink: 0 }}>

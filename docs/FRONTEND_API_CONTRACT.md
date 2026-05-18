@@ -537,6 +537,52 @@ Errors: `404` session not found, `409` no provider configured, `422` content is 
 Response `200`: `{ "deleted": true }`
 Errors: `404`.
 
+**`DELETE /api/chat/sessions/messages/{message_id}`**
+
+Deletes a message. If it's a user message, the following assistant reply is also deleted.
+Response `200`: `{ "deleted": true }`
+Errors: `404` message not found.
+
+---
+
+### 3.9 Provider Presets
+
+**`GET /api/provider-presets`**
+
+Response `200`: `{ "presets": [...] }` — built-in catalog (DeepSeek, OpenAI, Qwen, Moonshot, Custom).
+
+**`GET /api/provider-presets/{provider_key}`**
+
+Response `200`: Single preset object. `404` if unknown key.
+
+**`GET /api/provider-presets/detect?base_url=...`**
+
+Detect preset by base URL (normalizes trailing slash). Returns matching preset or `provider_key="openai_compatible"`.
+
+### 3.10 Topic Provider Config
+
+**`GET /api/topics/{topic_id}/provider-config`**
+
+Response `200`: `{ "config": {...} | null }`
+
+**`PUT /api/topics/{topic_id}/provider-config`**
+
+Request: partial overrides (all fields optional, null = inherit).
+Response `200`: updated config object.
+Errors: `422` on invalid temperature/parallelism/context_window.
+
+**`GET /api/topics/{topic_id}/provider-config/effective`**
+
+Response `200`: `EffectiveProviderConfig` with `is_ready`, `missing_fields`, `warnings`.
+
+**`GET /api/topics/{topic_id}/analysis/recommendation`**
+
+Response `200`: `AnalysisRecommendation` with size_category, recommended model/tokens/temp/parallelism/mode, warnings, rationale.
+
+**`POST /api/topics/{topic_id}/provider-config/apply-recommendation`**
+
+Applies recommendation to topic config. Returns updated config + recommendation.
+
 ---
 
 ## 4. Field Naming Confirmations

@@ -8,6 +8,7 @@ All models are SQLModel classes backed by SQLite. In v0.1.0, all data including 
 
 ```
 ModelProvider  ?──*  Topic
+Topic          1──1  TopicProviderConfig
 Topic          1──1  Document
 Document       1──*  Chapter
 Chapter        1──*  Chunk
@@ -61,6 +62,27 @@ All enum values are lowercase strings (Python `StrEnum`).
 | `temperature` | float | Sampling temperature (default 0.2) |
 | `is_default` | bool | Whether this is the default provider |
 | `masked_api_key` | (property) | Computed masked version of api_key |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+
+### TopicProviderConfig (`topic_provider_config`)
+
+Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique config ID |
+| `topic_id` | FK → topic (unique) | Owning topic (one-to-one) |
+| `provider_id` | FK → model_provider | optional | Bound provider for this topic |
+| `base_url_override` | str | optional | Override base URL |
+| `model_name_override` | str | optional | Override model name |
+| `context_window_override` | int | optional | Override context window |
+| `max_output_tokens_override` | int | optional | Override max output tokens |
+| `temperature_override` | float | optional | Override temperature (0–2) |
+| `thinking_mode_override` | str | optional | "enabled" / "disabled" / "provider_default" |
+| `reasoning_effort_override` | str | optional | "high" / "max" |
+| `analysis_parallelism_override` | int | optional | Override parallelism (1–6) |
+| `recommended_profile` | str | optional | Applied recommendation profile name |
 | `created_at` | datetime | Creation timestamp |
 | `updated_at` | datetime | Last update timestamp |
 
@@ -149,6 +171,10 @@ All enum values are lowercase strings (Python `StrEnum`).
 | `content` | str | Message text |
 | `evidence_json` | str | optional | JSON evidence list (assistant messages) |
 | `uncertainty` | str | optional | Uncertainty notes (assistant messages) |
+| `prompt_tokens` | int | Prompt tokens used (from LLM response) |
+| `completion_tokens` | int | Completion tokens used (from LLM response) |
+| `total_tokens` | int | Total tokens used (from LLM response) |
+| `model_used` | str | optional | Actual model that generated the response |
 | `created_at` | datetime | Message timestamp |
 
 ### Job (`job`)

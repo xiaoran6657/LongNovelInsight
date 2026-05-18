@@ -24,6 +24,81 @@ Returns backend status and basic statistics.
 
 ---
 
+## Provider Presets
+
+### `GET /api/provider-presets`
+
+List all built-in provider presets (DeepSeek, OpenAI, Qwen, Moonshot, Custom).
+
+**Response 200:**
+```json
+{
+  "presets": [
+    {
+      "provider_key": "deepseek",
+      "display_name": "DeepSeek",
+      "base_urls": [{"label": "DeepSeek OpenAI-compatible", "base_url": "https://api.deepseek.com"}],
+      "models": [
+        {
+          "model_name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1000000,
+          "recommended_max_output_tokens": 2048,
+          "supports_thinking": true,
+          "default_thinking_mode": "disabled"
+        }
+      ],
+      "default_model_name": "deepseek-v4-flash"
+    }
+  ]
+}
+```
+
+### `GET /api/provider-presets/{provider_key}`
+
+Get a single preset.
+
+### `GET /api/provider-presets/detect?base_url=...`
+
+Detect a provider preset by base URL (normalizes trailing slash). Returns `provider_key="openai_compatible"` if unknown.
+
+---
+
+## Topic Provider Config
+
+### `GET /api/topics/{id}/provider-config`
+
+Get topic-level config overrides. Returns `{"config": null}` if not set.
+
+### `PUT /api/topics/{id}/provider-config`
+
+Upsert topic-level overrides. All fields are optional (null = inherit from provider/preset).
+
+**Request:**
+```json
+{
+  "model_name_override": "deepseek-v4-pro",
+  "max_output_tokens_override": 4096,
+  "temperature_override": 0.0,
+  "thinking_mode_override": "enabled",
+  "analysis_parallelism_override": 3
+}
+```
+
+### `GET /api/topics/{id}/provider-config/effective`
+
+Resolve effective config: Topic override > Provider default > Preset default. Returns `is_ready` boolean + `missing_fields` list.
+
+### `GET /api/topics/{id}/analysis/recommendation`
+
+Returns model recommendation based on document size (size_category, recommended model, tokens, temperature, parallelism, analysis mode).
+
+### `POST /api/topics/{id}/provider-config/apply-recommendation`
+
+Applies the recommendation to topic-level config.
+
+---
+
 ## Topics
 
 ### `GET /api/topics`
@@ -455,6 +530,13 @@ Delete a chat session and all its messages.
 
 **Response 200:** `{ "deleted": true }`
 **Errors:** `404` session not found.
+
+### `DELETE /api/chat/sessions/messages/{message_id}`
+
+Delete a message. If it's a user message, the following assistant reply is also deleted.
+
+**Response 200:** `{ "deleted": true }`
+**Errors:** `404` message not found.
 
 ---
 

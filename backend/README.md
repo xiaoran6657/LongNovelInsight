@@ -62,7 +62,7 @@ backend/
 │   ├── parser_service.py    # Chapter detection (regex), chunk splitting
 │   └── provider_test_service.py # Connection test (minimal LLM call)
 ├── prompts/                 # 6 prompt templates (overview, characters, relations, events, causality, themes)
-├── tests/                   # 159 passing tests (see test section below)
+├── tests/                   # 162 passing tests (see test section below)
 └── scripts/
     └── smoke_backend.py     # End-to-end smoke test (safe + --real-llm modes)
 ```
@@ -93,7 +93,7 @@ Job            1──*  JobItem
 | `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
 | `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
 
-## API Endpoints (32 endpoints)
+## API Endpoints (38+ endpoints)
 
 ### Health
 | Method | Path | Description |
