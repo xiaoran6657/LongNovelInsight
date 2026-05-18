@@ -44,6 +44,7 @@
 | `succeeded` | All items completed |
 | `failed` | One or more items failed |
 | `cancelled` | Cancelled by user |
+| `partial_success` | v0.2 AnalysisRun only — some chunks/types succeeded while others failed |
 
 ### Analysis Type (output_type / item_type)
 | Value | LLM Prompt File |

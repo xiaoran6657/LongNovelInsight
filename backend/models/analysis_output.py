@@ -15,6 +15,7 @@ class AnalysisOutput(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     topic_id: str = Field(foreign_key="topic.id", index=True)
     job_id: str | None = Field(default=None, foreign_key="job.id")
+    run_id: str | None = Field(default=None, foreign_key="analysis_run.id")
     output_type: str
     title: str
     content_json: str
@@ -30,6 +31,7 @@ class AnalysisOutput(SQLModel, table=True):
 class AnalysisOutputCreate(SQLModel):
     topic_id: str
     job_id: str | None = None
+    run_id: str | None = None
     output_type: str
     title: str
     content_json: str
@@ -44,6 +46,7 @@ class AnalysisOutputRead(SQLModel):
     id: str
     topic_id: str
     job_id: str | None
+    run_id: str | None
     output_type: str
     title: str
     content_json: dict | list | None
@@ -63,6 +66,7 @@ class AnalysisOutputRead(SQLModel):
             id=obj.id,
             topic_id=obj.topic_id,
             job_id=obj.job_id,
+            run_id=obj.run_id,
             output_type=obj.output_type,
             title=obj.title,
             content_json=_safe_json_parse(obj.content_json),

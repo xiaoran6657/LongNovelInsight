@@ -219,3 +219,84 @@ Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
 | Document | Chapter → Chunk |
 
 All cascade-deleted records also trigger removal of associated files in `data/`.
+
+## v0.2 Backend Additions — Schema Foundation
+
+### AnalysisRun (`analysis_run`)
+
+One row per v2 analysis run. Represents the full staged pipeline: extraction → merge → final output.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique run ID |
+| `topic_id` | FK → topic | Owning topic |
+| `job_id` | FK → job | optional | Associated v1 job, if any |
+| `mode` | str | AnalysisMode: preview / range / full / incremental |
+| `status` | str | Reuses JobStatus (pending / running / succeeded / failed / cancelled / partial_success) |
+| `requested_types_json` | str | JSON array of requested output types |
+| `chunk_selection_json` | str | JSON object describing chunk selection params |
+| `effective_config_json` | str | JSON object of resolved effective provider config |
+| `progress_current` | int | Total items completed |
+| `progress_total` | int | Total items |
+| `extraction_total/succeeded/failed` | int | Extraction stage counters |
+| `merge_total/succeeded/failed` | int | Merge stage counters |
+| `prompt_tokens` | int | Total prompt tokens used |
+| `completion_tokens` | int | Total completion tokens used |
+| `total_tokens` | int | Total tokens used |
+| `model_used` | str | optional | Actual model used |
+| `error_message` | str | optional | Error details if failed |
+| `metadata_json` | str | Stage timings, warnings, failed items |
+| `started_at / finished_at` | datetime | optional | Run timing |
+| `created_at / updated_at` | datetime | Timestamps |
+
+### LocalExtraction (`local_extraction`)
+
+One row per chunk per run. Stores the LLM's raw local_extraction JSON output.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique extraction ID |
+| `run_id` | FK → analysis_run | Owning run |
+| `topic_id` | FK → topic | Owning topic |
+| `chunk_id` | FK → chunk | Source chunk |
+| `status` | str | pending / running / succeeded / failed |
+| `attempt_count` | int | Number of extraction attempts |
+| `content_json` | str | optional | Raw LLM response JSON |
+| `source_chunk_ids` | str | JSON array of source chunk IDs |
+| `evidence_quotes` | str | JSON array of evidence quotes |
+| `confidence` | float | Overall confidence (0.0–1.0) |
+| `prompt_tokens / completion_tokens / total_tokens` | int | Token usage |
+| `model_used` | str | optional | Model that produced the extraction |
+| `error_message` | str | optional | Error details if failed |
+| `started_at / finished_at` | datetime | optional | Timing |
+| `created_at / updated_at` | datetime | Timestamps |
+
+### ExtractedAtom (`extracted_atom`)
+
+Normalized atomic facts produced from local extraction results.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique atom ID |
+| `run_id` | FK → analysis_run | Owning run |
+| `topic_id` | FK → topic | Owning topic |
+| `local_extraction_id` | FK → local_extraction | optional | Source extraction |
+| `chunk_id` | FK → chunk | optional | Source chunk |
+| `atom_type` | str | AtomType: character / event / relation / causal_link / theme_signal / worldbuilding / foreshadowing / open_question |
+| `stable_id` | str | Canonical stable ID (not LLM-generated) |
+| `canonical_name` | str | optional | Canonical entity name |
+| `title` | str | optional | Human-readable title |
+| `summary` | str | optional | Brief description |
+| `content_json` | str | JSON with full atom details |
+| `source_chunk_ids` | str | JSON array |
+| `evidence_quotes` | str | JSON array |
+| `confidence` | float | 0.0–1.0 |
+| `chapter_index / chunk_index` | int | optional | Source position |
+| `order_index` | int | optional | Ordering hint |
+| `created_at / updated_at` | datetime | Timestamps |
+
+### AnalysisOutput (`analysis_output`) — New Field
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `run_id` | FK → analysis_run | optional, nullable | Links output to v2 AnalysisRun. NULL for v1 outputs.

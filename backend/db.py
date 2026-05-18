@@ -4,6 +4,7 @@ from collections.abc import Generator
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
+import models  # noqa: F401 — ensure all table models register with SQLModel.metadata
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,19 @@ def _migrate_chat_message_usage_columns() -> None:
         conn.commit()
 
 
+def _migrate_analysis_output_run_id() -> None:
+    """Add run_id column to analysis_output if it doesn't exist yet."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(
+                text("ALTER TABLE analysis_output ADD COLUMN run_id TEXT")
+            )
+        except Exception:
+            pass
+        conn.commit()
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
+    _migrate_analysis_output_run_id()

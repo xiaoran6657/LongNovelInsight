@@ -46,3 +46,21 @@ class TopicStatus(StrEnum):
     ANALYZING = "analyzing"
     READY = "ready"
     FAILED = "failed"
+
+
+class AnalysisMode(StrEnum):
+    PREVIEW = "preview"
+    RANGE = "range"
+    FULL = "full"
+    INCREMENTAL = "incremental"
+
+
+class AtomType(StrEnum):
+    CHARACTER = "character"
+    EVENT = "event"
+    RELATION = "relation"
+    CAUSAL_LINK = "causal_link"
+    THEME_SIGNAL = "theme_signal"
+    WORLDBUILDING = "worldbuilding"
+    FORESHADOWING = "foreshadowing"
+    OPEN_QUESTION = "open_question"
