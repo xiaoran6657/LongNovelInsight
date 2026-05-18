@@ -144,7 +144,7 @@ Job            1──*  JobItem
 ### Parse
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/parse` | Parse novel (idempotent) |
+| POST | `/api/topics/{id}/parse` | Parse novel (idempotent; ?force=true to re-parse) |
 | GET | `/api/topics/{id}/chapters` | List chapters |
 | GET | `/api/topics/{id}/chunks` | List chunks (?include_text, limit, offset) |
 | GET | `/api/topics/{id}/storage` | Storage usage (real chunk/analysis sizes) |
@@ -173,6 +173,7 @@ Job            1──*  JobItem
 | GET | `/api/chat/sessions/{id}/messages` | List messages |
 | POST | `/api/chat/sessions/{id}/messages` | Send message (content validation, 422 on null/empty/non-string) |
 | DELETE | `/api/chat/sessions/{id}` | Delete session + messages |
+| DELETE | `/api/chat/sessions/messages/{id}` | Delete message + following assistant reply |
 
 ## Analysis Workflow
 
@@ -242,7 +243,7 @@ Job: pending → running → succeeded / partial_success / failed / cancelled
 | `test_model_providers.py` | 16 | CRUD, default uniqueness, api_key masking |
 | `test_analysis_outputs.py` | 17 | 6-type outputs, evidence, batch-merge, late characters |
 | `test_parser_service.py` | 17 | Chapter detection (CN/EN), chunking, token estimation |
-| `test_chat.py` | 17 | Session CRUD, send/validate, evidence, history, malformed JSON |
+| `test_chat.py` | 17 | Session CRUD, send/validate, evidence, history, delete message |
 | `test_parse_api.py` | 13 | Parse API, chunks pagination, storage, idempotent |
 | `test_topics.py` | 17 | CRUD, provider FK, topic config, effective config, cascade delete |
 | `test_retrieval_service.py` | 8 | Keyword match, stopwords filter, excerpt position, empty query |
@@ -267,6 +268,9 @@ All tests mock LLM calls. No real external API calls in CI.
 - **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()` instead of string `startswith`.
 - **Keyword retrieval**: Substring + Chinese character overlap (filtered by ~70 stopwords) + English word overlap. No vector DB.
 - **Chat grounding**: Answers must include evidence/uncertainty JSON fields; recent 6 messages included for pronoun resolution.
+- **Chat token tracking**: ChatMessage stores `prompt_tokens`, `completion_tokens`, `total_tokens`, and `model_used` from LLM API responses for per-model usage statistics in the UI.
+- **Chunk text normalization**: Parser collapses excessive blank lines and strips trailing whitespace before storing chunk text, reducing token waste in LLM prompts.
+- **Schema migration**: `init_db()` runs incremental `ALTER TABLE ADD COLUMN` migrations for new fields on existing databases.
 
 ## Dependencies
 

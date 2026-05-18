@@ -918,16 +918,12 @@ function RightConfigTab({
         {/* Max Tokens */}
         <FieldLabel>Max Tokens</FieldLabel>
         <div style={{ display: "flex", gap: "0.15rem", alignItems: "center" }}>
-          <button
-            type="button"
-            onMouseDown={() => {
-              const v = Number(editMaxTokens) || config.max_output_tokens || 2048;
-              onMaxTokensChange(String(Math.max(512, v - 1)));
-            }}
-            style={miniBtnStyle}
-          >
-            −
-          </button>
+          <StepperBtn
+            direction={-1}
+            editMaxTokens={editMaxTokens}
+            fallback={config.max_output_tokens || 2048}
+            onChange={onMaxTokensChange}
+          />
           <input
             type="number"
             min={512}
@@ -943,16 +939,12 @@ function RightConfigTab({
             className="no-spinner"
             style={{ ...fieldInputStyle, textAlign: "center", width: "100%" }}
           />
-          <button
-            type="button"
-            onMouseDown={() => {
-              const v = Number(editMaxTokens) || config.max_output_tokens || 2048;
-              onMaxTokensChange(String(Math.min(16384, v + 1)));
-            }}
-            style={miniBtnStyle}
-          >
-            +
-          </button>
+          <StepperBtn
+            direction={1}
+            editMaxTokens={editMaxTokens}
+            fallback={config.max_output_tokens || 2048}
+            onChange={onMaxTokensChange}
+          />
         </div>
 
         {/* Temperature */}
@@ -1090,6 +1082,67 @@ const miniBtnStyle: React.CSSProperties = {
   flexShrink: 0,
   padding: 0,
 };
+
+function StepperBtn({
+  direction,
+  editMaxTokens,
+  fallback,
+  onChange,
+}: {
+  direction: 1 | -1;
+  editMaxTokens: string;
+  fallback: number;
+  onChange: (v: string) => void;
+}) {
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdRef = useRef(0);
+  const valueRef = useRef(Number(editMaxTokens) || fallback);
+  // Keep ref in sync across renders so the interval closure always sees the latest value
+  valueRef.current = Number(editMaxTokens) || fallback;
+
+  function read(): number {
+    return valueRef.current || fallback;
+  }
+
+  function start() {
+    const first = direction === -1 ? Math.max(512, read() + direction) : Math.min(16384, read() + direction);
+    valueRef.current = first;
+    onChange(String(first));
+    holdRef.current = Date.now();
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      const elapsed = Date.now() - holdRef.current;
+      let step = 1;
+      if (elapsed > 3000) step = 100;
+      else if (elapsed > 1000) step = 10;
+      const next = direction === -1
+        ? Math.max(512, valueRef.current + direction * step)
+        : Math.min(16384, valueRef.current + direction * step);
+      valueRef.current = next;
+      onChange(String(next));
+    }, 60);
+  }
+
+  function stop() {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onMouseDown={start}
+      onMouseUp={stop}
+      onMouseLeave={stop}
+      onContextMenu={(e) => e.preventDefault()}
+      style={miniBtnStyle}
+    >
+      {direction === -1 ? "−" : "+"}
+    </button>
+  );
+}
 
 function FieldLabel({ children }: { children: string }) {
   return (

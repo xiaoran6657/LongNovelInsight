@@ -80,9 +80,15 @@ See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for the development process wit
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the version roadmap.
 
-## Backend Smoke Test
+## Smoke Tests
 
-A live-server end-to-end test script is available at `backend/scripts/smoke_backend.py`. It exercises the full API flow against a running backend. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
+### Frontend (manual walkthrough)
+
+A step-by-step manual smoke test covering the full product workflow (health, provider, topic, upload, parse, analysis, chat, cleanup) is at [docs/FRONTEND_SMOKE_TEST.md](docs/FRONTEND_SMOKE_TEST.md). Run through it after any significant frontend change.
+
+### Backend (automated script)
+
+A live-server end-to-end test script is at `backend/scripts/smoke_backend.py`. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
 
 ```bash
 # Quick safe-mode smoke test (no real LLM calls):
@@ -90,6 +96,53 @@ cd backend
 python -m uvicorn main:app --reload --port 8000   # Terminal 1
 python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup  # Terminal 2
 ```
+
+## v0.1.0 Feature Checklist
+
+### Provider Management
+- [x] Create provider with preset (DeepSeek/OpenAI/Qwen/Moonshot/Custom)
+- [x] Base URL and model dropdowns auto-populate from preset
+- [x] Manual base URL and model name editing
+- [x] Optional advanced fields (context window, max tokens, temperature)
+- [x] API key masked in list (`sk-...abcd`), never returned by API
+- [x] Connection test with API consumption warning
+- [x] Edit / delete provider (blocked if bound to a Topic)
+
+### Topic Management
+- [x] Create / list / detail / delete Topic
+- [x] Bind / re-bind Provider
+- [x] Document upload (.txt, UTF-8/GBK/GB18030/UTF-16 → UTF-8)
+- [x] Delete document with full cascade
+
+### Parse & Storage
+- [x] Parse novel → chapters + overlapping chunks
+- [x] View chapters list with titles and char counts
+- [x] View chunks with text preview toggle
+- [x] Storage breakdown (novel / chunks / analyses / DB)
+- [x] Idempotent: re-parse returns existing results unless forced
+- [x] Whitespace normalization (excessive blank lines collapsed)
+
+### Analysis
+- [x] Run structured analysis (6 types via async parallel jobs)
+- [x] Adjustable limit_chunks with token cost estimate
+- [x] Provider Config panel: Model / Max Tokens / Temperature / Thinking with presets
+- [x] Model recommendation based on document size (Fast / Quality presets)
+- [x] Per-type output cards with evidence, confidence, source chunk IDs
+- [x] Retry failed types / Re-analyze with deepen mode
+- [x] Progress bar with per-type completion polling
+- [x] Summary bar: elapsed time, real token usage, per-type status
+
+### Chat
+- [x] Session CRUD with collapsible sidebar
+- [x] Evidence-grounded Q&A with retrieval context
+- [x] Multi-turn conversation history (last 6 messages)
+- [x] Message actions: copy, inline edit & resend, delete
+- [x] Optimistic user message display
+- [x] Auto-height input with distinct background
+- [x] Collapsible right panel with draggable dividers
+- [x] Right panel: editable Provider Config + per-model usage stats
+- [x] Right panel: source text viewer
+- [x] Token usage tracked per message (prompt / completion / total) by model
 
 ## License
 

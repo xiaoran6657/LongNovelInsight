@@ -49,21 +49,21 @@ frontend/
     │   ├── client.ts         # apiRequest<T>() with fetch
     │   ├── types.ts          # Shared TypeScript types
     │   ├── health.ts         # GET /api/health
-    │   ├── providers.ts      # Provider CRUD + test
-    │   ├── topics.ts         # Topic CRUD + provider binding
+    │   ├── providers.ts      # Provider CRUD + test + presets
+    │   ├── topics.ts         # Topic CRUD + provider config + effective config + recommendation
     │   ├── documents.ts      # Document upload / delete
     │   ├── parse.ts          # Parse / chapters / chunks / storage
-    │   ├── analysis.ts       # Analysis run / outputs / jobs
-    │   └── chat.ts           # Chat sessions / messages
+    │   ├── analysis.ts       # Analysis run / outputs / jobs / status
+    │   └── chat.ts           # Chat sessions / messages / delete message
     ├── components/           # Shared UI components
     │   ├── HealthPanel.tsx   # Backend health status
     │   └── AnalysisOutputCard.tsx  # Type-specific analysis output rendering
     ├── pages/                # Route page components
     │   ├── DashboardPage.tsx # Health + workflow overview
-    │   ├── ProvidersPage.tsx # LLM provider CRUD
+    │   ├── ProvidersPage.tsx # LLM provider CRUD + presets + flexible fields
     │   ├── TopicsPage.tsx    # Topic list + create
-    │   ├── TopicDetailPage.tsx # Document, parse, analysis, storage
-    │   ├── TopicChatPage.tsx # Evidence-based chat (Task 008)
+    │   ├── TopicDetailPage.tsx # Document, parse, analysis, provider config, storage
+    │   ├── TopicChatPage.tsx # Chat sessions + evidence Q&A + copy/edit/delete + right panel
     │   └── NotFoundPage.tsx  # 404
     ├── layouts/              # Layout components
     │   └── AppLayout.tsx     # Header, nav, main, footer
@@ -79,7 +79,7 @@ frontend/
 | `/providers` | ProvidersPage | LLM provider CRUD |
 | `/topics` | TopicsPage | Topic list + create |
 | `/topics/:topicId` | TopicDetailPage | Document, parse, analysis |
-| `/topics/:topicId/chat` | TopicChatPage | Evidence-based chat |
+| `/topics/:topicId/chat` | TopicChatPage | Chat sessions + evidence Q&A + config/usage right panel + source text viewer |
 | `*` | NotFoundPage | 404 |
 
 ## Analysis Token Cost
@@ -101,6 +101,9 @@ For example, with N selected chunks totalling ~14,000 characters:
 - **api_key never stored**: The frontend submits api_key to the backend on create but never persists it in localStorage, sessionStorage, or state after form submission.
 - **masked_api_key only**: Provider lists display `masked_api_key` (e.g., `sk-...abcd`). Raw `api_key` is never present in backend responses.
 - **Real LLM warnings**: Buttons for Provider Test, Run Analysis, and Send Message display explicit warnings about API consumption.
+- **Chat page features**: Collapsible 3-panel layout (sessions sidebar, messages, right panel) with draggable dividers. Message actions: copy to clipboard, inline edit & resend, delete with confirmation. Right panel tabs: editable Provider Config (Model/Max Tokens/Temperature/Thinking) with long-press stepper, per-model Chat Usage stats (real token data from LLM responses), and Source text viewer.
+- **Optimistic updates**: User messages appear instantly in chat via query cache manipulation with rollback on error.
+- **Provider preset integration**: Base URL / Model dropdowns with manual override on both Providers and Topic config pages.
 
 ## Scripts
 
