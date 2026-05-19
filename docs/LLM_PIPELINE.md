@@ -297,6 +297,13 @@ Step 8: Final Outputs (convert merged → frontend AnalysisOutput) — NOT YET I
 - **Error handling**: Unhandled exceptions → run.status = failed. Cancelled runs skip merge stage.
 - **API key resolution**: TopicProviderConfig.provider_id > Topic.provider_id > default provider.
 
-### Step 8 (Not Yet Implemented)
+### Step 8 — Final Outputs (COMPLETED)
 
-Step 8 will convert merge outputs into frontend-compatible AnalysisOutput records matching v0.1's 6 analysis types (overview/characters/relations/events/causality/themes). Until Step 8 is complete, v0.2 AnalysisRuns produce merge intermediates but no user-facing final outputs.
+Step 8 converts merge outputs into frontend-compatible AnalysisOutput records matching v0.1's 6 analysis types. Key details:
+
+- **`final_output_service.py`**: 6 `build_final_<type>` functions (overview/characters/relations/events/causality/themes) + `run_final_output_stage` orchestrator
+- Each function reads the corresponding `merge_<type>` AnalysisOutput, transforms into a v0.1-compatible JSON shape, and writes a new `AnalysisOutput` with v0.1 output_type
+- **Deterministic** — no LLM required. Items include per-item source_chunk_ids, evidence_quotes, confidence inherited from merge data
+- **progress_total** includes final stage: extraction_total + merge_total + final_total
+- **Status API** `GET /api/analysis/runs/{id}` returns `"final"` section alongside `"merge"` and `"extractions"`
+- Rerun-safe: old final outputs for the same run+type are deleted before writing new ones

@@ -48,7 +48,24 @@ def _migrate_analysis_output_run_id() -> None:
         conn.commit()
 
 
+def _migrate_analysis_run_final_columns() -> None:
+    """Add final_total/final_succeeded/final_failed to analysis_run if missing."""
+    columns = [
+        ("final_total", "INTEGER NOT NULL DEFAULT 0"),
+        ("final_succeeded", "INTEGER NOT NULL DEFAULT 0"),
+        ("final_failed", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_def in columns:
+            try:
+                conn.execute(text(f"ALTER TABLE analysis_run ADD COLUMN {col_name} {col_def}"))
+            except Exception:
+                pass
+        conn.commit()
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
     _migrate_analysis_output_run_id()
+    _migrate_analysis_run_final_columns()

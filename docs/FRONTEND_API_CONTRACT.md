@@ -480,7 +480,22 @@ Response `200`:
             "warnings": []}
 }
 ```
-The `merge` section reports intermediate merge results. Step 8 will convert these to frontend-compatible final outputs. Until Step 8, no user-facing final outputs are produced.
+The `merge` section reports intermediate merge results. The `final` section reports the v0.1-compatible final AnalysisOutput records produced by Step 8.
+
+Step 8 response now includes:
+```json
+"final": {
+  "total": 6,
+  "succeeded": 6,
+  "failed": 0,
+  "outputs": [
+    {"id": "uuid", "output_type": "overview", "title": "Work Overview"},
+    {"id": "uuid", "output_type": "characters", "title": "Character List"}
+  ]
+}
+```
+
+The `run` object now includes `final_total`, `final_succeeded`, `final_failed` fields.
 
 **`POST /api/analysis/runs/{run_id}/cancel`**
 

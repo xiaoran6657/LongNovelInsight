@@ -28,6 +28,9 @@ class AnalysisRun(SQLModel, table=True):
     merge_total: int = 0
     merge_succeeded: int = 0
     merge_failed: int = 0
+    final_total: int = 0
+    final_succeeded: int = 0
+    final_failed: int = 0
 
     prompt_tokens: int = 0
     completion_tokens: int = 0

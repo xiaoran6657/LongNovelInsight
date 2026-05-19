@@ -96,7 +96,12 @@ def create_analysis_run(
     merge_requested_types = [t for t in types if t in _valid_merge_types]
     extraction_total = len(selected)
     merge_total = len(merge_requested_types)
-    progress_total = extraction_total + merge_total
+
+    # Final types: subset that maps to v0.1-compatible output types
+    _final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
+    final_requested_types = [t for t in merge_requested_types if t in _final_types]
+    final_total = len(final_requested_types)
+    progress_total = extraction_total + merge_total + final_total
 
     run = AnalysisRun(
         topic_id=topic_id,
@@ -104,6 +109,7 @@ def create_analysis_run(
         status=JobStatus.PENDING,
         extraction_total=extraction_total,
         merge_total=merge_total,
+        final_total=final_total,
         progress_total=progress_total,
         model_used=effective.model_name,
         prompt_tokens=0,
@@ -414,12 +420,54 @@ def _execute_run_impl(run_id: str, engine) -> None:
             merge_failed_count = 0
             merge_warnings = []
 
+        # ── Final output stage ──
+        final_summaries: list = []
+        final_succeeded_count = 0
+        final_failed_count = 0
+        final_warnings: list[str] = []
+
+        if merge_succeeded_count > 0:
+            _final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
+            final_types = [t for t in merge_types if t in _final_types]
+
+            if final_types:
+                from services.final_output_service import run_final_output_stage
+
+                final_summaries = run_final_output_stage(
+                    session, run_id, requested_types=final_types
+                )
+                final_succeeded_count = sum(
+                    1
+                    for s in final_summaries
+                    if not any("Final output failed:" in w for w in s.warnings)
+                )
+                final_failed_count = sum(
+                    1
+                    for s in final_summaries
+                    if any("Final output failed:" in w for w in s.warnings)
+                )
+                for s in final_summaries:
+                    final_warnings.extend(s.warnings)
+
+                run = session.get(AnalysisRun, run_id)
+                if run:
+                    run.final_succeeded = final_succeeded_count
+                    run.final_failed = final_failed_count
+                    run.progress_current = (
+                        succeeded
+                        + failed
+                        + merge_succeeded_count
+                        + merge_failed_count
+                        + final_succeeded_count
+                        + final_failed_count
+                    )
+
         # ── Final status ──
         run = session.get(AnalysisRun, run_id)
         if run and run.status != JobStatus.CANCELLED:
             if succeeded == 0:
                 run.status = JobStatus.FAILED
-            elif failed == 0 and merge_failed_count == 0:
+            elif failed == 0 and merge_failed_count == 0 and final_failed_count == 0:
                 run.status = JobStatus.SUCCEEDED
             else:
                 run.status = JobStatus.PARTIAL_SUCCESS
@@ -432,7 +480,10 @@ def _execute_run_impl(run_id: str, engine) -> None:
                         {"type": s.merge_type, "atoms": s.atom_count, "merged": s.merged_count}
                         for s in merge_summaries
                     ],
-                    "warnings": merge_warnings,
+                    "final_summaries": [
+                        {"type": s.output_type, "items": s.item_count} for s in final_summaries
+                    ],
+                    "warnings": merge_warnings + final_warnings,
                 }
             )
             session.add(run)
@@ -524,7 +575,7 @@ def _resolve_api_key(session: Session, topic_id: str) -> str:
 
 
 def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
-    """Return run status with extraction and merge summary."""
+    """Return run status with extraction, merge, and final output summary."""
     from models.analysis_output import AnalysisOutput
 
     run = session.get(AnalysisRun, run_id)
@@ -535,9 +586,10 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
         select(LocalExtraction).where(LocalExtraction.run_id == run_id)
     ).all()
 
-    merge_outputs = session.exec(
-        select(AnalysisOutput).where(AnalysisOutput.run_id == run_id)
-    ).all()
+    # Separate merge intermediates from final outputs
+    all_outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.run_id == run_id)).all()
+    merge_outputs = [o for o in all_outputs if o.output_type.startswith("merge_")]
+    final_outputs = [o for o in all_outputs if not o.output_type.startswith("merge_")]
 
     metadata = run.get_metadata()
 
@@ -555,6 +607,9 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "merge_total": run.merge_total,
             "merge_succeeded": run.merge_succeeded,
             "merge_failed": run.merge_failed,
+            "final_total": run.final_total or 0,
+            "final_succeeded": run.final_succeeded or 0,
+            "final_failed": run.final_failed or 0,
             "total_tokens": run.total_tokens,
             "model_used": run.model_used,
             "error_message": run.error_message,
@@ -584,6 +639,19 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
                 for o in merge_outputs
             ],
             "warnings": metadata.get("warnings", []),
+        },
+        "final": {
+            "total": run.final_total or 0,
+            "succeeded": run.final_succeeded or 0,
+            "failed": run.final_failed or 0,
+            "outputs": [
+                {
+                    "id": o.id,
+                    "output_type": o.output_type,
+                    "title": o.title,
+                }
+                for o in final_outputs
+            ],
         },
     }
 
