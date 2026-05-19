@@ -25,6 +25,7 @@ app.add_middleware(
 from routers import (  # noqa: E402
     analysis_jobs,
     analysis_outputs,
+    analysis_runs,
     chat,
     documents,
     health,
@@ -47,3 +48,5 @@ app.include_router(analysis_jobs.job_router, prefix="/api")
 app.include_router(analysis_outputs.router, prefix="/api")
 app.include_router(chat.topic_router, prefix="/api")
 app.include_router(chat.session_router, prefix="/api")
+app.include_router(analysis_runs.topic_router, prefix="/api")
+app.include_router(analysis_runs.run_router, prefix="/api")
