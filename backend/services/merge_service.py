@@ -73,6 +73,28 @@ def _collect_evidence(atoms: list[ExtractedAtom]) -> list[str]:
     return result
 
 
+def _group_source_chunk_ids(group: list[ExtractedAtom]) -> list[str]:
+    seen = set()
+    result = []
+    for a in group:
+        for cid in _parse_json(a.source_chunk_ids):
+            if isinstance(cid, str) and cid not in seen:
+                seen.add(cid)
+                result.append(cid)
+    return result
+
+
+def _group_evidence_quotes(group: list[ExtractedAtom]) -> list[str]:
+    seen = set()
+    result = []
+    for a in group:
+        for eq in _parse_json(a.evidence_quotes):
+            if isinstance(eq, str) and eq not in seen:
+                seen.add(eq)
+                result.append(eq)
+    return result
+
+
 def _save_merged(
     session: Session,
     run_id: str,
@@ -84,6 +106,16 @@ def _save_merged(
     evidence_quotes: list[str],
     confidence: float,
 ) -> AnalysisOutput:
+    # Delete previous merge output for this run+type to avoid duplicates
+    existing = session.exec(
+        select(AnalysisOutput).where(
+            AnalysisOutput.run_id == run_id,
+            AnalysisOutput.output_type == f"merge_{merge_type}",
+        )
+    ).all()
+    for old in existing:
+        session.delete(old)
+
     out = AnalysisOutput(
         topic_id=topic_id,
         run_id=run_id,
@@ -95,10 +127,83 @@ def _save_merged(
         confidence=confidence,
     )
     session.add(out)
+    session.commit()
     return out
 
 
 # ── Merge functions ──
+
+
+def merge_overview(session: Session, run_id: str) -> MergeSummary:
+    """Statistical overview of all extracted atoms in this run. No LLM."""
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        return MergeSummary("overview", 0, 0, warnings=["AnalysisRun not found"])
+
+    counts: dict[str, int] = {}
+    all_chunk_ids: set[str] = set()
+    all_evidence: set[str] = set()
+    all_atom_ids: list[str] = []
+    all_atoms: list[ExtractedAtom] = []
+
+    for atom_type in AtomType:
+        atoms = _load_atoms(session, run_id, atom_type.value)
+        counts[atom_type.value] = len(atoms)
+        all_atoms.extend(atoms)
+        for a in atoms:
+            all_atom_ids.append(a.id)
+            for cid in _parse_json(a.source_chunk_ids):
+                if isinstance(cid, str):
+                    all_chunk_ids.add(cid)
+            for eq in _parse_json(a.evidence_quotes):
+                if isinstance(eq, str):
+                    all_evidence.add(eq)
+
+    total_atoms = sum(counts.values())
+    merged = [
+        {
+            "stable_id": f"overview_{run_id[:8]}",
+            "character_count": counts.get("character", 0),
+            "event_count": counts.get("event", 0),
+            "relation_count": counts.get("relation", 0),
+            "causal_link_count": counts.get("causal_link", 0),
+            "theme_signal_count": counts.get("theme_signal", 0),
+            "worldbuilding_count": counts.get("worldbuilding", 0),
+            "foreshadowing_count": counts.get("foreshadowing", 0),
+            "open_question_count": counts.get("open_question", 0),
+            "total_atom_count": total_atoms,
+            "source_chunk_count": len(all_chunk_ids),
+            "evidence_count": len(all_evidence),
+            "source_atom_ids": all_atom_ids[:100],
+        }
+    ]
+
+    if not all_atom_ids:
+        _save_merged(
+            session,
+            run_id,
+            run.topic_id,
+            "overview",
+            merged,
+            [],
+            [],
+            [],
+            0.0,
+        )
+        return MergeSummary("overview", 0, 0)
+
+    _save_merged(
+        session,
+        run_id,
+        run.topic_id,
+        "overview",
+        merged,
+        all_atom_ids,
+        sorted(all_chunk_ids),
+        sorted(all_evidence),
+        _average_confidence(all_atoms),
+    )
+    return MergeSummary("overview", total_atoms, 1)
 
 
 def merge_characters(session: Session, run_id: str) -> MergeSummary:
@@ -120,27 +225,38 @@ def merge_characters(session: Session, run_id: str) -> MergeSummary:
                 n = c.get("name") or c.get("canonical_name")
                 if n and n not in names:
                     names.append(n)
-                for al in (c.get("aliases") or c.get("observed_traits") or []):
+                for al in c.get("aliases") or c.get("observed_traits") or []:
                     if al not in traits:
                         traits.append(al)
 
         chapter_indices = [a.chapter_index for a in group if a.chapter_index is not None]
         chunk_indices = [a.chunk_index for a in group if a.chunk_index is not None]
 
-        merged.append({
-            "stable_id": stable_id,
-            "canonical_name": group[0].canonical_name or (names[0] if names else stable_id),
-            "names": names,
-            "traits": traits,
-            "atom_count": len(group),
-            "first_chapter": min(chapter_indices) if chapter_indices else None,
-            "first_chunk": min(chunk_indices) if chunk_indices else None,
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "canonical_name": group[0].canonical_name or (names[0] if names else stable_id),
+                "names": names,
+                "traits": traits,
+                "atom_count": len(group),
+                "first_chapter": min(chapter_indices) if chapter_indices else None,
+                "first_chunk": min(chunk_indices) if chunk_indices else None,
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "characters", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "characters",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("characters", len(atoms), len(merged))
@@ -160,25 +276,38 @@ def merge_events(session: Session, run_id: str) -> MergeSummary:
         participants = set()
         for c in (_parse_json(a.content_json) for a in group):
             if isinstance(c, dict):
-                for p in (c.get("participants") or []):
+                for p in c.get("participants") or []:
                     if isinstance(p, str):
                         participants.add(p)
 
         chapter_indices = [a.chapter_index for a in group if a.chapter_index is not None]
-        merged.append({
-            "stable_id": stable_id,
-            "title": group[0].title or stable_id,
-            "summary": group[0].summary or "",
-            "participants": sorted(participants),
-            "atom_count": len(group),
-            "first_chapter": min(chapter_indices) if chapter_indices else None,
-            "chapters": sorted(set(a.chapter_index for a in group if a.chapter_index is not None)),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "title": group[0].title or stable_id,
+                "summary": group[0].summary or "",
+                "participants": sorted(participants),
+                "atom_count": len(group),
+                "first_chapter": min(chapter_indices) if chapter_indices else None,
+                "chapters": sorted(
+                    set(a.chapter_index for a in group if a.chapter_index is not None)
+                ),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "events", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "events",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("events", len(atoms), len(merged))
@@ -205,18 +334,29 @@ def merge_relations(session: Session, run_id: str) -> MergeSummary:
                 character_b = character_b or c.get("character_b", "")
                 relation_type = relation_type or c.get("relation_type", "")
 
-        merged.append({
-            "stable_id": stable_id,
-            "character_a": character_a,
-            "character_b": character_b,
-            "relation_type": relation_type,
-            "atom_count": len(group),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "character_a": character_a,
+                "character_b": character_b,
+                "relation_type": relation_type,
+                "atom_count": len(group),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "relations", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "relations",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("relations", len(atoms), len(merged))
@@ -231,7 +371,6 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
     for a in atoms:
         grouped.setdefault(a.stable_id, []).append(a)
 
-    # Collect all event IDs for reference validation
     all_events = {a.stable_id for a in _load_atoms(session, run_id, AtomType.EVENT)}
     unresolved: list[str] = []
 
@@ -249,22 +388,33 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
         if not is_resolved:
             unresolved.append(f"{stable_id}: cause={cause}, effect={effect}")
 
-        merged.append({
-            "stable_id": stable_id,
-            "cause_event": cause,
-            "effect_event": effect,
-            "resolved": is_resolved,
-            "atom_count": len(group),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "cause_event": cause,
+                "effect_event": effect,
+                "resolved": is_resolved,
+                "atom_count": len(group),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     warnings = []
     if unresolved:
         warnings.append(f"{len(unresolved)} unresolved causal links: " + "; ".join(unresolved[:5]))
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "causality", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "causality",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("causality", len(atoms), len(merged), warnings=warnings)
@@ -290,17 +440,28 @@ def merge_themes(session: Session, run_id: str) -> MergeSummary:
                 if n and n not in signals:
                     signals.append(n)
 
-        merged.append({
-            "stable_id": stable_id,
-            "theme_name": theme_name,
-            "signals": signals or [stable_id],
-            "atom_count": len(group),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "theme_name": theme_name,
+                "signals": signals or [stable_id],
+                "atom_count": len(group),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "themes", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "themes",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("themes", len(atoms), len(merged))
@@ -317,17 +478,28 @@ def merge_worldbuilding(session: Session, run_id: str) -> MergeSummary:
 
     merged = []
     for stable_id, group in grouped.items():
-        merged.append({
-            "stable_id": stable_id,
-            "name": group[0].canonical_name or stable_id,
-            "description": group[0].summary or "",
-            "atom_count": len(group),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "name": group[0].canonical_name or stable_id,
+                "description": group[0].summary or "",
+                "atom_count": len(group),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "worldbuilding", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "worldbuilding",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("worldbuilding", len(atoms), len(merged))
@@ -352,18 +524,29 @@ def merge_foreshadowing(session: Session, run_id: str) -> MergeSummary:
                 signal = signal or c.get("signal", "")
                 payoff = payoff or c.get("possible_payoff", "")
 
-        merged.append({
-            "stable_id": stable_id,
-            "title": group[0].title or stable_id,
-            "signal": signal,
-            "possible_payoff": payoff,
-            "atom_count": len(group),
-            "source_atom_ids": [a.id for a in group],
-        })
+        merged.append(
+            {
+                "stable_id": stable_id,
+                "title": group[0].title or stable_id,
+                "signal": signal,
+                "possible_payoff": payoff,
+                "atom_count": len(group),
+                "source_atom_ids": [a.id for a in group],
+                "source_chunk_ids": _group_source_chunk_ids(group),
+                "evidence_quotes": _group_evidence_quotes(group),
+                "confidence": _average_confidence(group),
+            }
+        )
 
     _save_merged(
-        session, run_id, atoms[0].topic_id, "foreshadowing", merged,
-        [a.id for a in atoms], _collect_source_ids(atoms), _collect_evidence(atoms),
+        session,
+        run_id,
+        atoms[0].topic_id,
+        "foreshadowing",
+        merged,
+        [a.id for a in atoms],
+        _collect_source_ids(atoms),
+        _collect_evidence(atoms),
         _average_confidence(atoms),
     )
     return MergeSummary("foreshadowing", len(atoms), len(merged))
@@ -373,6 +556,7 @@ def merge_foreshadowing(session: Session, run_id: str) -> MergeSummary:
 
 
 _MERGE_TYPES = {
+    "overview": merge_overview,
     "characters": merge_characters,
     "events": merge_events,
     "relations": merge_relations,
@@ -390,7 +574,7 @@ def run_merge_stage(
 ) -> list[MergeSummary]:
     """Run all requested merge types and return summaries."""
     types_to_run = requested_types or list(_MERGE_TYPES)
-    summaries = []
+    summaries: list[MergeSummary] = []
 
     run = session.get(AnalysisRun, run_id)
     if run is None:
@@ -400,23 +584,26 @@ def run_merge_stage(
     succeeded = 0
     for merge_type in types_to_run:
         if merge_type not in _MERGE_TYPES:
+            summaries.append(
+                MergeSummary(
+                    merge_type,
+                    0,
+                    0,
+                    warnings=[f"Unknown merge type: {merge_type}"],
+                )
+            )
             continue
         try:
             summary = _MERGE_TYPES[merge_type](session, run_id)
             summaries.append(summary)
             total += 1
-            if summary.merged_count >= 0:
-                succeeded += 1
+            succeeded += 1
         except Exception as e:
-            summaries.append(
-                MergeSummary(merge_type, 0, 0, warnings=[f"Merge failed: {e}"])
-            )
+            summaries.append(MergeSummary(merge_type, 0, 0, warnings=[f"Merge failed: {e}"]))
 
-    # Update run progress
     run.merge_total = total
     run.merge_succeeded = succeeded
     run.merge_failed = total - succeeded
-    run.progress_current = (run.extraction_succeeded or 0) + (run.extraction_failed or 0) + succeeded
     session.add(run)
     session.commit()
 

@@ -11,21 +11,23 @@ from services.local_extraction_worker import (
 FAKE_CHUNK_ID = "chunk-test-001"
 FAKE_CHUNK_TEXT = "第一章 张三站在窗前望着远处。"
 
-VALID_EXTRACTION_JSON = json.dumps({
-    "analysis_type": "local_extraction",
-    "chunk_id": FAKE_CHUNK_ID,
-    "local_characters": [
-        {
-            "character_id_hint": "zhang_san",
-            "name": "张三",
-            "source_chunk_ids": [FAKE_CHUNK_ID],
-            "evidence_quotes": ["张三站在窗前"],
-            "confidence": 0.9,
-        }
-    ],
-    "local_events": [],
-    "local_relations": [],
-})
+VALID_EXTRACTION_JSON = json.dumps(
+    {
+        "analysis_type": "local_extraction",
+        "chunk_id": FAKE_CHUNK_ID,
+        "local_characters": [
+            {
+                "character_id_hint": "zhang_san",
+                "name": "张三",
+                "source_chunk_ids": [FAKE_CHUNK_ID],
+                "evidence_quotes": ["张三站在窗前"],
+                "confidence": 0.9,
+            }
+        ],
+        "local_events": [],
+        "local_relations": [],
+    }
+)
 
 
 class MockResponse:
@@ -66,9 +68,7 @@ def test_build_messages_with_metadata():
 
 
 def test_run_success():
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
 
@@ -91,9 +91,7 @@ def test_run_success():
 
 
 def test_run_json_parse_failure():
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponse("not valid json!!!")
 
@@ -112,9 +110,7 @@ def test_run_json_parse_failure():
 def test_run_llm_error():
     from services.llm_client import LLMClientError
 
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = LLMClientError("service unavailable", 503)
 
@@ -133,9 +129,7 @@ def test_run_llm_error():
 def test_run_retry_on_retryable_error():
     from services.llm_client import LLMClientError
 
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = [
             LLMClientError("rate limit exceeded", 429),
@@ -156,9 +150,7 @@ def test_run_retry_on_retryable_error():
 
 
 def test_run_thinking_mode_disabled():
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
 
@@ -176,9 +168,7 @@ def test_run_thinking_mode_disabled():
 
 
 def test_run_thinking_mode_enabled():
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
 
@@ -196,9 +186,7 @@ def test_run_thinking_mode_enabled():
 
 
 def test_result_duration_tracked():
-    with patch(
-        "services.local_extraction_worker.OpenAICompatibleLLMClient"
-    ) as mock_client_class:
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
 
@@ -210,4 +198,99 @@ def test_result_duration_tracked():
             model_name="test-model",
         )
 
-        assert result.duration_seconds >= 0  # mock is near-instant
+        assert result.duration_seconds >= 0
+
+
+def test_fenced_json_returns_canonical_content_json():
+    """Fenced JSON response should have content_json as canonical JSON, not markdown."""
+    fenced = "```json\n" + VALID_EXTRACTION_JSON + "\n```"
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(fenced)
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+        )
+
+        assert result.ok
+        assert result.content_json is not None
+        parsed = json.loads(result.content_json)
+        assert parsed["analysis_type"] == "local_extraction"
+        assert "```" not in result.content_json
+
+
+def test_wrong_chunk_id_validation_fails():
+    """If parsed JSON has wrong chunk_id, validation should fail."""
+    bad_json = json.dumps(
+        {
+            "analysis_type": "local_extraction",
+            "chunk_id": "wrong-chunk-id",
+            "local_characters": [
+                {"name": "X", "source_chunk_ids": ["wrong-chunk-id"], "evidence_quotes": ["e"]}
+            ],
+        }
+    )
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(bad_json)
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+        )
+
+        assert not result.ok
+        assert "mismatch" in (result.error or "").lower()
+
+
+def test_503_retry_then_success():
+    """503 first attempt should retry and succeed on second."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            LLMClientError("service unavailable", 503),
+            MockResponse(VALID_EXTRACTION_JSON),
+        ]
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+        )
+
+        assert result.ok
+        assert result.retry_count >= 1
+        assert mock_client.chat.call_count == 2
+
+
+def test_api_key_masked_in_error():
+    """Error message must not contain the api_key."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = LLMClientError("auth failed with key sk-test-1234567", 401)
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test-1234567",
+            model_name="test-model",
+        )
+
+        assert not result.ok
+        assert result.error is not None
+        assert "sk-test-1234567" not in result.error
+        assert "sk-..." in result.error or "***" in result.error

@@ -20,17 +20,13 @@ def get_chunks_meta(session: Session, topic_id: str) -> dict:
         .order_by(Chunk.chapter_index, Chunk.chunk_index)
     ).all()
 
-    doc = session.exec(
-        select(Document).where(Document.topic_id == topic_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
     document_id = doc.id if doc else None
 
     from models.chapter import Chapter
 
     chapters = session.exec(
-        select(Chapter)
-        .where(Chapter.topic_id == topic_id)
-        .order_by(Chapter.chapter_index)
+        select(Chapter).where(Chapter.topic_id == topic_id).order_by(Chapter.chapter_index)
     ).all()
 
     if not chunks:
@@ -54,13 +50,15 @@ def get_chunks_meta(session: Session, topic_id: str) -> dict:
         ch_chunks = [c for c in chunks if c.chapter_index == ch.chapter_index]
         if not ch_chunks:
             continue
-        chunks_by_chapter.append({
-            "chapter_index": ch.chapter_index,
-            "title": ch.title,
-            "chunk_count": len(ch_chunks),
-            "char_count": sum(c.char_count for c in ch_chunks),
-            "estimated_tokens": sum(c.estimated_tokens for c in ch_chunks),
-        })
+        chunks_by_chapter.append(
+            {
+                "chapter_index": ch.chapter_index,
+                "title": ch.title,
+                "chunk_count": len(ch_chunks),
+                "char_count": sum(c.char_count for c in ch_chunks),
+                "estimated_tokens": sum(c.estimated_tokens for c in ch_chunks),
+            }
+        )
 
     return {
         "topic_id": topic_id,
@@ -114,9 +112,7 @@ def select_chunks_for_analysis(
         raise ValueError(f"Unknown analysis mode: {mode}")
 
 
-def _select_preview(
-    chunks: list[Chunk], limit_chunks: int | None
-) -> tuple[list[Chunk], dict]:
+def _select_preview(chunks: list[Chunk], limit_chunks: int | None) -> tuple[list[Chunk], dict]:
     if limit_chunks is not None and limit_chunks <= 0:
         raise ValueError("limit_chunks must be > 0")
     n = limit_chunks or _recommended_preview_limit(chunks)

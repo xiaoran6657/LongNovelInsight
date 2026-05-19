@@ -187,9 +187,7 @@ def test_local_extraction_status_failed(client):
 
     client.post(
         f"/api/topics/{topic_id}/documents/upload",
-        files={
-            "file": ("novel.txt", io.BytesIO("第一章\n测试。\n".encode("utf-8")), "text/plain")
-        },
+        files={"file": ("novel.txt", io.BytesIO("第一章\n测试。\n".encode("utf-8")), "text/plain")},
     )
     parse_resp = client.post(f"/api/topics/{topic_id}/parse")
     assert parse_resp.status_code == 200
@@ -356,7 +354,8 @@ def test_real_migration_on_old_schema():
         eng = create_engine(f"sqlite:///{tmp}", connect_args={"check_same_thread": False})
 
         with eng.connect() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 CREATE TABLE analysis_output (
                     id TEXT PRIMARY KEY,
                     topic_id TEXT NOT NULL,
@@ -372,11 +371,14 @@ def test_real_migration_on_old_schema():
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
                     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
-            """))
-            conn.execute(text(
-                "INSERT INTO analysis_output (id, topic_id, output_type, title, content_json) "
-                "VALUES ('old-1', 'topic-x', 'overview', 'Old', '{\"k\":\"v\"}')"
-            ))
+            """)
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO analysis_output (id, topic_id, output_type, title, content_json) "
+                    "VALUES ('old-1', 'topic-x', 'overview', 'Old', '{\"k\":\"v\"}')"
+                )
+            )
             conn.commit()
 
             info = conn.execute(text("PRAGMA table_info(analysis_output)")).fetchall()

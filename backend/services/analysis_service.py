@@ -725,9 +725,7 @@ def run_analysis_async(
         # Collect data for workers (no ORM objects passed)
         base_url = effective.base_url or ""
         provider = (
-            session.get(ModelProvider, effective.provider_id)
-            if effective.provider_id
-            else None
+            session.get(ModelProvider, effective.provider_id) if effective.provider_id else None
         )
         api_key = provider.api_key if provider else ""
         model_name = effective.model_name or ""
@@ -737,7 +735,8 @@ def run_analysis_async(
         parallelism = effective.analysis_parallelism
 
         types_to_run = [
-            t for t in ["overview", "characters", "relations", "events", "causality", "themes"]
+            t
+            for t in ["overview", "characters", "relations", "events", "causality", "themes"]
             if t in item_map
         ]
 
@@ -837,10 +836,12 @@ def run_analysis_async(
                     session.add(item)
             else:
                 failed += 1
-                metadata["failed_types"].append({
-                    "output_type": output_type,
-                    "error": result.error or "Unknown error",
-                })
+                metadata["failed_types"].append(
+                    {
+                        "output_type": output_type,
+                        "error": result.error or "Unknown error",
+                    }
+                )
                 if item:
                     item.status = "failed"
                     item.error_message = (result.error or "Unknown error")[:300]

@@ -112,16 +112,18 @@ class TestParseJsonObject:
         assert not r.ok
 
     def test_json_array_returns_error(self):
-        r = parse_json_object('[1, 2, 3]')
+        r = parse_json_object("[1, 2, 3]")
         assert not r.ok
         assert "dict" in r.error.lower()
 
     def test_complex_local_extraction(self):
-        data = json.dumps({
-            "analysis_type": "local_extraction",
-            "chunk_id": "chunk-abc",
-            "local_characters": [{"name": "张三", "source_chunk_ids": ["chunk-abc"]}],
-        })
+        data = json.dumps(
+            {
+                "analysis_type": "local_extraction",
+                "chunk_id": "chunk-abc",
+                "local_characters": [{"name": "张三", "source_chunk_ids": ["chunk-abc"]}],
+            }
+        )
         r = parse_json_object(data)
         assert r.ok
         assert r.parsed["analysis_type"] == "local_extraction"
@@ -138,7 +140,11 @@ class TestValidateLocalExtraction:
             "analysis_type": "local_extraction",
             "chunk_id": "chunk-abc",
             "local_characters": [
-                {"character_id_hint": "x", "source_chunk_ids": ["chunk-abc"], "evidence_quotes": ["test"]}
+                {
+                    "character_id_hint": "x",
+                    "source_chunk_ids": ["chunk-abc"],
+                    "evidence_quotes": ["test"],
+                }
             ],
         }
         result = validate_local_extraction_response(data, "chunk-abc")
@@ -192,4 +198,29 @@ class TestValidateLocalExtraction:
     def test_empty_atom_keys_ok(self):
         data = {"analysis_type": "local_extraction", "chunk_id": "chunk-abc"}
         result = validate_local_extraction_response(data, "chunk-abc")
+        assert result.is_valid
+
+    def test_wrong_analysis_type_invalid(self):
+        data = {"analysis_type": "overview", "chunk_id": "chunk-abc"}
+        result = validate_local_extraction_response(data, "chunk-abc")
+        assert not result.is_valid
+        assert any("must be 'local_extraction'" in e.lower() for e in result.errors)
+
+    def test_fenced_json_validates(self):
+        raw = (
+            "```json\n"
+            + json.dumps(
+                {
+                    "analysis_type": "local_extraction",
+                    "chunk_id": "chunk-abc",
+                    "local_characters": [
+                        {"name": "X", "evidence_quotes": ["e"], "source_chunk_ids": ["chunk-abc"]}
+                    ],
+                }
+            )
+            + "\n```"
+        )
+        parsed = parse_json_object(raw)
+        assert parsed.ok
+        result = validate_local_extraction_response(parsed.parsed, "chunk-abc")
         assert result.is_valid

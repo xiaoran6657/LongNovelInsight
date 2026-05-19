@@ -64,8 +64,10 @@ def test_chunks_meta_unparsed_409(client):
     r = client.post("/api/topics", json={"name": "Unparsed"})
     assert r.status_code == 201
     topic_id = r.json()["id"]
-    client.post(f"/api/topics/{topic_id}/documents/upload",
-        files={"file": ("n.txt", io.BytesIO("第一章\n".encode()), "text/plain")})
+    client.post(
+        f"/api/topics/{topic_id}/documents/upload",
+        files={"file": ("n.txt", io.BytesIO("第一章\n".encode()), "text/plain")},
+    )
     r = client.get(f"/api/topics/{topic_id}/chunks/meta")
     assert r.status_code == 409
     client.delete(f"/api/topics/{topic_id}")
@@ -86,7 +88,9 @@ def test_chunks_meta_no_document_404(client):
 def test_select_preview(client, engine):
     topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2)
+        chunks, info = select_chunks_for_analysis(
+            session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2
+        )
         assert len(chunks) <= 2
         assert info["mode"] == "preview"
     client.delete(f"/api/topics/{topic_id}")
@@ -121,7 +125,9 @@ def test_select_full(client, engine):
 def test_select_full_with_safety_cap(client, engine):
     topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.FULL, safety_cap=1)
+        chunks, info = select_chunks_for_analysis(
+            session, topic_id, mode=AnalysisMode.FULL, safety_cap=1
+        )
         assert len(chunks) == 1
         assert info.get("capped") is True
     client.delete(f"/api/topics/{topic_id}")
@@ -131,7 +137,8 @@ def test_select_range_by_chapter(client, engine):
     topic_id = _setup(client)
     with Session(engine) as session:
         chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.RANGE, chapter_start=0, chapter_end=0)
+            session, topic_id, mode=AnalysisMode.RANGE, chapter_start=0, chapter_end=0
+        )
         for c in chunks:
             assert c.chapter_index == 0
         assert info["mode"] == "range"
@@ -151,7 +158,8 @@ def test_select_range_start_gt_end_raises(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="range_start.*greater"):
             select_chunks_for_analysis(
-                session, topic_id, mode=AnalysisMode.RANGE, range_start=5, range_end=1)
+                session, topic_id, mode=AnalysisMode.RANGE, range_start=5, range_end=1
+            )
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -160,8 +168,14 @@ def test_select_range_both_ranges_raises(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="both"):
             select_chunks_for_analysis(
-                session, topic_id, mode=AnalysisMode.RANGE,
-                range_start=0, range_end=1, chapter_start=0, chapter_end=1)
+                session,
+                topic_id,
+                mode=AnalysisMode.RANGE,
+                range_start=0,
+                range_end=1,
+                chapter_start=0,
+                chapter_end=1,
+            )
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -170,7 +184,8 @@ def test_select_range_negative_raises(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="negative"):
             select_chunks_for_analysis(
-                session, topic_id, mode=AnalysisMode.RANGE, range_start=-1, range_end=1)
+                session, topic_id, mode=AnalysisMode.RANGE, range_start=-1, range_end=1
+            )
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -179,7 +194,8 @@ def test_select_range_chapter_start_gt_end_raises(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="chapter_start.*greater"):
             select_chunks_for_analysis(
-                session, topic_id, mode=AnalysisMode.RANGE, chapter_start=5, chapter_end=1)
+                session, topic_id, mode=AnalysisMode.RANGE, chapter_start=5, chapter_end=1
+            )
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -208,15 +224,19 @@ def test_select_incremental_with_run_id(client, engine):
         session.flush()
         run_id_to_use = run.id
         ext = LocalExtraction(
-            run_id=run.id, topic_id=topic_id, chunk_id=all_chunks[0]["id"],
-            status="succeeded", attempt_count=1,
+            run_id=run.id,
+            topic_id=topic_id,
+            chunk_id=all_chunks[0]["id"],
+            status="succeeded",
+            attempt_count=1,
         )
         session.add(ext)
         session.commit()
 
     with Session(engine) as session:
         chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.INCREMENTAL, incremental_run_id=run_id_to_use)
+            session, topic_id, mode=AnalysisMode.INCREMENTAL, incremental_run_id=run_id_to_use
+        )
         chunk_ids = [c.id for c in chunks]
         assert all_chunks[0]["id"] not in chunk_ids
         assert all_chunks[1]["id"] in chunk_ids
@@ -229,8 +249,11 @@ def test_select_incremental_run_not_found(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="AnalysisRun not found"):
             select_chunks_for_analysis(
-                session, topic_id, mode=AnalysisMode.INCREMENTAL,
-                incremental_run_id="nonexistent-id")
+                session,
+                topic_id,
+                mode=AnalysisMode.INCREMENTAL,
+                incremental_run_id="nonexistent-id",
+            )
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -250,8 +273,8 @@ def test_select_incremental_cross_topic_raises(client, engine):
     with Session(engine) as session:
         with pytest.raises(ValueError, match="does not belong to this topic"):
             select_chunks_for_analysis(
-                session, topic_b, mode=AnalysisMode.INCREMENTAL,
-                incremental_run_id=run_a_id)
+                session, topic_b, mode=AnalysisMode.INCREMENTAL, incremental_run_id=run_a_id
+            )
     client.delete(f"/api/topics/{topic_a}")
     client.delete(f"/api/topics/{topic_b}")
 
@@ -271,7 +294,9 @@ def test_validate_analysis_mode_v1_types_rejected():
 def test_cost_estimate_preview(client, engine):
     topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, _ = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2)
+        chunks, _ = select_chunks_for_analysis(
+            session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2
+        )
         est = estimate_v2_analysis_cost(chunks, ["characters", "events"])
         assert est["selected_chunk_count"] <= 2
         assert est["estimated_total_input_tokens"] > 0

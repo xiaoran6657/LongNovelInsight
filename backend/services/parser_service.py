@@ -87,9 +87,7 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
         raise ValueError("Original text file not found")
 
     # Check if already parsed
-    existing_chunk = session.exec(
-        select(Chunk).where(Chunk.topic_id == topic_id).limit(1)
-    ).first()
+    existing_chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).first()
     has_outputs = (
         session.exec(
             select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
@@ -98,12 +96,8 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
     )
 
     if existing_chunk and not force:
-        chapters = session.exec(
-            select(Chapter).where(Chapter.topic_id == topic_id)
-        ).all()
-        chunks = session.exec(
-            select(Chunk).where(Chunk.topic_id == topic_id)
-        ).all()
+        chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
+        chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
         return {
             "already_parsed": True,
             "chapter_count": len(chapters),

@@ -408,6 +408,87 @@ Errors: `404` topic not found.
 
 ---
 
+### 3.6b v0.2 Analysis Runs (NEW — in progress)
+
+**`POST /api/topics/{topic_id}/analysis/runs`** (201)
+
+Creates and optionally starts a v0.2 staged analysis run.
+
+Request (Pydantic model `CreateRunRequest`):
+```json
+{
+  "mode": "preview",
+  "requested_types": ["overview", "characters", "relations", "events", "causality", "themes"],
+  "limit_chunks": 5,
+  "chunk_index_start": null,
+  "chunk_index_end": null,
+  "chapter_index_start": null,
+  "chapter_index_end": null,
+  "force": false,
+  "start_immediately": true
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | str | `"preview"` | analysis mode |
+| `requested_types` | list[str] | null | output types (default 6) |
+| `limit_chunks` | int | null | max chunks for preview |
+| `chunk_index_start/end` | int | null | range mode chunk bounds |
+| `chapter_index_start/end` | int | null | range mode chapter bounds |
+| `start_immediately` | bool | true | start background execution |
+
+Response `201`:
+```json
+{
+  "run": {"id": "uuid", "topic_id": "uuid", "mode": "preview",
+          "status": "pending", "progress_total": 8},
+  "status_url": "/api/analysis/runs/{id}"
+}
+```
+Errors: `404` topic not found, `409` no chunks/no provider/not parsed, `422` invalid mode/invalid range.
+
+**`GET /api/topics/{topic_id}/analysis/runs`**
+
+Response `200`:
+```json
+{
+  "runs": [{"id": "uuid", "mode": "preview", "status": "succeeded",
+             "extraction_succeeded": 3, "extraction_failed": 0,
+             "merge_succeeded": 5, "merge_failed": 0,
+             "total_tokens": 15000, "model_used": "deepseek-chat",
+             "started_at": "...", "finished_at": "...", "created_at": "..."}]
+}
+```
+
+**`GET /api/analysis/runs/{run_id}`**
+
+Response `200`:
+```json
+{
+  "run": {"id": "uuid", "topic_id": "uuid", "mode": "preview",
+          "status": "succeeded", "progress_current": 8, "progress_total": 8,
+          "extraction_total": 3, "extraction_succeeded": 3, "extraction_failed": 0,
+          "merge_total": 5, "merge_succeeded": 5, "merge_failed": 0,
+          "total_tokens": 15000, "model_used": "deepseek-chat",
+          "error_message": null, "started_at": "...", "finished_at": "..."},
+  "extractions": [{"id": "uuid", "chunk_id": "uuid", "status": "succeeded",
+                    "attempt_count": 1, "error_message": null}],
+  "merge": {"total": 5, "succeeded": 5, "failed": 0,
+            "outputs": [{"id": "uuid", "output_type": "merge_overview",
+                          "title": "Merged overview"}],
+            "warnings": []}
+}
+```
+The `merge` section reports intermediate merge results. Step 8 will convert these to frontend-compatible final outputs. Until Step 8, no user-facing final outputs are produced.
+
+**`POST /api/analysis/runs/{run_id}/cancel`**
+
+Response `200`: `{"run": {"id": "uuid", "status": "cancelled"}}`
+Errors: `404`.
+
+---
+
 ### 3.7 Analysis Jobs (internal API)
 
 **`POST /api/topics/{topic_id}/analysis/jobs?job_type=analysis`** (201)

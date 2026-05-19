@@ -32,9 +32,7 @@ def _migrate_chat_message_usage_columns() -> None:
     with engine.connect() as conn:
         for col_name, col_def in columns:
             try:
-                conn.execute(
-                    text(f"ALTER TABLE chat_message ADD COLUMN {col_name} {col_def}")
-                )
+                conn.execute(text(f"ALTER TABLE chat_message ADD COLUMN {col_name} {col_def}"))
             except Exception:
                 pass  # column already exists
         conn.commit()
@@ -44,9 +42,7 @@ def _migrate_analysis_output_run_id() -> None:
     """Add run_id column to analysis_output if it doesn't exist yet."""
     with engine.connect() as conn:
         try:
-            conn.execute(
-                text("ALTER TABLE analysis_output ADD COLUMN run_id TEXT")
-            )
+            conn.execute(text("ALTER TABLE analysis_output ADD COLUMN run_id TEXT"))
         except Exception:
             pass
         conn.commit()

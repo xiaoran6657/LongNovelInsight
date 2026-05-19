@@ -1,6 +1,9 @@
 """v0.2 AnalysisRun API endpoints."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session
 
 from db import get_session
@@ -9,6 +12,48 @@ from services import analysis_run_service
 
 topic_router = APIRouter(prefix="/topics/{topic_id}/analysis", tags=["analysis_runs"])
 run_router = APIRouter(prefix="/analysis/runs", tags=["analysis_runs"])
+
+VALID_MODES = {"preview", "range", "full", "incremental"}
+
+
+class CreateRunRequest(BaseModel):
+    mode: str = "preview"
+    requested_types: list[str] | None = None
+    limit_chunks: int | None = None
+    chunk_index_start: int | None = None
+    chunk_index_end: int | None = None
+    chapter_index_start: int | None = None
+    chapter_index_end: int | None = None
+    force: bool = False
+    start_immediately: bool = True
+
+    @field_validator("mode")
+    @classmethod
+    def check_mode(cls, v: str) -> str:
+        if v not in VALID_MODES:
+            raise ValueError(f"Invalid mode '{v}'. Must be: preview, range, full, incremental")
+        return v
+
+    @field_validator("limit_chunks")
+    @classmethod
+    def check_limit_chunks(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("limit_chunks must be > 0")
+        return v
+
+    @field_validator("chunk_index_start")
+    @classmethod
+    def check_range_start(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("chunk_index_start must not be negative")
+        return v
+
+    @field_validator("chunk_index_end")
+    @classmethod
+    def check_range_end(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("chunk_index_end must not be negative")
+        return v
 
 
 def _check_topic(topic_id: str, session: Session) -> Topic:
@@ -21,7 +66,7 @@ def _check_topic(topic_id: str, session: Session) -> Topic:
 @topic_router.post("/runs", status_code=201)
 def create_run(
     topic_id: str,
-    body: dict,
+    body: CreateRunRequest,
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
@@ -30,20 +75,26 @@ def create_run(
         run = analysis_run_service.create_analysis_run(
             session,
             topic_id,
-            mode=body.get("mode", "preview"),
-            requested_types=body.get("requested_types"),
-            limit_chunks=body.get("limit_chunks"),
-            chunk_index_start=body.get("chunk_index_start"),
-            chunk_index_end=body.get("chunk_index_end"),
-            chapter_index_start=body.get("chapter_index_start"),
-            chapter_index_end=body.get("chapter_index_end"),
-            force=body.get("force", False),
+            mode=body.mode,
+            requested_types=body.requested_types,
+            limit_chunks=body.limit_chunks,
+            chunk_index_start=body.chunk_index_start,
+            chunk_index_end=body.chunk_index_end,
+            chapter_index_start=body.chapter_index_start,
+            chapter_index_end=body.chapter_index_end,
+            force=body.force,
         )
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        msg = str(e)
+        # 409 for state conflicts (no provider, not parsed, etc.)
+        conflict_keywords = ("no provider", "no chunks", "not parsed", "parse document")
+        if any(kw in msg.lower() for kw in conflict_keywords):
+            raise HTTPException(status_code=409, detail=msg)
+        # 422 for invalid input (mode, range, body)
+        raise HTTPException(status_code=422, detail=msg)
 
-    # Start background execution
-    analysis_run_service.start_analysis_run(run.id)
+    if body.start_immediately:
+        analysis_run_service.start_analysis_run(run.id)
 
     return {
         "run": {
@@ -72,6 +123,8 @@ def list_runs(
                 "status": r.status,
                 "extraction_succeeded": r.extraction_succeeded,
                 "extraction_failed": r.extraction_failed,
+                "merge_succeeded": r.merge_succeeded,
+                "merge_failed": r.merge_failed,
                 "total_tokens": r.total_tokens,
                 "model_used": r.model_used,
                 "started_at": r.started_at.isoformat() if r.started_at else None,

@@ -108,15 +108,16 @@ def validate_local_extraction_response(
     # Top-level required fields
     analysis_type = data.get("analysis_type")
     if not analysis_type or not isinstance(analysis_type, str):
-        errors.append("Missing or invalid 'analysis_type' (should be 'local_extraction')")
+        errors.append("Missing or invalid 'analysis_type'")
+    elif analysis_type != "local_extraction":
+        details = repr(analysis_type) if len(str(analysis_type)) <= 30 else "unexpected value"
+        errors.append(f"analysis_type must be 'local_extraction', got {details}")
 
     chunk_id = data.get("chunk_id")
     if not chunk_id or not isinstance(chunk_id, str):
         errors.append("Missing or invalid 'chunk_id'")
     elif chunk_id != expected_chunk_id:
-        errors.append(
-            f"chunk_id mismatch: expected '{expected_chunk_id}', got '{chunk_id}'"
-        )
+        errors.append(f"chunk_id mismatch: expected '{expected_chunk_id}', got '{chunk_id}'")
 
     # Check atom keys
     atom_keys = [

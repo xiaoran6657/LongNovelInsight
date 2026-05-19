@@ -4,11 +4,16 @@ Pure function pattern: no DB access, returns result dataclass.
 Caller is responsible for writing LocalExtraction and ExtractedAtom rows.
 """
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from services.analysis_response_parser import parse_json_object
+from models.model_provider import mask_api_key
+from services.analysis_response_parser import (
+    parse_json_object,
+    validate_local_extraction_response,
+)
 from services.llm_client import LLMClientError, LLMMessage, OpenAICompatibleLLMClient
 from services.prompt_loader import load_local_extraction_prompt
 
@@ -30,7 +35,15 @@ class LocalExtractionResult:
     total_tokens: int = 0
     model_used: str | None = None
     retry_count: int = 0
+    status_code: int | None = None
     warnings: list[str] = field(default_factory=list)
+
+
+def _mask_error(error_msg: str, api_key: str) -> str:
+    """Mask any occurrences of the api_key in error messages."""
+    if api_key and len(api_key) > 8:
+        return error_msg.replace(api_key, mask_api_key(api_key))
+    return error_msg
 
 
 def build_local_extraction_messages(
@@ -46,7 +59,6 @@ def build_local_extraction_messages(
     """
     prompt = load_local_extraction_prompt()
 
-    # Build chunk metadata header
     meta_lines = ["## Chunk Metadata"]
     meta_lines.append(f"chunk_id: {chunk_id}")
     if chapter_index is not None:
@@ -69,12 +81,26 @@ def build_local_extraction_messages(
     return prompt, [system_msg, user_msg]
 
 
-def _is_retryable(error: Exception) -> bool:
-    if isinstance(error, LLMClientError):
-        if error.status_code and error.status_code in RETRYABLE_HTTP_CODES:
+def _is_retryable_result(
+    error_obj: Exception | None = None,
+    status_code: int | None = None,
+    error_msg: str = "",
+    is_json_error: bool = False,
+) -> bool:
+    """Determine if a failed extraction should be retried."""
+    if is_json_error:
+        return True
+    if status_code and status_code in RETRYABLE_HTTP_CODES:
+        return True
+    if isinstance(error_obj, LLMClientError):
+        sc = error_obj.status_code
+        if sc and sc in RETRYABLE_HTTP_CODES:
             return True
-        msg = error.message.lower()
+        msg = error_obj.message.lower()
         return any(kw in msg for kw in RETRYABLE_KEYWORDS)
+    if error_msg:
+        msg_lower = error_msg.lower()
+        return any(kw in msg_lower for kw in RETRYABLE_KEYWORDS)
     return False
 
 
@@ -103,7 +129,10 @@ def run_local_extraction_for_chunk(
     )
 
     client = OpenAICompatibleLLMClient(
-        base_url=base_url, api_key=api_key, timeout=180.0, max_retries=0,
+        base_url=base_url,
+        api_key=api_key,
+        timeout=180.0,
+        max_retries=0,
     )
 
     extra_body = None
@@ -114,27 +143,31 @@ def run_local_extraction_for_chunk(
 
     # ── First attempt ──
     result = _attempt_call(
-        client, messages, model_name, temperature, max_tokens, extra_body, chunk_id
+        client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key
     )
     if result.ok:
         result.duration_seconds = time.monotonic() - start
         return result
 
     # ── Retry logic ──
+    err_lower = (result.error or "").lower()
+    is_json_error = "json" in err_lower and "parse" in err_lower
+    if not _is_retryable_result(
+        error_msg=result.error or "",
+        status_code=result.status_code,
+        is_json_error=is_json_error,
+    ):
+        result.duration_seconds = time.monotonic() - start
+        return result
+
     for attempt in range(2):
         retry_tokens = max_tokens
-        err_msg = (result.error or "").lower()
-        is_json_error = "json" in err_msg and "parse" in err_msg
         if is_json_error:
             retry_tokens = min(max_tokens * 2, 8192)
 
-        is_retryable = any(kw in err_msg for kw in RETRYABLE_KEYWORDS)
-        if not is_retryable and not is_json_error:
-            break
-
         time.sleep(1.5 * (attempt + 1))
         retry_result = _attempt_call(
-            client, messages, model_name, temperature, retry_tokens, extra_body, chunk_id
+            client, messages, model_name, temperature, retry_tokens, extra_body, chunk_id, api_key
         )
         retry_result.retry_count = attempt + 1
         if retry_result.ok:
@@ -153,6 +186,7 @@ def _attempt_call(
     max_tokens: int,
     extra_body: dict | None,
     chunk_id: str,
+    api_key: str,
 ) -> LocalExtractionResult:
     try:
         response = client.chat(
@@ -164,8 +198,12 @@ def _attempt_call(
             extra_body=extra_body,
         )
     except LLMClientError as e:
+        masked = _mask_error(e.message, api_key)
         return LocalExtractionResult(
-            chunk_id=chunk_id, ok=False, error=e.message,
+            chunk_id=chunk_id,
+            ok=False,
+            error=masked,
+            status_code=e.status_code,
         )
 
     usage = response.usage or {}
@@ -176,7 +214,7 @@ def _attempt_call(
         return LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
-            content_json=response.content[:500],
+            content_json=None,
             error=f"JSON parse failed: {parsed.error}",
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
@@ -185,15 +223,35 @@ def _attempt_call(
             warnings=parsed.warnings,
         )
 
+    # Validate parsed JSON against contract
+    validation = validate_local_extraction_response(parsed.parsed, chunk_id)
+    all_warnings = parsed.warnings + validation.warnings
+
+    if validation.errors:
+        error_summary = "; ".join(validation.errors[:3])
+        if len(validation.errors) > 3:
+            error_summary += f" (+{len(validation.errors) - 3} more)"
+        return LocalExtractionResult(
+            chunk_id=chunk_id,
+            ok=False,
+            content_json=json.dumps(parsed.parsed, ensure_ascii=False)[:500],
+            error=f"Validation failed: {error_summary}",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            model_used=model_used,
+            warnings=all_warnings,
+        )
+
     return LocalExtractionResult(
         chunk_id=chunk_id,
         ok=True,
-        content_json=response.content,
+        content_json=json.dumps(parsed.parsed, ensure_ascii=False),
         parsed_json=parsed.parsed,
         duration_seconds=0.0,  # filled by caller
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
         total_tokens=usage.get("total_tokens", 0),
         model_used=model_used,
-        warnings=parsed.warnings,
+        warnings=all_warnings,
     )

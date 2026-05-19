@@ -104,9 +104,7 @@ def run_one_analysis_type(
             extra["thinking"]["reasoning_effort"] = reasoning_effort  # type: ignore[index]
 
     # ── First attempt ──
-    result = _attempt_call(
-        client, messages, model_name, temperature, max_tokens, extra
-    )
+    result = _attempt_call(client, messages, model_name, temperature, max_tokens, extra)
     if result.ok:
         result.duration_seconds = time.monotonic() - start
         return result
@@ -121,9 +119,10 @@ def run_one_analysis_type(
             if retry_max_tokens == max_tokens:
                 break  # already at cap
 
-        if not _is_retryable(
-            ValueError(result.error or "unknown")
-        ) and "json" not in (result.error or "").lower():
+        if (
+            not _is_retryable(ValueError(result.error or "unknown"))
+            and "json" not in (result.error or "").lower()
+        ):
             break
 
         time.sleep(1.5 * (attempt + 1))  # exponential-ish backoff

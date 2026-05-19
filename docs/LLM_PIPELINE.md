@@ -267,3 +267,36 @@ The chat flow uses keyword retrieval to ground LLM answers in source material:
 4. The LLM receives a system prompt instructing it to answer based only on evidence, outputting JSON with `answer`, `evidence`, and `uncertainty` fields.
 5. The assistant message is saved with `evidence_json` and `uncertainty` preserved.
 6. No vector embeddings are used — keyword retrieval is sufficient for v0.1.0.
+
+## v0.2 Staged Analysis Pipeline (In Progress)
+
+v0.2 replaces the single-pass 6-type LLM pipeline with a staged map-reduce design:
+
+### Pipeline Stages
+
+```
+Step 1–3: Schema + Stable ID + Selection
+    ↓
+Step 4–5: Local Extraction (per chunk, parallel, LLM)
+    ↓
+Step 6: Orchestrator (AnalysisRun lifecycle: create → start → run)
+    ↓
+Step 7: Deterministic Merge (per type, Python — no LLM)
+    ↓
+Step 8: Final Outputs (convert merged → frontend AnalysisOutput) — NOT YET IMPLEMENTED
+```
+
+### Current State (Steps 1–7 + Fix Patch)
+
+- **Local extraction worker**: Pure function, per-chunk LLM call. Parses JSON, validates against contract (analysis_type, chunk_id, evidence requirements). Stores canonical JSON (not raw markdown). Retries on retryable HTTP codes (429/500/502/503/504) and JSON parse errors. API key masking in error messages.
+- **AnalysisRun orchestrator**: Creates run, executes extractions in parallel via ThreadPoolExecutor (bounded 1–6, respects `analysis_parallelism` config). After extraction, runs deterministic merge stage.
+- **Deterministic merge** (7 types + overview): Python functions that group ExtractedAtoms by stable_id, consolidate fields, and write intermediate `AnalysisOutput` rows with `output_type="merge_<type>"`. Merge is idempotent — re-running overwrites previous merge outputs. Each merged item includes per-item `source_chunk_ids`, `evidence_quotes`, and `confidence`.
+- **Chunk selection**: Persists selected chunk IDs in `chunk_selection_json`. Range/incremental modes execute exactly the selected chunks (not `all_chunks[:n]`).
+- **Progress tracking**: `progress_total = extraction_total + merge_total`. Final stage not counted until Step 8.
+- **Status**: `get_analysis_run_status` returns extraction summary + merge summary (merge_total/merge_succeeded/merge_failed/outputs/warnings). Does not claim final outputs are ready.
+- **Error handling**: Unhandled exceptions → run.status = failed. Cancelled runs skip merge stage.
+- **API key resolution**: TopicProviderConfig.provider_id > Topic.provider_id > default provider.
+
+### Step 8 (Not Yet Implemented)
+
+Step 8 will convert merge outputs into frontend-compatible AnalysisOutput records matching v0.1's 6 analysis types (overview/characters/relations/events/causality/themes). Until Step 8 is complete, v0.2 AnalysisRuns produce merge intermediates but no user-facing final outputs.

@@ -297,8 +297,13 @@ Normalized atomic facts produced from local extraction results.
 | `order_index` | int | optional | Ordering hint |
 | `created_at / updated_at` | datetime | Timestamps |
 
-### AnalysisOutput (`analysis_output`) — New Field
+### AnalysisOutput (`analysis_output`) — v0.2 Changes
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `run_id` | FK → analysis_run | optional, nullable | Links output to v2 AnalysisRun. NULL for v1 outputs.
+| `run_id` | FK → analysis_run | optional, nullable | Links output to v2 AnalysisRun. NULL for v1 outputs. |
+
+v0.2 merge stage writes intermediate AnalysisOutput rows with these `output_type` values:
+`merge_overview`, `merge_characters`, `merge_events`, `merge_relations`, `merge_causality`, `merge_themes`, `merge_worldbuilding`, `merge_foreshadowing`.
+
+These are intermediate outputs — Step 8 (not yet implemented) will convert them to frontend-compatible types matching v0.1's output_type values.

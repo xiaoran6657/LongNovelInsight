@@ -70,8 +70,7 @@ def load_v2_prompt(prompt_name: str) -> str:
     filename = V2_PROMPT_FILES.get(prompt_name)
     if filename is None:
         raise ValueError(
-            f"Unknown v2 prompt_name: {prompt_name}. "
-            f"Supported: {list(V2_PROMPT_FILES)}"
+            f"Unknown v2 prompt_name: {prompt_name}. Supported: {list(V2_PROMPT_FILES)}"
         )
 
     filepath = _PROMPTS_DIR / filename

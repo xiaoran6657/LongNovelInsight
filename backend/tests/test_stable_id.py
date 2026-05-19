@@ -71,8 +71,14 @@ class TestMakeStableId:
 
     def test_all_atom_types_have_prefix(self):
         types = [
-            "character", "event", "relation", "causal_link",
-            "theme_signal", "worldbuilding", "foreshadowing", "open_question",
+            "character",
+            "event",
+            "relation",
+            "causal_link",
+            "theme_signal",
+            "worldbuilding",
+            "foreshadowing",
+            "open_question",
         ]
         for t in types:
             sid = make_stable_id(t, "test_entity", "fallback", set())
@@ -130,6 +136,7 @@ class TestStableIdSafety:
     def test_no_random_uuids(self):
         """Stable IDs must never contain UUIDs."""
         import uuid
+
         for _ in range(20):
             sid = make_stable_id("character", "random_test", "test", set())
             try:
@@ -139,7 +146,7 @@ class TestStableIdSafety:
                 pass
 
     def test_no_dangerous_characters(self):
-        dangerous = {"\"", "'", ";", "`", "$", "(", ")", "<", ">", "&", "|", " "}
+        dangerous = {'"', "'", ";", "`", "$", "(", ")", "<", ">", "&", "|", " "}
         for _ in range(10):
             sid = make_stable_id("character", "test entity", "test entity", set())
             for ch in dangerous:
