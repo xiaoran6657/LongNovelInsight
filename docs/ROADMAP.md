@@ -1,44 +1,84 @@
 # LongNovelInsight — Roadmap
 
-## v0.1.0 (Current)
+## v0.1.x — MVP & Release Baseline
 
-Single `.txt` novel analysis. This is the MVP.
+Status: Complete.
 
-- Upload one `.txt` novel per Topic.
-- Auto-detect encoding (UTF-8 / GBK / GB18030 / UTF-16).
-- Parse into chapters and chunks (idempotent, whitespace-normalized).
-- Six LLM analysis types via async parallel jobs: overview, characters, relationships, events, causal chain, themes.
-- Provider preset catalog (DeepSeek / OpenAI / Qwen / Moonshot / Custom).
-- Topic-level provider config overrides (Model, Max Tokens, Temperature, Thinking).
-- Topic-level chat with evidence-grounded Q&A, multi-turn history, message actions (copy/edit/delete).
-- Per-message token usage tracking, per-model usage statistics.
-- Local SQLite + `data/` storage with incremental schema migration.
-- Storage usage and job progress UI.
+- Local-first localhost workflow.
+- Provider configuration.
+- One Topic = one TXT novel.
+- Parse chapters/chunks.
+- Six structured analysis types.
+- Evidence-grounded chat.
+- Local SQLite/data storage.
+- Smoke tests and release docs.
 
-## v0.2.0 — Scale & Depth
+## v0.2.x — Scale & Depth for Single TXT
 
-- EPUB support: parse EPUB structure (chapters, metadata), all v0.1 analysis types on EPUB content.
-- Map-reduce analysis pipeline (local extraction per chunk → global merge) to handle novels of any size.
-- Chunk / analysis output migration from SQLite BLOB columns to disk files.
-- Prompt caching via repeated shared prefix (reduce token cost on repeat analysis runs).
-- Max Tokens slider control with range bounds and drag-accelerated stepping.
-- Stable entity ID system (pinyin-based character IDs, title-based event IDs).
-- Frontend automated e2e tests (Playwright or similar).
+Goal: make full-length TXT novels analyzable with lower repeated token cost and deeper structured outputs.
 
-## v0.3.0 — Multi-Book & Vector Retrieval
+- Chunk-level local extraction.
+- Global merge pipeline.
+- Stable entity/event IDs.
+- Async run-first analysis.
+- Preview/range/full/incremental modes.
+- Run history and per-chunk progress.
+- Output versioning.
+- Disk/hybrid artifact storage.
+- Timeline, character arcs, worldbuilding, foreshadowing.
+- Frontend analysis UX refactor.
+- Playwright e2e tests.
 
-- One Topic can contain multiple novels.
-- Cross-novel character matching and relationship detection.
-- Cross-novel event timeline.
-- Chunk embeddings for semantic search (replace keyword matching in chat retrieval).
-- "Find similar scenes" feature.
+Non-goals:
+- EPUB/PDF.
+- Multi-book Topic.
+- Vector database.
+- Graph visualization.
 
-## v0.4.0 — Visualization
+## v0.3.x — Source Formats & Retrieval
 
-- Interactive character relationship network graph.
+Goal: support EPUB and improve evidence retrieval.
+
+- EPUB parsing and metadata extraction.
+- Unified TXT/EPUB source abstraction.
+- SQLite FTS5 full-text search.
+- Retrieval trace/debugging.
+- Similar scenes.
+- Entity/evidence explorer.
+- Optional embedding rerank.
+
+Non-goals:
+- Cross-book analysis.
+- Interactive graph visualization.
+- Cloud sync.
+
+## v0.4.x — Multi-Book & Visualization
+
+Goal: support novel series and visual analysis.
+
+- One Topic contains multiple Works.
+- Cross-work entity registry.
+- Cross-work relationship matching.
+- Cross-work timeline.
+- Character relationship network.
 - Event timeline visualization.
 - Causal chain diagram.
+- Evidence-linked graph nodes/edges.
 
----
+Non-goals:
+- Plugin marketplace.
+- SaaS account system.
+- Remote storage.
 
-*Versions beyond v0.4.0 are not yet planned. Features listed here are subject to change based on user feedback.*
+## v0.5.x — Open Source Productization
+
+Goal: make the project easy to install, maintain, migrate, export, debug, and contribute to.
+
+- Setup scripts and doctor command.
+- Backup/restore/import/export.
+- Data integrity check.
+- Benchmark/evaluation harness.
+- Local diagnostics and logs.
+- Prompt pack / provider adapter / analysis recipe extension points.
+- CONTRIBUTING / SECURITY / PRIVACY docs.
+- Release checklist.
