@@ -294,3 +294,29 @@ def test_api_key_masked_in_error():
         assert result.error is not None
         assert "sk-test-1234567" not in result.error
         assert "sk-..." in result.error or "***" in result.error
+
+
+def test_retry_exhausted_returns_last_error():
+    """When all retries fail, return last attempt's error, not first."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            LLMClientError("first error: service unavailable", 503),
+            MockResponse("not json {{{"),  # JSON parse fail
+            LLMClientError("last error: server overloaded", 503),
+        ]
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+        )
+
+        assert not result.ok
+        assert result.retry_count > 0
+        assert "last error" in (result.error or "").lower()
+        assert "first error" not in (result.error or "").lower()

@@ -160,6 +160,9 @@ def merge_overview(session: Session, run_id: str) -> MergeSummary:
                     all_evidence.add(eq)
 
     total_atoms = sum(counts.values())
+    sorted_chunk_ids = sorted(all_chunk_ids)
+    sorted_evidence = sorted(all_evidence)
+    avg_confidence = _average_confidence(all_atoms) if all_atoms else 0.0
     merged = [
         {
             "stable_id": f"overview_{run_id[:8]}",
@@ -172,9 +175,12 @@ def merge_overview(session: Session, run_id: str) -> MergeSummary:
             "foreshadowing_count": counts.get("foreshadowing", 0),
             "open_question_count": counts.get("open_question", 0),
             "total_atom_count": total_atoms,
-            "source_chunk_count": len(all_chunk_ids),
-            "evidence_count": len(all_evidence),
+            "source_chunk_count": len(sorted_chunk_ids),
+            "evidence_count": len(sorted_evidence),
             "source_atom_ids": all_atom_ids[:100],
+            "source_chunk_ids": sorted_chunk_ids,
+            "evidence_quotes": sorted_evidence,
+            "confidence": avg_confidence,
         }
     ]
 

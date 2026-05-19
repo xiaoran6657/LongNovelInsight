@@ -4,7 +4,7 @@ import io
 import json
 from unittest.mock import patch
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from services.analysis_run_service import (
     _execute_run,
@@ -883,3 +883,245 @@ def test_error_message_does_not_leak_api_key(engine):
         status = get_analysis_run_status(session, run_id)
         err = status["run"]["error_message"] or ""
         assert "sk-secret-key-12345" not in err
+
+
+def test_invalid_requested_types_422(client):
+    """POST with unknown requested_types should return 422."""
+    topic_id = _setup_topic(client)
+    r = client.post(
+        f"/api/topics/{topic_id}/analysis/runs",
+        json={"mode": "preview", "requested_types": ["bad_type", "also_bad"]},
+    )
+    assert r.status_code == 422
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_all_extraction_failure(engine):
+    """All chunks fail extraction -> run.status == failed, DB has failed LocalExtractions."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="AllFail P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="AllFail", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
+        )
+        session.add(ch)
+        session.flush()
+        for i in range(2):
+            ck = Chunk(
+                topic_id=topic.id,
+                document_id=doc.id,
+                chapter_id=ch.id,
+                chapter_index=0,
+                chunk_index=i,
+                text=f"text_{i}",
+                start_char=i * 10,
+                end_char=(i + 1) * 10,
+                char_count=10,
+                estimated_tokens=7,
+            )
+            session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockExtractionResult(ok=False, error="failure", content=None, parsed=None),
+    ):
+        with Session(engine) as session:
+            run = create_analysis_run(session, tid, mode="full")
+            run_id = run.id
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        status = get_analysis_run_status(session, run_id)
+        assert status["run"]["status"] == "failed"
+        exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
+        assert len(exts) == 2
+        for e in exts:
+            assert e.status == "failed"
+
+
+def test_worker_exception_saves_failed_local_extraction(engine):
+    """RuntimeError in worker -> failed LocalExtraction row persisted in DB."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="WrkExc P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="WrkExc", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        run_id = run.id
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        side_effect=RuntimeError("worker crash"),
+    ):
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        status = get_analysis_run_status(session, run_id)
+        assert status["run"]["status"] in ("failed", "partial_success")
+        exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
+        assert len(exts) == 1
+        assert exts[0].status == "failed"
+        assert exts[0].error_message is not None
+
+
+def test_fail_run_masks_api_key(engine):
+    """_fail_run() should mask all known api_keys in error_message."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="FailRunMask P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-very-secret-key",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="FailRunMask", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        run_id = run.id
+
+    # Crash ThreadPoolExecutor so the error propagates to _fail_run
+    with patch(
+        "services.analysis_run_service.ThreadPoolExecutor",
+        side_effect=RuntimeError("Connection refused using key sk-very-secret-key"),
+    ):
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        status = get_analysis_run_status(session, run_id)
+        err = status["run"]["error_message"] or ""
+        assert "sk-very-secret-key" not in err

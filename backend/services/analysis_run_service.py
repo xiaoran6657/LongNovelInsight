@@ -77,22 +77,23 @@ def create_analysis_run(
         "themes",
     ]
 
+    # Strict validation: reject unknown requested_types
+    _valid_merge_types = {
+        "overview",
+        "characters",
+        "relations",
+        "events",
+        "causality",
+        "themes",
+        "worldbuilding",
+        "foreshadowing",
+    }
+    invalid = [t for t in types if t not in _valid_merge_types]
+    if invalid:
+        raise ValueError(f"Invalid requested_types: {invalid}")
+
     # Map requested types to merge types (same names for v0.2)
-    merge_requested_types = [
-        t
-        for t in types
-        if t
-        in {
-            "overview",
-            "characters",
-            "relations",
-            "events",
-            "causality",
-            "themes",
-            "worldbuilding",
-            "foreshadowing",
-        }
-    ]
+    merge_requested_types = [t for t in types if t in _valid_merge_types]
     extraction_total = len(selected)
     merge_total = len(merge_requested_types)
     progress_total = extraction_total + merge_total
@@ -163,8 +164,8 @@ def _fail_run(run_id: str, engine, error: str) -> None:
         with Session(engine) as session:
             run = session.get(AnalysisRun, run_id)
             if run and run.status not in (JobStatus.SUCCEEDED, JobStatus.CANCELLED):
-                # Truncate and mask potential api_keys in error
-                safe = error[:500]
+                safe = _mask_api_keys_in_error(session, error)
+                safe = safe[:1000]
                 run.status = JobStatus.FAILED
                 run.error_message = safe
                 run.finished_at = _now()
@@ -172,6 +173,21 @@ def _fail_run(run_id: str, engine, error: str) -> None:
                 session.commit()
     except Exception:
         pass  # best-effort failure recording
+
+
+def _mask_api_keys_in_error(session: Session, error: str) -> str:
+    """Replace all known api_keys in error string with masked versions."""
+    from models.model_provider import ModelProvider, mask_api_key
+
+    result = error
+    try:
+        providers = session.exec(select(ModelProvider)).all()
+        for p in providers:
+            if p.api_key and len(p.api_key) > 4 and p.api_key in result:
+                result = result.replace(p.api_key, mask_api_key(p.api_key))
+    except Exception:
+        pass
+    return result
 
 
 def _execute_run_impl(run_id: str, engine) -> None:
@@ -273,6 +289,7 @@ def _execute_run_impl(run_id: str, engine) -> None:
                     _save_extraction(
                         session, run_id, run.topic_id, chunk_id, ok=False, error=str(e)
                     )
+                    session.commit()
                 continue
 
             with Session(engine) as session:

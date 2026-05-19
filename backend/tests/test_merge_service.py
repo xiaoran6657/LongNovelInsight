@@ -587,3 +587,60 @@ class TestRunMergeStage:
             for s in summaries:
                 assert s.atom_count == 0
                 assert s.merged_count == 0
+
+
+class TestMergeOverviewFields:
+    def test_overview_item_has_source_evidence_confidence(self, engine):
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CHARACTER,
+                "char_x",
+                {"name": "X", "evidence": "he spoke"},
+                cid,
+                0,
+                0,
+                0.9,
+            )
+            session.commit()
+            merge_overview(session, rid)
+
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "merge_overview",
+                )
+            ).first()
+            assert out is not None
+            merged = json.loads(out.content_json)
+            item = merged[0]
+            assert "source_atom_ids" in item
+            assert "source_chunk_ids" in item
+            assert "evidence_quotes" in item
+            assert "confidence" in item
+
+    def test_empty_overview_has_fields_with_zero_values(self, engine):
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            merge_overview(session, rid)
+
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "merge_overview",
+                )
+            ).first()
+            assert out is not None
+            merged = json.loads(out.content_json)
+            item = merged[0]
+            assert item["source_atom_ids"] == []
+            assert item["source_chunk_ids"] == []
+            assert item["evidence_quotes"] == []
+            assert item["confidence"] == 0.0

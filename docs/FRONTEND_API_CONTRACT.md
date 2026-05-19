@@ -446,7 +446,7 @@ Response `201`:
   "status_url": "/api/analysis/runs/{id}"
 }
 ```
-Errors: `404` topic not found, `409` no chunks/no provider/not parsed, `422` invalid mode/invalid range.
+Errors: `404` topic not found, `409` no chunks/no provider/not parsed, `422` invalid mode/invalid range/invalid requested_types.
 
 **`GET /api/topics/{topic_id}/analysis/runs`**
 

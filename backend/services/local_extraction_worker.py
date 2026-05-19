@@ -142,23 +142,23 @@ def run_local_extraction_for_chunk(
         extra_body = {"thinking": {"type": "enabled"}}
 
     # ── First attempt ──
-    result = _attempt_call(
+    last_result = _attempt_call(
         client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key
     )
-    if result.ok:
-        result.duration_seconds = time.monotonic() - start
-        return result
+    if last_result.ok:
+        last_result.duration_seconds = time.monotonic() - start
+        return last_result
 
     # ── Retry logic ──
-    err_lower = (result.error or "").lower()
+    err_lower = (last_result.error or "").lower()
     is_json_error = "json" in err_lower and "parse" in err_lower
     if not _is_retryable_result(
-        error_msg=result.error or "",
-        status_code=result.status_code,
+        error_msg=last_result.error or "",
+        status_code=last_result.status_code,
         is_json_error=is_json_error,
     ):
-        result.duration_seconds = time.monotonic() - start
-        return result
+        last_result.duration_seconds = time.monotonic() - start
+        return last_result
 
     for attempt in range(2):
         retry_tokens = max_tokens
@@ -173,9 +173,10 @@ def run_local_extraction_for_chunk(
         if retry_result.ok:
             retry_result.duration_seconds = time.monotonic() - start
             return retry_result
+        last_result = retry_result
 
-    result.duration_seconds = time.monotonic() - start
-    return result
+    last_result.duration_seconds = time.monotonic() - start
+    return last_result
 
 
 def _attempt_call(
