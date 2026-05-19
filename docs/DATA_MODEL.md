@@ -25,8 +25,10 @@ Job            1──*  JobItem
 |------|--------|
 | `AnalysisType` | `overview`, `characters`, `relations`, `events`, `causality`, `themes` |
 | `JobType` | `parse`, `analysis` |
-| `JobStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `JobStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled`, `partial_success` (v0.2 AnalysisRun) |
 | `JobItemStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `AnalysisMode` (v0.2) | `preview`, `range`, `full`, `incremental` |
+| `AtomType` (v0.2) | `character`, `event`, `relation`, `causal_link`, `theme_signal`, `worldbuilding`, `foreshadowing`, `open_question` |
 | `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
 | `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
 

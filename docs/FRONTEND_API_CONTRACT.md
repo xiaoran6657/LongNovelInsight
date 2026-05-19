@@ -319,6 +319,29 @@ Response `200`:
 Query params: `include_text` (bool, default `false`), `limit` (int, default `100`, max `1000`), `offset` (int, default `0`).
 ⚠️ Frontend should default to `include_text=false`. Only load text for preview of first ~20 chunks.
 
+**`GET /api/topics/{topic_id}/chunks/meta`** (v0.2)
+
+Returns lightweight chunk metadata without chunk text. Per-chapter breakdown included.
+
+Response `200`:
+```json
+{
+  "topic_id": "uuid",
+  "document_id": "uuid",
+  "chunk_count": 120,
+  "chapter_count": 30,
+  "total_chars": 500000,
+  "estimated_tokens": 333333,
+  "first_chunk_index": 0,
+  "last_chunk_index": 119,
+  "chunks_by_chapter": [
+    {"chapter_index": 0, "title": "第一章", "chunk_count": 4, "char_count": 12000, "estimated_tokens": 8000}
+  ]
+}
+```
+
+Errors: `404` topic not found / no document, `409` document not parsed / no chunks.
+
 **`GET /api/topics/{topic_id}/storage`**
 
 Response `200`:

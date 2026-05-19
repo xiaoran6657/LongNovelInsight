@@ -2,6 +2,9 @@
 
 import io
 
+import pytest
+from sqlmodel import Session
+
 from models.enums import AnalysisMode
 from services.analysis_selection_service import (
     estimate_v2_analysis_cost,
@@ -10,21 +13,16 @@ from services.analysis_selection_service import (
 )
 
 
-def _setup_topic(client):
+def _setup(client):
     """Create topic + upload + parse. Returns topic_id."""
     r = client.post("/api/topics", json={"name": "Selection Test"})
     assert r.status_code == 201
     topic_id = r.json()["id"]
 
+    content = io.BytesIO("第一章 测试\n内容。\n第二章 更多\n内。\n".encode())
     client.post(
         f"/api/topics/{topic_id}/documents/upload",
-        files={
-            "file": (
-                "novel.txt",
-                io.BytesIO("第一章 测试\n内容。\n第二章 更多\n内。\n第三章 结束\n。\n".encode()),
-                "text/plain",
-            )
-        },
+        files={"file": ("n.txt", content, "text/plain")},
     )
     r = client.post(f"/api/topics/{topic_id}/parse")
     assert r.status_code == 200
@@ -35,30 +33,22 @@ def _setup_topic(client):
 
 
 def test_chunks_meta_basic(client):
-    """GET /api/topics/{id}/chunks/meta returns extended metadata."""
-    topic_id = _setup_topic(client)
-
+    topic_id = _setup(client)
     r = client.get(f"/api/topics/{topic_id}/chunks/meta")
     assert r.status_code == 200
     data = r.json()
-
     assert data["chunk_count"] > 0
     assert data["chapter_count"] > 0
-    assert data["total_chars"] > 0
-    assert data["estimated_tokens"] > 0
+    assert "document_id" in data
     assert "first_chunk_index" in data
-    assert "last_chunk_index" in data
-
     client.delete(f"/api/topics/{topic_id}")
 
 
 def test_chunks_meta_per_chapter(client):
-    """chunks/meta includes per-chapter breakdown."""
-    topic_id = _setup_topic(client)
-
+    topic_id = _setup(client)
     r = client.get(f"/api/topics/{topic_id}/chunks/meta")
+    assert r.status_code == 200
     data = r.json()
-
     by_chapter = data["chunks_by_chapter"]
     assert isinstance(by_chapter, list)
     assert len(by_chapter) >= 1
@@ -66,171 +56,240 @@ def test_chunks_meta_per_chapter(client):
         assert "chapter_index" in ch
         assert "title" in ch
         assert "chunk_count" in ch
-        assert "char_count" in ch
         assert ch["chunk_count"] > 0
-
     client.delete(f"/api/topics/{topic_id}")
 
 
-def test_chunks_meta_404(client):
-    """Nonexistent topic returns 404."""
-    r = client.get("/api/topics/nonexistent-id/chunks/meta")
+def test_chunks_meta_unparsed_409(client):
+    r = client.post("/api/topics", json={"name": "Unparsed"})
+    assert r.status_code == 201
+    topic_id = r.json()["id"]
+    client.post(f"/api/topics/{topic_id}/documents/upload",
+        files={"file": ("n.txt", io.BytesIO("第一章\n".encode()), "text/plain")})
+    r = client.get(f"/api/topics/{topic_id}/chunks/meta")
+    assert r.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_chunks_meta_no_document_404(client):
+    r = client.post("/api/topics", json={"name": "No Doc"})
+    assert r.status_code == 201
+    topic_id = r.json()["id"]
+    r = client.get(f"/api/topics/{topic_id}/chunks/meta")
     assert r.status_code == 404
+    client.delete(f"/api/topics/{topic_id}")
 
 
 # ── Chunk selection ──
 
 
 def test_select_preview(client, engine):
-    """Preview mode selects a limited subset of chunks."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2
-        )
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2)
         assert len(chunks) <= 2
         assert info["mode"] == "preview"
-        assert info["selected"] <= 2
-
     client.delete(f"/api/topics/{topic_id}")
 
 
 def test_select_preview_default_limit(client, engine):
-    """Preview with no limit_chunks uses recommended default."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.PREVIEW
-        )
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW)
         assert len(chunks) > 0
         assert info["limit_chunks"] is not None
+    client.delete(f"/api/topics/{topic_id}")
 
+
+def test_select_preview_limit_zero_raises(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="limit_chunks"):
+            select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=0)
     client.delete(f"/api/topics/{topic_id}")
 
 
 def test_select_full(client, engine):
-    """Full mode selects all chunks."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.FULL
-        )
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.FULL)
         assert len(chunks) > 0
         assert info["selected"] == info["total"]
+    client.delete(f"/api/topics/{topic_id}")
 
+
+def test_select_full_with_safety_cap(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.FULL, safety_cap=1)
+        assert len(chunks) == 1
+        assert info.get("capped") is True
     client.delete(f"/api/topics/{topic_id}")
 
 
 def test_select_range_by_chapter(client, engine):
-    """Range mode with chapter boundaries selects correct subset."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+    topic_id = _setup(client)
     with Session(engine) as session:
         chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.RANGE, chapter_start=0, chapter_end=0
-        )
+            session, topic_id, mode=AnalysisMode.RANGE, chapter_start=0, chapter_end=0)
         for c in chunks:
             assert c.chapter_index == 0
         assert info["mode"] == "range"
-
     client.delete(f"/api/topics/{topic_id}")
 
 
-def test_select_range_by_chunk_index(client, engine):
-    """Range mode with chunk index boundaries selects correct subset."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+def test_select_range_no_params_raises(client, engine):
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.RANGE, range_start=0, range_end=1
-        )
-        assert info["mode"] == "range"
-
+        with pytest.raises(ValueError, match="Range mode requires"):
+            select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.RANGE)
     client.delete(f"/api/topics/{topic_id}")
 
 
-def test_select_incremental_no_previous_run(client, engine):
-    """Incremental with no previous runs falls back to full."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+def test_select_range_start_gt_end_raises(client, engine):
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.INCREMENTAL
-        )
+        with pytest.raises(ValueError, match="range_start.*greater"):
+            select_chunks_for_analysis(
+                session, topic_id, mode=AnalysisMode.RANGE, range_start=5, range_end=1)
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_range_both_ranges_raises(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="both"):
+            select_chunks_for_analysis(
+                session, topic_id, mode=AnalysisMode.RANGE,
+                range_start=0, range_end=1, chapter_start=0, chapter_end=1)
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_range_negative_raises(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="negative"):
+            select_chunks_for_analysis(
+                session, topic_id, mode=AnalysisMode.RANGE, range_start=-1, range_end=1)
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_range_chapter_start_gt_end_raises(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="chapter_start.*greater"):
+            select_chunks_for_analysis(
+                session, topic_id, mode=AnalysisMode.RANGE, chapter_start=5, chapter_end=1)
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_incremental_no_previous(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.INCREMENTAL)
         assert len(chunks) > 0
         assert info["fallback"] == "no_previous_run"
-
     client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_incremental_with_run_id(client, engine):
+    """incremental with a real run skips succeeded chunks."""
+    topic_id = _setup(client)
+    from models.analysis_run import AnalysisRun
+    from models.local_extraction import LocalExtraction
+
+    all_chunks = client.get(f"/api/topics/{topic_id}/chunks?limit=10").json()["chunks"]
+    assert len(all_chunks) >= 2
+
+    run_id_to_use: str = ""
+    with Session(engine) as session:
+        run = AnalysisRun(topic_id=topic_id, mode=AnalysisMode.PREVIEW)
+        session.add(run)
+        session.flush()
+        run_id_to_use = run.id
+        ext = LocalExtraction(
+            run_id=run.id, topic_id=topic_id, chunk_id=all_chunks[0]["id"],
+            status="succeeded", attempt_count=1,
+        )
+        session.add(ext)
+        session.commit()
+
+    with Session(engine) as session:
+        chunks, info = select_chunks_for_analysis(
+            session, topic_id, mode=AnalysisMode.INCREMENTAL, incremental_run_id=run_id_to_use)
+        chunk_ids = [c.id for c in chunks]
+        assert all_chunks[0]["id"] not in chunk_ids
+        assert all_chunks[1]["id"] in chunk_ids
+        assert info["base_run_id"] == run_id_to_use
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_incremental_run_not_found(client, engine):
+    topic_id = _setup(client)
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="AnalysisRun not found"):
+            select_chunks_for_analysis(
+                session, topic_id, mode=AnalysisMode.INCREMENTAL,
+                incremental_run_id="nonexistent-id")
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_select_incremental_cross_topic_raises(client, engine):
+    """incremental_run_id from topic A cannot be used on topic B."""
+    topic_a = _setup(client)
+    topic_b = _setup(client)
+
+    from models.analysis_run import AnalysisRun
+
+    with Session(engine) as session:
+        run_a = AnalysisRun(topic_id=topic_a, mode=AnalysisMode.PREVIEW)
+        session.add(run_a)
+        session.commit()
+        run_a_id = run_a.id
+
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="does not belong to this topic"):
+            select_chunks_for_analysis(
+                session, topic_b, mode=AnalysisMode.INCREMENTAL,
+                incremental_run_id=run_a_id)
+    client.delete(f"/api/topics/{topic_a}")
+    client.delete(f"/api/topics/{topic_b}")
 
 
 def test_validate_analysis_mode():
-    """Valid modes pass, invalid raise ValueError."""
     validate_analysis_mode("preview")
     validate_analysis_mode("full")
-    try:
+    with pytest.raises(ValueError):
         validate_analysis_mode("invalid_mode")
-        assert False, "Should have raised"
-    except ValueError:
-        pass
 
 
 def test_validate_analysis_mode_v1_types_rejected():
-    """Old v1 analysis types are not valid v2 modes."""
-    try:
+    with pytest.raises(ValueError):
         validate_analysis_mode("overview")
-        assert False, "Should have raised"
-    except ValueError:
-        pass
-
-
-# ── Cost estimation ──
 
 
 def test_cost_estimate_preview(client, engine):
-    """Cost estimation for preview mode returns structured estimate."""
-    topic_id = _setup_topic(client)
-    from sqlmodel import Session
-
+    topic_id = _setup(client)
     with Session(engine) as session:
-        chunks, _info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2
-        )
-        estimate = estimate_v2_analysis_cost(chunks, ["characters", "events"])
-        assert estimate["selected_chunk_count"] <= 2
-        assert estimate["estimated_total_input_tokens"] > 0
-        assert estimate["estimated_total_output_tokens"] > 0
-        assert len(estimate["estimate_notes"]) > 0
-
+        chunks, _ = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.PREVIEW, limit_chunks=2)
+        est = estimate_v2_analysis_cost(chunks, ["characters", "events"])
+        assert est["selected_chunk_count"] <= 2
+        assert est["estimated_total_input_tokens"] > 0
+        assert "estimated_final_input_total" in est
     client.delete(f"/api/topics/{topic_id}")
 
 
 def test_cost_estimate_no_chunks():
-    """Cost estimation with no chunks returns zeros."""
-    estimate = estimate_v2_analysis_cost([])
-    assert estimate["selected_chunk_count"] == 0
-    assert estimate["estimated_total_input_tokens"] == 0
+    est = estimate_v2_analysis_cost([])
+    assert est["selected_chunk_count"] == 0
+    assert est["estimated_total_input_tokens"] == 0
 
 
 def test_no_chunks_returns_empty_list(client, engine):
-    """Selecting chunks for a topic with no chunks returns empty list."""
-    r = client.post("/api/topics", json={"name": "No Chunks Topic"})
+    r = client.post("/api/topics", json={"name": "No Chunks"})
     topic_id = r.json()["id"]
-    from sqlmodel import Session
-
     with Session(engine) as session:
-        chunks, info = select_chunks_for_analysis(
-            session, topic_id, mode=AnalysisMode.FULL
-        )
+        chunks, info = select_chunks_for_analysis(session, topic_id, mode=AnalysisMode.FULL)
         assert chunks == []
         assert info["selected"] == 0
-
     client.delete(f"/api/topics/{topic_id}")

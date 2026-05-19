@@ -87,43 +87,18 @@ def list_chunks(
 @router.get("/chunks/meta")
 def get_chunks_meta(topic_id: str, session: Session = Depends(get_session)) -> dict:
     _check_topic(topic_id, session)
-    chunks = session.exec(
-        select(Chunk)
-        .where(Chunk.topic_id == topic_id)
-        .order_by(Chunk.chapter_index, Chunk.chunk_index)
-    ).all()
-    chapters = session.exec(
-        select(Chapter)
-        .where(Chapter.topic_id == topic_id)
-        .order_by(Chapter.chapter_index)
-    ).all()
-    total_chars = sum(c.char_count for c in chunks)
-    estimated_tokens = sum(c.estimated_tokens for c in chunks)
+    _check_document(topic_id, session)
 
-    # Per-chapter breakdown
-    chunks_by_chapter: list[dict] = []
-    for ch in chapters:
-        ch_chunks = [c for c in chunks if c.chapter_index == ch.chapter_index]
-        if not ch_chunks:
-            continue
-        chunks_by_chapter.append({
-            "chapter_index": ch.chapter_index,
-            "title": ch.title,
-            "chunk_count": len(ch_chunks),
-            "char_count": sum(c.char_count for c in ch_chunks),
-            "estimated_tokens": sum(c.estimated_tokens for c in ch_chunks),
-        })
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
+    if doc is None or doc.status != "parsed":
+        raise HTTPException(status_code=409, detail="Document is not parsed")
 
-    return {
-        "topic_id": topic_id,
-        "chunk_count": len(chunks),
-        "chapter_count": len(chapters),
-        "total_chars": total_chars,
-        "estimated_tokens": estimated_tokens,
-        "first_chunk_index": chunks[0].chunk_index if chunks else 0,
-        "last_chunk_index": chunks[-1].chunk_index if chunks else 0,
-        "chunks_by_chapter": chunks_by_chapter,
-    }
+    from services.analysis_selection_service import get_chunks_meta as svc_meta
+
+    meta = svc_meta(session, topic_id)
+    if meta["chunk_count"] == 0:
+        raise HTTPException(status_code=409, detail="No chunks found; parse document first")
+    return meta
 
 
 @router.get("/storage")

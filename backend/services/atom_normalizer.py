@@ -40,6 +40,17 @@ _TITLE_FIELDS: dict[str, str] = {
     AtomType.OPEN_QUESTION: "title",
 }
 
+_ID_HINT_FIELDS: dict[str, list[str]] = {
+    AtomType.CHARACTER: ["character_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.EVENT: ["event_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.RELATION: ["relation_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.CAUSAL_LINK: ["causal_link_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.THEME_SIGNAL: ["theme_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.WORLDBUILDING: ["location_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.FORESHADOWING: ["foreshadowing_id_hint", "id_hint", "stable_id_hint"],
+    AtomType.OPEN_QUESTION: ["question_id_hint", "id_hint", "stable_id_hint"],
+}
+
 
 @dataclass
 class NormalizationSummary:
@@ -52,7 +63,128 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# ── Per-atom helper ──
+# ── Coercion helpers ──
+
+
+def _coerce_items_list(value: object, json_key: str, summary: NormalizationSummary) -> list[dict]:
+    """Coerce an LLM output value into a list of dict items for an atom type key.
+
+    Handles: list of dicts, dict wrapping a list, dict wrapping a single item.
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        result = [v for v in value if isinstance(v, dict)]
+        skipped = len(value) - len(result)
+        if skipped:
+            summary.warnings.append(f"{json_key}: skipped {skipped} non-dict items")
+        return result
+
+    if isinstance(value, dict):
+        # Check for known wrapper keys: items/list/results/records/entries
+        for wrapper in ("items", "list", "results", "records", "entries"):
+            inner = value.get(wrapper)
+            if isinstance(inner, list):
+                extracted = _coerce_items_list(inner, f"{json_key}.{wrapper}", summary)
+                if extracted:
+                    return extracted
+        # Check if exactly one value is a list
+        lists = {k: v for k, v in value.items() if isinstance(v, list)}
+        if len(lists) == 1:
+            inner = list(lists.values())[0]
+            extracted = _coerce_items_list(inner, f"{json_key}._single", summary)
+            if extracted:
+                return extracted
+        # Single atom: the dict looks like one item
+        if any(k in value for k in ("name", "title", "character_id_hint", "event_id_hint")):
+            return [value]
+        summary.warnings.append(
+            f"{json_key}: dict wrapping not recognized; keys={list(value.keys())[:5]}"
+        )
+        return []
+
+    summary.warnings.append(f"{json_key}: expected list or dict, got {type(value).__name__}")
+    return []
+
+
+def _coerce_list(
+    value: object,
+    field_name: str,
+    atom_label: str,
+    summary: NormalizationSummary,
+) -> list:
+    """Coerce a field to a list. Non-list values produce a warning and return [].
+
+    None produces [] with a warning. Missing evidence is flagged explicitly.
+    """
+    if isinstance(value, list):
+        return value
+    if value is None:
+        summary.warnings.append(f"{atom_label}: {field_name} is missing (None)")
+        return []
+    summary.warnings.append(
+        f"{atom_label}: {field_name} is not a list ({type(value).__name__}), empty list used"
+    )
+    return []
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    """Safely parse an integer, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+# ── ID helpers ──
+
+
+def _extract_id_hint(atom_type: str, item: dict) -> str:
+    """Extract an id_hint from an atom item based on its type."""
+    fields = _ID_HINT_FIELDS.get(atom_type, ["id_hint", "stable_id_hint"])
+    for f in fields:
+        v = item.get(f)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _build_stable_id(
+    atom_type: str,
+    item: dict,
+    fallback: str,
+    existing_ids: set[str],
+) -> str:
+    """Build a stable ID using type-specific logic.
+    Relation: uses character_a/b + relation_type via make_relation_id.
+    Causal_link: uses cause_event + effect_event via make_causal_link_id.
+    Other types: uses make_stable_id.
+    """
+    # Relation — use character pair + relation type
+    if atom_type == AtomType.RELATION:
+        a = _safe_str(item.get("character_a_id") or item.get("character_a"))
+        b = _safe_str(item.get("character_b_id") or item.get("character_b"))
+        rtype = _safe_str(item.get("relation_type") or "related")
+        if a and b:
+            base = stable_id_service.make_relation_id(a, b, rtype)
+            return stable_id_service.ensure_unique_stable_id(base, existing_ids)
+
+    # Causal link — use cause + effect event pair
+    if atom_type == AtomType.CAUSAL_LINK:
+        cause = _safe_str(item.get("cause_event_id") or item.get("cause_event"))
+        effect = _safe_str(item.get("effect_event_id") or item.get("effect_event"))
+        if cause and effect:
+            base = stable_id_service.make_causal_link_id(cause, effect)
+            return stable_id_service.ensure_unique_stable_id(base, existing_ids)
+
+    # Default
+    id_hint = _extract_id_hint(atom_type, item)
+    return stable_id_service.make_stable_id(atom_type, id_hint, fallback, existing_ids)
+
+
+# ── Title / summary helpers ──
 
 
 def _safe_str(value: object, default: str = "") -> str:
@@ -66,30 +198,11 @@ def _safe_str(value: object, default: str = "") -> str:
         return default
 
 
-def _safe_float(value: object, default: float = 0.5) -> float:
-    if value is None:
-        return default
-    try:
-        v = float(value)
-        return max(0.0, min(1.0, v))
-    except (ValueError, TypeError):
-        return default
-
-
-def _safe_list(value: object) -> list:
-    if isinstance(value, list):
-        return value
-    if value is None:
-        return []
-    return []
-
-
 def _extract_title(atom_type: str, data: dict) -> str | None:
     field = _TITLE_FIELDS.get(atom_type, "title")
     val = data.get(field)
     if isinstance(val, str) and val.strip():
         return val.strip()
-    # fallback: try common fields
     for f in ("name", "title", "theme_name", "label"):
         v = data.get(f)
         if isinstance(v, str) and v.strip():
@@ -116,16 +229,11 @@ def normalize_local_extraction(
     content_json_str: str,
     session: Session,
 ) -> NormalizationSummary:
-    """Parse local_extraction JSON and write ExtractedAtom rows.
-
-    Returns a summary with counts and warnings.
-    Existing atoms for this extraction_id are NOT auto-deleted; callers
-    should handle idempotency (e.g. delete first if force re-run).
-    """
+    """Parse local_extraction JSON and write ExtractedAtom rows."""
     summary = NormalizationSummary()
     existing_ids: set[str] = set()
 
-    # Parse JSON
+    # ── Parse top-level JSON ──
     try:
         data = json.loads(content_json_str)
     except (json.JSONDecodeError, TypeError) as e:
@@ -133,31 +241,43 @@ def normalize_local_extraction(
         summary.skipped_count = 1
         return summary
 
-    if not isinstance(data, dict):
-        # Maybe a list wrapping
-        if isinstance(data, list):
-            data = data[0] if data else {}
-        if not isinstance(data, dict):
-            summary.warnings.append("content_json is not a dict or list of dicts")
+    # Handle top-level list
+    if isinstance(data, list):
+        # Merge all dicts from the list
+        merged: dict = {}
+        for item in data:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if k in merged and isinstance(merged[k], list) and isinstance(v, list):
+                        merged[k] = merged[k] + v  # type: ignore[operator]
+                    elif k in merged and isinstance(merged[k], list):
+                        merged[k] = merged[k] + [v]  # type: ignore[operator]
+                    else:
+                        merged[k] = v
+        if not merged:
+            summary.warnings.append("top-level list contains no dict items")
             summary.skipped_count = 1
             return summary
+        data = merged
 
-    chapter_index = data.get("chapter_index")
-    if chapter_index is not None:
-        try:
-            chapter_index = int(chapter_index)
-        except (ValueError, TypeError):
-            chapter_index = None
+    if not isinstance(data, dict):
+        summary.warnings.append(
+            f"content_json is not a dict or list of dicts, got {type(data).__name__}"
+        )
+        summary.skipped_count = 1
+        return summary
 
+    chapter_index = _coerce_optional_int(data.get("chapter_index"))
+
+    # ── Process each atom type ──
     for json_key, atom_type in _ATOM_TYPE_MAP.items():
-        items = data.get(json_key)
-        if items is None:
+        raw = data.get(json_key)
+        if raw is None:
             continue
-        if isinstance(items, dict):
-            # Some LLMs wrap single-item results in a dict
-            items = list(items.values()) if items else []
-        if not isinstance(items, list):
-            summary.warnings.append(f"{json_key} is not a list, got {type(items).__name__}")
+
+        items = _coerce_items_list(raw, json_key, summary)
+        if not items and raw is not None:
+            # coerce_items_list already added warnings
             continue
 
         for i, item in enumerate(items):
@@ -166,38 +286,59 @@ def normalize_local_extraction(
                 summary.skipped_count += 1
                 continue
 
-            # Extract id_hint
-            id_hint = _safe_str(item.get("character_id_hint") or item.get("event_id_hint")
-                                or item.get("relation_id_hint") or item.get("causal_link_id_hint")
-                                or item.get("theme_id_hint") or item.get("location_id_hint")
-                                or item.get("foreshadowing_id_hint") or item.get("question_id_hint")
-                                or item.get("stable_id_hint"))
+            atom_label = f"{json_key}[{i}]"
 
-            # Title & summary
+            # Evidence — coerce, warn on missing/non-list
+            evidence_quotes = _coerce_list(
+                item.get("evidence_quotes"), "evidence_quotes", atom_label, summary
+            )
+            has_evidence = len(evidence_quotes) > 0
+
+            # Source chunk IDs — coerce, warn on missing/non-list
+            source_chunk_ids = _coerce_list(
+                item.get("source_chunk_ids"), "source_chunk_ids", atom_label, summary
+            )
+
+            # Always ensure current chunk_id is present
+            if chunk_id and chunk_id not in source_chunk_ids:
+                source_chunk_ids = [chunk_id] + source_chunk_ids
+
+            # Confidence
+            conf_raw = item.get("confidence")
+            confidence: float
+            if conf_raw is None:
+                confidence = 0.5
+                summary.warnings.append(f"{atom_label}: confidence missing, default 0.5")
+            else:
+                try:
+                    confidence = float(conf_raw)
+                except (ValueError, TypeError):
+                    confidence = 0.5
+                    summary.warnings.append(
+                        f"{atom_label}: confidence invalid ({conf_raw}), default 0.5"
+                    )
+                if confidence < 0.0 or confidence > 1.0:
+                    old = confidence
+                    confidence = max(0.0, min(1.0, confidence))
+                    summary.warnings.append(
+                        f"{atom_label}: confidence out of range ({old}), clamped to {confidence}"
+                    )
+
+            # No evidence → lower confidence cap
+            if not has_evidence and confidence > 0.3:
+                summary.warnings.append(
+                    f"{atom_label}: no evidence; confidence capped from {confidence} to 0.3"
+                )
+                confidence = 0.3
+
+            # Title & canonical name
             title = _extract_title(atom_type, item)
             raw_name = item.get("canonical_name") or item.get("name") or item.get("theme_name")
             canonical_name = _safe_str(raw_name) or None
 
-            # Evidence
-            evidence_quotes = _safe_list(item.get("evidence_quotes"))
-            source_chunk_ids = _safe_list(item.get("source_chunk_ids"))
-
-            # Ensure current chunk_id is in source
-            if chunk_id and chunk_id not in source_chunk_ids:
-                source_chunk_ids = [chunk_id] + source_chunk_ids
-
-            confidence = _safe_float(item.get("confidence"))
-
-            # Fallback text for stable ID
+            # Stable ID
             fallback = title or canonical_name or f"{atom_type}_{i}"
-
-            # Generate stable ID
-            stable_id = stable_id_service.make_stable_id(
-                atom_type=atom_type,
-                id_hint=id_hint,
-                fallback_text=fallback,
-                existing_ids=existing_ids,
-            )
+            stable_id = _build_stable_id(atom_type, item, fallback, existing_ids)
             existing_ids.add(stable_id)
 
             # Write ExtractedAtom
@@ -216,7 +357,7 @@ def normalize_local_extraction(
                 evidence_quotes=json.dumps(evidence_quotes, ensure_ascii=False),
                 confidence=confidence,
                 chapter_index=chapter_index,
-                chunk_index=item.get("chunk_index"),
+                chunk_index=_coerce_optional_int(item.get("chunk_index")),
                 order_index=i,
             )
             session.add(atom)
