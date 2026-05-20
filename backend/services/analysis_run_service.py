@@ -1,6 +1,7 @@
 """v0.2 AnalysisRun orchestration: create, start, parallel extraction, merge, cancel."""
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -252,6 +253,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
         chapter_map = {ch.chapter_index: ch.title for ch in chapters}
 
     # ── Parallel extraction (outside session to avoid long-lived sessions) ──
+    stage_start = time.monotonic()
+    extraction_start = stage_start
     succeeded = 0
     failed = 0
     total_tokens = 0
@@ -338,6 +341,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
                 session.add(run)
                 session.commit()
 
+    extraction_elapsed = round(time.monotonic() - extraction_start, 3)
+
     # ── Post-extraction: check cancel, then run merge ──
     with Session(engine) as session:
         run = session.get(AnalysisRun, run_id)
@@ -374,6 +379,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
             return
 
         # ── Merge stage ──
+        merge_start = time.monotonic()
+        extraction_tokens = run.total_tokens or 0
         requested_types = run.get_requested_types()
         merge_types = [
             t
@@ -420,7 +427,10 @@ def _execute_run_impl(run_id: str, engine) -> None:
             merge_failed_count = 0
             merge_warnings = []
 
+        merge_elapsed = round(time.monotonic() - merge_start, 3)
+
         # ── Final output stage ──
+        final_start = time.monotonic()
         final_summaries: list = []
         final_succeeded_count = 0
         final_failed_count = 0
@@ -463,6 +473,7 @@ def _execute_run_impl(run_id: str, engine) -> None:
                     )
 
         # ── Final status ──
+        final_elapsed = round(time.monotonic() - final_start, 3)
         run = session.get(AnalysisRun, run_id)
         if run and run.status != JobStatus.CANCELLED:
             if succeeded == 0:
@@ -472,10 +483,30 @@ def _execute_run_impl(run_id: str, engine) -> None:
             else:
                 run.status = JobStatus.PARTIAL_SUCCESS
             run.finished_at = _now()
+
+            # Collect failed merge/final type names
+            failed_merge_types = [
+                s.merge_type
+                for s in merge_summaries
+                if any("Merge failed:" in w for w in s.warnings)
+            ]
+            failed_final_types = [
+                s.output_type
+                for s in final_summaries
+                if any("Final output failed:" in w for w in s.warnings)
+            ]
+
             run.set_metadata(
                 {
                     "stage": "completed",
+                    "stage_timings": {
+                        "extraction": extraction_elapsed,
+                        "merge": merge_elapsed,
+                        "final": final_elapsed,
+                    },
                     "failed_chunks": failed_chunks,
+                    "failed_merge_types": failed_merge_types,
+                    "failed_final_types": failed_final_types,
                     "merge_summaries": [
                         {"type": s.merge_type, "atoms": s.atom_count, "merged": s.merged_count}
                         for s in merge_summaries
@@ -483,6 +514,11 @@ def _execute_run_impl(run_id: str, engine) -> None:
                     "final_summaries": [
                         {"type": s.output_type, "items": s.item_count} for s in final_summaries
                     ],
+                    "usage_by_stage": {
+                        "extraction": extraction_tokens,
+                        "merge": 0,
+                        "final": 0,
+                    },
                     "warnings": merge_warnings + final_warnings,
                 }
             )

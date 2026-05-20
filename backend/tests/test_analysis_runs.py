@@ -1125,3 +1125,184 @@ def test_fail_run_masks_api_key(engine):
         status = get_analysis_run_status(session, run_id)
         err = status["run"]["error_message"] or ""
         assert "sk-very-secret-key" not in err
+
+
+def test_full_pipeline_e2e(engine):
+    """Full v2 pipeline: extraction → merge → final outputs all succeed."""
+    from models.analysis_output import AnalysisOutput
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="E2E P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="mock-model",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="E2E", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="第一章 测试",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+            estimated_tokens=7,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockExtractionResult(),
+    ):
+        with Session(engine) as session:
+            run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+            run_id = run.id
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        status = get_analysis_run_status(session, run_id)
+        assert status["run"]["status"] == "succeeded"
+        assert status["run"]["extraction_succeeded"] == 1
+        assert status["run"]["merge_succeeded"] >= 1
+        assert status["run"]["final_succeeded"] >= 1
+        assert "final" in status
+        assert len(status["final"]["outputs"]) >= 1
+
+        # Verify final AnalysisOutput rows exist with correct output_types
+        outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.run_id == run_id)).all()
+        final_types = {o.output_type for o in outputs if not o.output_type.startswith("merge_")}
+        assert "characters" in final_types or "overview" in final_types
+
+
+def test_pipeline_metadata_has_stage_timings(engine):
+    """metadata_json should contain stage_timings after successful run."""
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Timing P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Timing", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockExtractionResult(),
+    ):
+        with Session(engine) as session:
+            run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+            run_id = run.id
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, run_id)
+        metadata = run.get_metadata()
+        assert "stage_timings" in metadata
+        timings = metadata["stage_timings"]
+        assert "extraction" in timings
+        assert "merge" in timings
+        assert "final" in timings
+        assert timings["extraction"] >= 0
+        assert "usage_by_stage" in metadata
+        assert "failed_merge_types" in metadata
+        assert "failed_final_types" in metadata
+
+
+def test_legacy_status_includes_latest_v2_run(client):
+    """GET /api/topics/{id}/analysis/status should include latest_v2_run."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+    r = client.get(f"/api/topics/{topic_id}/analysis/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "latest_v2_run" in data
+    assert "v2_available" in data
+    assert data["v2_available"] is True
+    if data["latest_v2_run"]:
+        assert data["latest_v2_run"]["mode"] == "preview"
+    client.delete(f"/api/topics/{topic_id}")

@@ -88,6 +88,36 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
     for o in outputs:
         output_counts[o.output_type] = output_counts.get(o.output_type, 0) + 1
 
+    # Latest v2 AnalysisRun summary
+    from models.analysis_run import AnalysisRun
+
+    latest_run = session.exec(
+        select(AnalysisRun)
+        .where(AnalysisRun.topic_id == topic_id)
+        .order_by(AnalysisRun.created_at.desc())
+        .limit(1)
+    ).first()
+    latest_v2_run = None
+    if latest_run:
+        latest_v2_run = {
+            "id": latest_run.id,
+            "mode": latest_run.mode,
+            "status": latest_run.status,
+            "progress_current": latest_run.progress_current,
+            "progress_total": latest_run.progress_total,
+            "extraction_succeeded": latest_run.extraction_succeeded,
+            "extraction_failed": latest_run.extraction_failed,
+            "merge_succeeded": latest_run.merge_succeeded,
+            "merge_failed": latest_run.merge_failed,
+            "final_succeeded": latest_run.final_succeeded,
+            "final_failed": latest_run.final_failed,
+            "total_tokens": latest_run.total_tokens,
+            "model_used": latest_run.model_used,
+            "started_at": latest_run.started_at.isoformat() if latest_run.started_at else None,
+            "finished_at": latest_run.finished_at.isoformat() if latest_run.finished_at else None,
+            "created_at": latest_run.created_at.isoformat() if latest_run.created_at else None,
+        }
+
     return {
         "topic_id": topic_id,
         "has_jobs": len(jobs) > 0,
@@ -95,6 +125,8 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
         "latest_job": JobRead.from_db(latest_job).model_dump() if latest_job else None,
         "analysis_types_completed": sorted(completed_types),
         "output_counts_by_type": output_counts,
+        "latest_v2_run": latest_v2_run,
+        "v2_available": True,
     }
 
 

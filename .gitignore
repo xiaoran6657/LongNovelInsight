@@ -3,6 +3,8 @@ __pycache__/
 
 # Tool caches (unified under .cache/)
 .cache/
+.pytest_cache/
+.ruff_cache/
 *.py[cod]
 *.pyo
 *.pyd
