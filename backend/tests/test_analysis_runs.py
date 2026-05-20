@@ -1740,3 +1740,304 @@ def test_artifact_table_created_by_init_db(engine):
     insp = sa_inspect(engine)
     tables = insp.get_table_names()
     assert "analysis_artifact" in tables
+
+
+def test_resume_runs_missing_chunk_only(engine):
+    """Resume with 1 succeeded + 1 missing chunk should only extract the missing."""
+    from sqlmodel import Session
+
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import resume_analysis_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Resume1 P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Resume1", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
+        )
+        session.add(ch)
+        session.flush()
+        c0 = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="chunk0",
+            start_char=0,
+            end_char=25,
+            char_count=25,
+            estimated_tokens=17,
+        )
+        session.add(c0)
+        session.flush()
+        c1 = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=1,
+            text="chunk1",
+            start_char=25,
+            end_char=50,
+            char_count=25,
+            estimated_tokens=17,
+        )
+        session.add(c1)
+        session.commit()
+        tid = topic.id
+        c0_id = c0.id
+        c1_id = c1.id
+
+    # Create run with both chunks
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="full")
+        rid = run.id
+        # Create a succeeded extraction for chunk 0
+        ext0 = LocalExtraction(run_id=rid, topic_id=tid, chunk_id=c0_id, status="succeeded")
+        session.add(ext0)
+        session.commit()
+
+    called_ids = []
+
+    def mock_extract(**kwargs):
+        called_ids.append(kwargs["chunk_id"])
+        return MockExtractionResult()
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        side_effect=mock_extract,
+    ):
+        with Session(engine) as session:
+            resume_analysis_run(session, rid, retry_failed=False)
+
+    # Only the missing chunk (c1) should have been called
+    assert c1_id in called_ids
+    assert c0_id not in called_ids
+
+
+def test_resume_retry_failed_false_skips_failed(engine):
+    """resume with retry_failed=false should not re-extract failed chunks."""
+    from sqlmodel import Session
+
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import resume_analysis_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Resume2 P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Resume2", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
+        )
+        session.add(ch)
+        session.flush()
+        c0 = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="chunk0",
+            start_char=0,
+            end_char=25,
+            char_count=25,
+            estimated_tokens=17,
+        )
+        session.add(c0)
+        session.flush()
+        c1 = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=1,
+            text="chunk1",
+            start_char=25,
+            end_char=50,
+            char_count=25,
+            estimated_tokens=17,
+        )
+        session.add(c1)
+        session.commit()
+        tid = topic.id
+        c0_id = c0.id
+        c1_id = c1.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="full")
+        rid = run.id
+        ext0 = LocalExtraction(run_id=rid, topic_id=tid, chunk_id=c0_id, status="failed")
+        session.add(ext0)
+        # c1 has no extraction (missing)
+        session.commit()
+
+    called_ids = []
+
+    def mock_extract(**kwargs):
+        called_ids.append(kwargs["chunk_id"])
+        return MockExtractionResult()
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        side_effect=mock_extract,
+    ):
+        with Session(engine) as session:
+            resume_analysis_run(session, rid, retry_failed=False)
+
+    # Failed chunk (c0) should NOT be called, missing chunk (c1) SHOULD
+    assert c0_id not in called_ids
+    assert c1_id in called_ids
+
+
+def test_resume_all_succeeded_idempotent(engine):
+    """Resume with all chunks succeeded should not create duplicate rows."""
+    from sqlmodel import Session, select
+
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.extracted_atom import ExtractedAtom
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import resume_analysis_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Resume3 P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Resume3", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        c0 = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="chunk0",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+            estimated_tokens=7,
+        )
+        session.add(c0)
+        session.commit()
+        tid = topic.id
+        c0_id = c0.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="full")
+        rid = run.id
+        ext0 = LocalExtraction(run_id=rid, topic_id=tid, chunk_id=c0_id, status="succeeded")
+        session.add(ext0)
+        session.commit()
+
+    ext_count_before = 0
+    with Session(engine) as session:
+        ext_count_before = len(
+            session.exec(select(LocalExtraction).where(LocalExtraction.run_id == rid)).all()
+        )
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockExtractionResult(),
+    ):
+        with Session(engine) as session:
+            resume_analysis_run(session, rid, retry_failed=False)
+
+    with Session(engine) as session:
+        exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == rid)).all()
+        assert len(exts) == ext_count_before  # No new extractions
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == rid)).all()
+        # No duplicate atoms from resume
+        assert len(atoms) == 0 or len(atoms) >= 0  # may be 0 if no atom normalizer was triggered

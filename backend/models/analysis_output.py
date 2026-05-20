@@ -61,7 +61,7 @@ class AnalysisOutputRead(SQLModel):
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_with_json(cls, obj: AnalysisOutput) -> "AnalysisOutputRead":
+    def from_orm_with_json(cls, obj: AnalysisOutput, session=None) -> "AnalysisOutputRead":
         return cls(
             id=obj.id,
             topic_id=obj.topic_id,
@@ -69,7 +69,9 @@ class AnalysisOutputRead(SQLModel):
             run_id=obj.run_id,
             output_type=obj.output_type,
             title=obj.title,
-            content_json=_safe_json_parse(obj.content_json),
+            content_json=_safe_json_parse(
+                obj.content_json, session, obj.output_type, obj.run_id, obj.id
+            ),
             source_chunk_ids=_safe_json_parse(obj.source_chunk_ids),
             evidence_quotes=_safe_json_parse(obj.evidence_quotes),
             confidence=obj.confidence,
@@ -80,8 +82,23 @@ class AnalysisOutputRead(SQLModel):
         )
 
 
-def _safe_json_parse(value: str) -> dict | list | None:
+def _safe_json_parse(
+    value: str,
+    session=None,
+    output_type: str = "",
+    run_id: str | None = None,
+    obj_id: str = "",
+) -> dict | list | None:
     try:
-        return json.loads(value)
+        parsed = json.loads(value)
+        if isinstance(parsed, dict) and parsed.get("_artifact") and session is not None:
+            from services.artifact_storage_service import read_json_artifact
+
+            owner_id = parsed.get("owner_id", "")
+            owner_table = parsed.get("owner_table", "analysis_output")
+            resolved = read_json_artifact(session, owner_table, owner_id)
+            if resolved is not None:
+                return json.loads(resolved)
+        return parsed
     except (json.JSONDecodeError, TypeError):
         return None

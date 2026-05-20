@@ -94,7 +94,9 @@ def run_analysis(
 
     return {
         "pipeline": "v1",
-        "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
+        "outputs": [
+            AnalysisOutputRead.from_orm_with_json(o, session).model_dump() for o in outputs
+        ],
         "count": len(outputs),
     }
 
@@ -197,7 +199,7 @@ def run_single_type_analysis(
     finally:
         analysis_service.release_topic_analysis_lock(topic_id)
 
-    return {"output": AnalysisOutputRead.from_orm_with_json(output).model_dump()}
+    return {"output": AnalysisOutputRead.from_orm_with_json(output, session).model_dump()}
 
 
 @router.get("/outputs")
@@ -213,7 +215,9 @@ def get_analysis_outputs(
         topic_id, session, output_type, run_id=run_id, latest_only=latest_only
     )
     return {
-        "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
+        "outputs": [
+            AnalysisOutputRead.from_orm_with_json(o, session).model_dump() for o in outputs
+        ],
         "count": len(outputs),
     }
 

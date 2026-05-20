@@ -134,6 +134,19 @@ def maybe_store_large_json(
     if size <= ARTIFACT_THRESHOLD_BYTES:
         return json_str
 
+    # Delete old artifact for same owner before writing new one (idempotent upsert)
+    old = session.exec(
+        select(AnalysisArtifact).where(
+            AnalysisArtifact.owner_table == owner_table,
+            AnalysisArtifact.owner_id == owner_id,
+        )
+    ).all()
+    for o in old:
+        abs_path = config.DATA_DIR.resolve() / o.storage_path
+        if abs_path.exists():
+            abs_path.unlink()
+        session.delete(o)
+
     artifact = write_json_artifact(
         topic_id=topic_id,
         run_id=run_id,
