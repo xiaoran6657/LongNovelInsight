@@ -25,6 +25,7 @@ import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
 import type { AnalysisMode } from "../api/types";
 import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
+import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
 
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
@@ -35,6 +36,7 @@ export default function TopicDetailPage() {
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | null>(null);
 
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
@@ -321,6 +323,12 @@ export default function TopicDetailPage() {
         boundProvider={!!boundProvider}
         onChangeMode={setAnalysisMode}
         onChangeLimitChunks={setPreviewLimitChunks}
+      />
+
+      <AnalysisRunHistory
+        topicId={topic.id}
+        activeRunId={selectedHistoryRunId}
+        onSelectRun={setSelectedHistoryRunId}
       />
 
       <LegacyAnalysisPanel
