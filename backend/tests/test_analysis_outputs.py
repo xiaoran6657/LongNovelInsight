@@ -908,3 +908,85 @@ def test_latest_only_excludes_merge_outputs(client):
         assert not o["output_type"].startswith("merge_")
 
     client.delete(f"/api/topics/{tid}")
+
+
+def test_api_resolves_artifact_content_json(client, engine):
+    """GET /outputs should return real content, not _artifact stub, for large outputs."""
+    import json
+    from io import BytesIO
+
+    from sqlmodel import Session
+
+    from models.analysis_output import AnalysisOutput
+    from services.artifact_storage_service import (
+        ARTIFACT_THRESHOLD_BYTES,
+        maybe_store_large_json,
+    )
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "ArtAPI P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "ArtAPI Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    # Directly insert artifact-backed output
+    large = json.dumps(
+        {
+            "characters": [{"name": "刘备", "role": "protagonist"}],
+            "extra": "x" * ARTIFACT_THRESHOLD_BYTES,
+        },
+        ensure_ascii=False,
+    )
+    with Session(engine) as session:
+        stored = maybe_store_large_json(
+            session,
+            tid,
+            None,
+            "characters",
+            "analysis_output",
+            "api-artifact-test",
+            large,
+        )
+        ao = AnalysisOutput(
+            topic_id=tid,
+            run_id=None,
+            output_type="characters",
+            title="Test Characters",
+            content_json=stored,
+            source_chunk_ids="[]",
+            evidence_quotes="[]",
+            confidence=0.9,
+        )
+        session.add(ao)
+        session.commit()
+
+    r = client.get(f"/api/topics/{tid}/analysis/outputs")
+    assert r.status_code == 200
+    for o in r.json()["outputs"]:
+        content = o.get("content_json")
+        if isinstance(content, dict):
+            assert "_artifact" not in content, f"Output {o['output_type']} returned artifact stub"
+
+    # Verify the artifact-backed output has real content
+    char_outputs = [o for o in r.json()["outputs"] if o["output_type"] == "characters"]
+    assert len(char_outputs) >= 1
+    char_content = char_outputs[0].get("content_json")
+    assert isinstance(char_content, dict)
+    assert "characters" in char_content
+
+    client.delete(f"/api/topics/{tid}")
