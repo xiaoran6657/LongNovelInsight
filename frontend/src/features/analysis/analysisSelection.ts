@@ -25,13 +25,23 @@ export function estimateTokens(
     noteParts.push(`preview: first ${selected} of ${totalChunks} chunks`);
   } else if (mode === "range") {
     if (range.start != null && range.end != null && range.start <= range.end) {
-      selected = range.end - range.start + 1;
-      selected = Math.min(selected, totalChunks);
+      if (range.mode === "chapter" && meta) {
+        selected = 0;
+        for (const ch of meta.chunks_by_chapter) {
+          if (ch.chapter_index >= range.start && ch.chapter_index <= range.end) {
+            selected += ch.chunk_count;
+          }
+        }
+        noteParts.push(`chapter range ${range.start}–${range.end}: ${selected} chunks across chapters`);
+      } else {
+        selected = range.end - range.start + 1;
+        selected = Math.min(selected, totalChunks);
+        noteParts.push(`chunk range: chunks ${range.start}–${range.end}, ${selected} chunks`);
+      }
     } else {
       selected = 0;
       noteParts.push("invalid range");
     }
-    noteParts.push(`range: chunks ${range.start ?? "?"}–${range.end ?? "?"}`);
   } else if (mode === "full") {
     selected = totalChunks;
     noteParts.push(`full: all ${totalChunks} chunks`);

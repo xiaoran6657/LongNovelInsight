@@ -42,17 +42,19 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
-    onSuccess: () => {
+    onSuccess: (_data, runId) => {
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
-      qc.invalidateQueries({ queryKey: ["analysisRun"] });
+      qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
+      onSelectRun(runId);
     },
   });
 
   const resumeMut = useMutation({
     mutationFn: (runId: string) => resumeAnalysisRun(runId, true),
-    onSuccess: () => {
+    onSuccess: (_data, runId) => {
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
-      qc.invalidateQueries({ queryKey: ["analysisRun"] });
+      qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
+      onSelectRun(runId);
     },
   });
 

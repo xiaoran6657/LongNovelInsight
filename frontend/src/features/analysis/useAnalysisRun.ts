@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createAnalysisRun, getAnalysisRun, cancelAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunCreateRequest, AnalysisRunDetail } from "../../api/types";
 
-export function useAnalysisRun(runId: string | null) {
+export function useAnalysisRun(runId: string | null, topicId: string) {
   const qc = useQueryClient();
 
   const runQuery = useQuery({
@@ -22,6 +22,8 @@ export function useAnalysisRun(runId: string | null) {
     mutationFn: () => cancelAnalysisRun(runId!),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
+      qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
+      qc.invalidateQueries({ queryKey: ["outputs", topicId] });
     },
   });
 

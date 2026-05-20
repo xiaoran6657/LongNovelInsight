@@ -9,6 +9,7 @@ import { useAnalysisRun, useCreateAnalysisRun, isRunActive, isRunTerminal, runPr
 import AnalysisModeSelector from "./AnalysisModeSelector";
 import AnalysisCostProjection from "./AnalysisCostProjection";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
 
 interface Props {
   topicId: string;
@@ -19,6 +20,8 @@ interface Props {
   hasDoc: boolean;
   isParsed: boolean;
   boundProvider: boolean;
+  activeRunId: string | null;
+  onActiveRunIdChange: (runId: string | null) => void;
   onChangeMode: (m: AnalysisMode) => void;
   onChangeLimitChunks: (n: number) => void;
 }
@@ -26,14 +29,14 @@ interface Props {
 export default function AnalysisRunPanel({
   topicId, meta, mode, limitChunks, range,
   hasDoc, isParsed, boundProvider,
+  activeRunId, onActiveRunIdChange,
   onChangeMode, onChangeLimitChunks,
 }: Props) {
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
   const [showFullConfirm, setShowFullConfirm] = useState(false);
 
   const createMut = useCreateAnalysisRun(topicId);
-  const { runQuery, cancelMut } = useAnalysisRun(activeRunId);
+  const { runQuery, cancelMut } = useAnalysisRun(activeRunId, topicId);
   const run = runQuery.data;
 
   const { data: runsData } = useQuery({
@@ -65,7 +68,7 @@ export default function AnalysisRunPanel({
 
     createMut.mutate(body, {
       onSuccess: (data) => {
-        setActiveRunId(data.run.id);
+        onActiveRunIdChange(data.run.id);
         setRunError("");
       },
       onError: (err: Error) => {
@@ -74,6 +77,7 @@ export default function AnalysisRunPanel({
     });
   }
 
+  const rangeInvalid = mode === "range" && (range.start == null || range.end == null || range.start > range.end);
   const est = meta ? estimateTokens(meta, mode, limitChunks, range) : null;
   const pct = runProgressPercent(run?.run);
   const terminal = isRunTerminal(run?.run.status);
@@ -129,14 +133,27 @@ export default function AnalysisRunPanel({
               </div>
             )}
 
+            {mode === "range" && rangeInvalid && (
+              <p className="field-error" style={{ marginBottom: "0.35rem" }}>
+                Range selection is invalid: start must be ≤ end and both values must be set.
+              </p>
+            )}
             {(!showFullConfirm || mode !== "full") && (
-              <button onClick={handleCreate} disabled={createMut.isPending || active}>
+              <button onClick={handleCreate} disabled={createMut.isPending || active || rangeInvalid}>
                 {createMut.isPending ? "Creating..." : active ? "Run in progress..." : "Run v2 Analysis"}
               </button>
             )}
             {runError && <p className="field-error" style={{ marginTop: "0.35rem" }}>{runError}</p>}
           </div>
         </>
+      )}
+
+      {/* Polling error */}
+      {activeRunId && runQuery.isError && (
+        <ErrorBlock
+          message={runQuery.error?.message ?? "Failed to load run status"}
+          onRetry={() => runQuery.refetch()}
+        />
       )}
 
       {/* Status display */}

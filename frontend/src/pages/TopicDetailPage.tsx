@@ -36,7 +36,7 @@ export default function TopicDetailPage() {
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
-  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
@@ -321,14 +321,16 @@ export default function TopicDetailPage() {
         hasDoc={hasDoc}
         isParsed={topic.status === "parsed"}
         boundProvider={!!boundProvider}
+        activeRunId={activeRunId}
+        onActiveRunIdChange={setActiveRunId}
         onChangeMode={setAnalysisMode}
         onChangeLimitChunks={setPreviewLimitChunks}
       />
 
       <AnalysisRunHistory
         topicId={topic.id}
-        activeRunId={selectedHistoryRunId}
-        onSelectRun={setSelectedHistoryRunId}
+        activeRunId={activeRunId}
+        onSelectRun={setActiveRunId}
       />
 
       <LegacyAnalysisPanel
