@@ -22,6 +22,10 @@ import StoragePanel from "../features/topic/StoragePanel";
 import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
 import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
 import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
+import AnalysisModeSelector from "../features/analysis/AnalysisModeSelector";
+import AnalysisCostProjection from "../features/analysis/AnalysisCostProjection";
+import { estimateTokens } from "../features/analysis/analysisSelection";
+import type { AnalysisMode } from "../api/types";
 import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 
 export default function TopicDetailPage() {
@@ -31,6 +35,8 @@ export default function TopicDetailPage() {
   const maxTokensHoldRef = useRef(0);
   const [showChunkText, setShowChunkText] = useState(false);
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
+  const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
 
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
@@ -286,6 +292,25 @@ export default function TopicDetailPage() {
       <ChunksMetaPanel topicId={topic.id} hasDoc={hasDoc} />
       {chunksMeta && (
         <ChunkRangeSelector meta={chunksMeta} value={chunkRange} onChange={setChunkRange} />
+      )}
+      {chunksMeta && (
+        <>
+          <AnalysisModeSelector
+            mode={analysisMode}
+            limitChunks={previewLimitChunks}
+            totalChunks={chunksMeta.chunk_count}
+            hasPreviousRun={false}
+            onChangeMode={setAnalysisMode}
+            onChangeLimitChunks={setPreviewLimitChunks}
+          />
+          {(() => {
+            const est = estimateTokens(chunksMeta, analysisMode, previewLimitChunks, chunkRange);
+            if (est.selectedChunks > 0) {
+              return <AnalysisCostProjection {...est} />;
+            }
+            return null;
+          })()}
+        </>
       )}
       <ChaptersPanel chapters={chapterData?.chapters} />
 
