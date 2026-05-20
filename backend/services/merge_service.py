@@ -116,12 +116,25 @@ def _save_merged(
     for old in existing:
         session.delete(old)
 
+    json_str = json.dumps(result, ensure_ascii=False)
+    from services.artifact_storage_service import maybe_store_large_json
+
+    stored = maybe_store_large_json(
+        session,
+        topic_id,
+        run_id,
+        f"merge_{merge_type}",
+        "analysis_output",
+        f"merge_{merge_type}_{run_id}",
+        json_str,
+    )
+
     out = AnalysisOutput(
         topic_id=topic_id,
         run_id=run_id,
         output_type=f"merge_{merge_type}",
         title=f"Merged {merge_type}",
-        content_json=json.dumps(result, ensure_ascii=False),
+        content_json=stored,
         source_chunk_ids=json.dumps(source_chunk_ids, ensure_ascii=False),
         evidence_quotes=json.dumps(evidence_quotes, ensure_ascii=False),
         confidence=confidence,

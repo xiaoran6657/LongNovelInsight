@@ -1,3 +1,4 @@
+from .analysis_artifact import AnalysisArtifact as AnalysisArtifact
 from .analysis_output import AnalysisOutput as AnalysisOutput
 from .analysis_output import AnalysisOutputRead as AnalysisOutputRead
 from .analysis_run import AnalysisRun as AnalysisRun

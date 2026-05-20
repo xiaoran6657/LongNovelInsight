@@ -169,8 +169,14 @@ def retry_failed_chunks(run_id: str, session: Session = Depends(get_session)) ->
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AnalysisRun not found")
+    if run.status in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="Run is already active")
     if run.status not in ("partial_success", "failed"):
         raise HTTPException(status_code=409, detail="Run has no failed extractions to retry")
+
+    run.status = "running"
+    session.add(run)
+    session.commit()
 
     analysis_run_service.start_retry_failed(run_id)
     return {
@@ -188,8 +194,14 @@ def resume_run(
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AnalysisRun not found")
+    if run.status in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="Run is already active")
     if run.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cannot resume a cancelled run")
+
+    run.status = "running"
+    session.add(run)
+    session.commit()
 
     analysis_run_service.start_resume(run_id, retry_failed=retry_failed)
     return {

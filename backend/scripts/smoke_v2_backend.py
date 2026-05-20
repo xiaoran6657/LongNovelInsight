@@ -171,13 +171,15 @@ def _chunks_meta(client: httpx.Client, base: str, topic_id: str) -> None:
     print(f"  OK — chunk_count={data['chunk_count']} total_chars={data.get('total_chars')}")
 
 
-def _create_v2_run(client: httpx.Client, base: str, topic_id: str) -> str:
-    _step_header("Create v2 AnalysisRun (safe mode)")
+def _create_v2_run(client: httpx.Client, base: str, topic_id: str, real_llm: bool = False) -> str:
+    mode_label = "real-LLM" if real_llm else "safe"
+    _step_header(f"Create v2 AnalysisRun ({mode_label} mode)")
     url = f"{base}/api/topics/{topic_id}/analysis/runs"
     body = {
         "mode": "preview",
         "limit_chunks": 1,
         "requested_types": ["overview", "characters"],
+        "start_immediately": real_llm,
     }
     resp = client.post(url, json=body)
     if resp.status_code != 201:
@@ -209,9 +211,9 @@ def _poll_run_status(client: httpx.Client, base: str, run_id: str, real_llm: boo
             print(f"       merge_succeeded={ms} final_succeeded={fs}")
             return
         time.sleep(2)
-    # In safe mode, the run stays pending (no real extraction)
+    # In safe mode, the run stays pending (start_immediately=false)
     if not real_llm:
-        print("  OK — run is pending (safe mode, no real LLM)")
+        print("  OK — run is pending (safe mode, start_immediately=false)")
     else:
         print("  WARNING — run did not complete in 60s")
 
@@ -315,7 +317,7 @@ def main() -> None:
         _parse(client, base, tid)
         _chunks_meta(client, base, tid)
 
-        rid = _create_v2_run(client, base, tid)
+        rid = _create_v2_run(client, base, tid, real_llm=args.real_llm)
         _poll_run_status(client, base, rid, real_llm=args.real_llm)
         _list_runs(client, base, tid)
         _get_outputs(client, base, tid)

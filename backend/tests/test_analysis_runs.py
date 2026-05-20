@@ -1499,6 +1499,23 @@ def test_resume_endpoint(client):
             r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
             run_id = r.json()["run"]["id"]
 
+        # Set run to a resumable state (not pending/running)
+        from main import app
+
+        for dep in app.dependency_overrides.values():
+            gen = dep()
+            session = next(gen)
+            try:
+                from models.analysis_run import AnalysisRun
+
+                run = session.get(AnalysisRun, run_id)
+                if run:
+                    run.status = "partial_success"
+                    session.add(run)
+                    session.commit()
+            finally:
+                session.close()
+
         r = client.post(f"/api/analysis/runs/{run_id}/resume?retry_failed=true")
         assert r.status_code == 200
         assert "Resume started" in r.json()["message"]
@@ -1643,3 +1660,83 @@ def test_error_classification():
     assert _classify_error("Validation failed: chunk_id mismatch") == "validation_error"
     assert _classify_error("auth error") == "provider_config_error"
     assert _classify_error("something unexpected happened") == "unknown"
+
+
+def test_concurrent_retry_rejected_409(client):
+    """Second retry request while first is running should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    # Set status to partial_success for first retry to pass
+    from main import app
+
+    for dep in app.dependency_overrides.values():
+        gen = dep()
+        session = next(gen)
+        try:
+            from models.analysis_run import AnalysisRun
+
+            run = session.get(AnalysisRun, run_id)
+            if run:
+                run.status = "partial_success"
+                session.add(run)
+                session.commit()
+        finally:
+            session.close()
+
+    with patch("services.analysis_run_service._execute_retry"):
+        # First retry should succeed (sets status to running, starts thread)
+        r1 = client.post(f"/api/analysis/runs/{run_id}/retry-failed")
+        assert r1.status_code == 200
+
+        # Second retry should be rejected (status is now running)
+        r2 = client.post(f"/api/analysis/runs/{run_id}/retry-failed")
+        assert r2.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_concurrent_resume_rejected_409(client):
+    """Second resume request while first is running should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    from main import app
+
+    for dep in app.dependency_overrides.values():
+        gen = dep()
+        session = next(gen)
+        try:
+            from models.analysis_run import AnalysisRun
+
+            run = session.get(AnalysisRun, run_id)
+            if run:
+                run.status = "partial_success"
+                session.add(run)
+                session.commit()
+        finally:
+            session.close()
+
+    with patch("services.analysis_run_service._execute_resume"):
+        r1 = client.post(f"/api/analysis/runs/{run_id}/resume")
+        assert r1.status_code == 200
+
+        r2 = client.post(f"/api/analysis/runs/{run_id}/resume")
+        assert r2.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_artifact_table_created_by_init_db(engine):
+    """analysis_artifact table should be created by init_db without explicit import."""
+    from sqlalchemy import inspect as sa_inspect
+
+    from db import init_db
+
+    # init_db should create the analysis_artifact table
+    init_db()
+    insp = sa_inspect(engine)
+    tables = insp.get_table_names()
+    assert "analysis_artifact" in tables

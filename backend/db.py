@@ -66,9 +66,11 @@ def _migrate_analysis_run_final_columns() -> None:
 
 def _migrate_analysis_artifact() -> None:
     """Create analysis_artifact table if it doesn't exist."""
+    from models.analysis_artifact import AnalysisArtifact
+
     SQLModel.metadata.create_all(
         engine,
-        tables=[models.analysis_artifact.AnalysisArtifact.__table__],  # type: ignore[arg-type]
+        tables=[AnalysisArtifact.__table__],  # type: ignore[arg-type]
     )
 
 

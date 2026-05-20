@@ -25,6 +25,8 @@ class FinalOutputSummary:
 
 
 def _load_merge_content(session: Session, run_id: str, merge_type: str) -> list[dict]:
+    from services.artifact_storage_service import read_json_inline_or_artifact
+
     out = session.exec(
         select(AnalysisOutput).where(
             AnalysisOutput.run_id == run_id,
@@ -34,7 +36,14 @@ def _load_merge_content(session: Session, run_id: str, merge_type: str) -> list[
     if out is None:
         return []
     try:
-        return json.loads(out.content_json)
+        owner_id = f"merge_{merge_type}_{run_id}"
+        resolved = read_json_inline_or_artifact(
+            session,
+            out.content_json,
+            "analysis_output",
+            owner_id,
+        )
+        return json.loads(resolved)
     except (json.JSONDecodeError, TypeError):
         return []
 
@@ -65,12 +74,26 @@ def _save_final(
         if old.output_type == output_type:
             session.delete(old)
 
+    from services.artifact_storage_service import maybe_store_large_json
+
+    json_str = json.dumps(content, ensure_ascii=False)
+    owner_id = f"final_{output_type}_{run_id}"
+    stored = maybe_store_large_json(
+        session,
+        topic_id,
+        run_id,
+        output_type,
+        "analysis_output",
+        owner_id,
+        json_str,
+    )
+
     out = AnalysisOutput(
         topic_id=topic_id,
         run_id=run_id,
         output_type=output_type,
         title=title,
-        content_json=json.dumps(content, ensure_ascii=False),
+        content_json=stored,
         source_chunk_ids=json.dumps(source_chunk_ids, ensure_ascii=False),
         evidence_quotes=json.dumps(evidence_quotes, ensure_ascii=False),
         confidence=confidence,

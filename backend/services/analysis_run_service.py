@@ -981,7 +981,15 @@ def _run_merge_and_final(session: Session, run_id: str) -> None:
 
 
 def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True) -> AnalysisRun:
-    """Resume an interrupted run, optionally retrying failed chunks."""
+    """Resume an interrupted run: run missing chunks, optionally retry failed.
+
+    Loads selected_chunk_ids from run.chunk_selection_json, finds succeeded/failed
+    LocalExtractions, and runs any chunks without a LocalExtraction row.
+    Never re-runs succeeded chunks.
+    """
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise ValueError(f"AnalysisRun not found: {run_id}")
@@ -992,11 +1000,129 @@ def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True
     if run.status in (JobStatus.SUCCEEDED,):
         return run  # Nothing to do
 
-    if retry_failed:
-        retry_failed_extractions(session, run_id)
-    else:
-        # Just re-run merge and final without retrying extractions
+    # Load selected chunk IDs
+    selection = run.get_chunk_selection()
+    selected_ids = selection.get("selected_chunk_ids", [])
+    if not selected_ids:
+        raise ValueError("No chunk selection found; cannot resume")
+
+    # Map existing extraction status by chunk
+    existing = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
+    succeeded_chunks = {e.chunk_id for e in existing if e.status == "succeeded"}
+    failed_chunks = {e.chunk_id for e in existing if e.status == "failed"}
+    has_extraction = succeeded_chunks | failed_chunks
+
+    # Chunks that have no extraction row at all
+    missing_ids = [cid for cid in selected_ids if cid not in has_extraction]
+
+    # Failed chunks to retry
+    retry_ids = [cid for cid in failed_chunks if retry_failed]
+
+    to_run = set(missing_ids) | set(retry_ids)
+    if not to_run:
+        # All chunks done, just re-run merge + final
         _run_merge_and_final(session, run_id)
+        run = session.get(AnalysisRun, run_id)
+        return run
+
+    # Load chunk objects for the chunks to run
+    chunks = session.exec(select(Chunk).where(Chunk.id.in_(to_run))).all()  # noqa: E711
+    chunk_map = {c.id: c for c in chunks}
+
+    config = run.get_effective_config()
+    api_key = _resolve_api_key(session, run.topic_id)
+    model_name = config.get("model_name", "")
+    base_url = config.get("base_url", "")
+    temperature = config.get("temperature") or 0.1
+    max_tokens = config.get("max_output_tokens") or 3072
+    thinking_mode = config.get("thinking_mode", "disabled")
+
+    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
+    chapter_map = {ch.chapter_index: ch.title for ch in chapters}
+
+    succeeded = len(succeeded_chunks)
+    failed = 0
+    new_succeeded = 0
+
+    for cid in to_run:
+        chunk = chunk_map.get(cid)
+        if chunk is None:
+            continue
+
+        # Delete old atoms for this chunk if retrying
+        if cid in retry_ids:
+            _clear_atoms_for_chunk(session, run_id, chunk.id)
+
+        result = _extraction_worker.run_local_extraction_for_chunk(
+            chunk_id=chunk.id,
+            chunk_text=chunk.text,
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            thinking_mode=thinking_mode,
+            chapter_index=chunk.chapter_index,
+            chunk_index=chunk.chunk_index,
+            chapter_title=chapter_map.get(chunk.chapter_index),
+        )
+
+        # Upsert LocalExtraction
+        ext = session.exec(
+            select(LocalExtraction).where(
+                LocalExtraction.run_id == run_id,
+                LocalExtraction.chunk_id == chunk.id,
+            )
+        ).first()
+        if ext is None:
+            ext = LocalExtraction(run_id=run_id, topic_id=run.topic_id, chunk_id=chunk.id)
+            session.add(ext)
+            session.flush()
+
+        ext.status = "succeeded" if result.ok else "failed"
+        ext.attempt_count = ext.attempt_count + 1
+        ext.content_json = result.content_json
+        ext.error_message = result.error[:1000] if result.error else None
+        ext.confidence = 0.5
+        ext.prompt_tokens = result.prompt_tokens
+        ext.completion_tokens = result.completion_tokens
+        ext.total_tokens = result.total_tokens
+        ext.model_used = result.model_used
+        ext.finished_at = _now()
+        session.add(ext)
+        session.flush()
+
+        if result.ok:
+            new_succeeded += 1
+            if cid not in succeeded_chunks:
+                succeeded += 1
+            if result.content_json:
+                _atom_normalizer.normalize_local_extraction(
+                    extraction_id=ext.id,
+                    run_id=run_id,
+                    topic_id=run.topic_id,
+                    chunk_id=chunk.id,
+                    content_json_str=result.content_json,
+                    session=session,
+                )
+        else:
+            failed += 1
+
+    # Update run counters from actual DB state
+    all_exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
+    total_succeeded = sum(1 for e in all_exts if e.status == "succeeded")
+    total_failed = sum(1 for e in all_exts if e.status == "failed")
+
+    run = session.get(AnalysisRun, run_id)
+    if run:
+        run.extraction_succeeded = total_succeeded
+        run.extraction_failed = total_failed
+        session.add(run)
+
+    session.commit()
+
+    # Re-run merge and final
+    _run_merge_and_final(session, run_id)
 
     run = session.get(AnalysisRun, run_id)
     return run
