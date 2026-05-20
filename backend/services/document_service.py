@@ -53,7 +53,12 @@ def _delete_document_derived_data(topic_id: str, session: Session) -> None:
             session.delete(m)
         session.delete(s)
 
-    # v2 analysis artifacts: atoms → extractions → runs → outputs
+    # Analysis outputs first (FK to analysis_run)
+    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+    for o in outputs:
+        session.delete(o)
+
+    # v2 analysis artifacts: atoms → extractions → runs
     atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
     for a in atoms:
         session.delete(a)
@@ -65,11 +70,6 @@ def _delete_document_derived_data(topic_id: str, session: Session) -> None:
     runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
     for r in runs:
         session.delete(r)
-
-    # Analysis outputs
-    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
-    for o in outputs:
-        session.delete(o)
 
     # Jobs -> job_items
     jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()

@@ -47,7 +47,12 @@ def delete_topic(topic_id: str, session: Session) -> dict:
             session.delete(m)
         session.delete(s)
 
-    # Delete v2 analysis artifacts: atoms → extractions → runs → outputs
+    # Delete analysis outputs first (FK to analysis_run)
+    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+    for o in outputs:
+        session.delete(o)
+
+    # Delete v2 analysis artifacts: atoms → extractions → runs
     atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
     for a in atoms:
         session.delete(a)
@@ -59,11 +64,6 @@ def delete_topic(topic_id: str, session: Session) -> dict:
     runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
     for r in runs:
         session.delete(r)
-
-    # Delete analysis outputs
-    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
-    for o in outputs:
-        session.delete(o)
 
     # Delete jobs -> job_items
     jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()

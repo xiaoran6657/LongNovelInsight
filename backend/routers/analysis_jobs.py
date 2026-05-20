@@ -80,14 +80,13 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
         items = job_service.get_job_items(latest_job.id, session)
         completed_types = {i.item_type for i in items if i.status in (JobStatus.SUCCEEDED,)}
 
-    # Output counts by type
+    # Output counts by type (exclude v2 merge_* intermediates)
     from models.analysis_output import AnalysisOutput
 
     outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+    final_outputs = [o for o in outputs if not o.output_type.startswith("merge_")]
     output_counts: dict[str, int] = {}
-    for o in outputs:
-        if o.output_type.startswith("merge_"):
-            continue
+    for o in final_outputs:
         output_counts[o.output_type] = output_counts.get(o.output_type, 0) + 1
 
     # Latest v2 AnalysisRun summary
@@ -123,7 +122,7 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
     return {
         "topic_id": topic_id,
         "has_jobs": len(jobs) > 0,
-        "has_outputs": len(outputs) > 0,
+        "has_outputs": len(final_outputs) > 0,
         "latest_job": JobRead.from_db(latest_job).model_dump() if latest_job else None,
         "analysis_types_completed": sorted(completed_types),
         "output_counts_by_type": output_counts,

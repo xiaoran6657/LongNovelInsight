@@ -289,6 +289,7 @@ def test_delete_topic_cascades_v2_data(engine):
     """Deleting a topic should cascade-delete v2 AnalysisRun/LocalExtraction/ExtractedAtom."""
     from sqlmodel import Session, select
 
+    from models.analysis_output import AnalysisOutput
     from models.analysis_run import AnalysisRun
     from models.chapter import Chapter
     from models.chunk import Chunk
@@ -369,6 +370,18 @@ def test_delete_topic_cascades_v2_data(engine):
             stable_id="char_x",
         )
         session.add(atom)
+        session.flush()
+        ao = AnalysisOutput(
+            topic_id=tid,
+            run_id=rid,
+            output_type="characters",
+            title="Test",
+            content_json="{}",
+            source_chunk_ids="[]",
+            evidence_quotes="[]",
+            confidence=0.9,
+        )
+        session.add(ao)
         session.commit()
 
     # Verify v2 rows exist
@@ -380,6 +393,10 @@ def test_delete_topic_cascades_v2_data(engine):
         )
         assert (
             len(session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == tid)).all()) == 1
+        )
+        assert (
+            len(session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == tid)).all())
+            == 1
         )
 
     # Delete topic
@@ -395,4 +412,8 @@ def test_delete_topic_cascades_v2_data(engine):
         )
         assert (
             len(session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == tid)).all()) == 0
+        )
+        assert (
+            len(session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == tid)).all())
+            == 0
         )

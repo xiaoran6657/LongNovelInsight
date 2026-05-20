@@ -1407,3 +1407,42 @@ def test_create_run_after_completed_allowed(engine):
     with Session(engine) as session:
         run2 = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
         assert run2.id != run_id
+
+
+def test_legacy_status_merge_only_has_outputs_false(client):
+    """has_outputs should be false when only merge_* intermediates exist."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    # Directly insert a merge_characters output via the test session
+    from main import app
+
+    for dep in app.dependency_overrides.values():
+        gen = dep()
+        session = next(gen)
+        try:
+            from models.analysis_output import AnalysisOutput
+
+            ao = AnalysisOutput(
+                topic_id=topic_id,
+                run_id=run_id,
+                output_type="merge_characters",
+                title="Merged characters",
+                content_json="[]",
+                source_chunk_ids="[]",
+                evidence_quotes="[]",
+                confidence=0.5,
+            )
+            session.add(ao)
+            session.commit()
+        finally:
+            session.close()
+
+    r = client.get(f"/api/topics/{topic_id}/analysis/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["has_outputs"] is False
+    assert "merge_characters" not in data.get("output_counts_by_type", {})
+    client.delete(f"/api/topics/{topic_id}")
