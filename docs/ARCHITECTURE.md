@@ -196,7 +196,7 @@ Long-running operations (parse novel, run analysis) are tracked as jobs.
 
 **Implementation:** In-process `ThreadPoolExecutor` (v0.1.0 — no external task queue). Worker threads do NOT receive a DB session.
 
-## Technology Boundaries (v0.1.0)
+## Technology Boundaries (v0.1.0 / v0.2.0)
 
 | Technology | Status |
 | ---------- | ------ |
@@ -209,3 +209,88 @@ Long-running operations (parse novel, run analysis) are tracked as jobs.
 | PostgreSQL | Forbidden |
 | Vector Database | Forbidden |
 | .epub / PDF parsing | Forbidden |
+
+## v0.2 Staged Analysis Pipeline
+
+v0.2 replaces v0.1's per-type-per-chunk LLM calls with a staged map-reduce design:
+
+```
+POST /api/topics/{id}/analysis/runs  (or /analysis/run?pipeline=v2)
+    │
+    ▼
+AnalysisRun (pending → running)
+    │
+    ├── Stage 1: Local Extraction (parallel, per-chunk, LLM)
+    │     └── LocalExtraction rows + ExtractedAtom rows
+    │
+    ├── Stage 2: Deterministic Merge (per-type, Python, no LLM)
+    │     └── AnalysisOutput rows (output_type="merge_<type>")
+    │
+    └── Stage 3: Final Outputs (Python, no LLM)
+          └── AnalysisOutput rows (output_type=v0.1 6 types, run_id set)
+```
+
+**Key differences from v0.1:**
+- Each chunk is sent to LLM once (local_extraction), not 6 times
+- Merge and final stages are deterministic Python — no LLM cost
+- ~4× token savings per chunk
+- Stable IDs for all entities (not LLM-generated)
+- Full retry/resume/idempotency support
+
+### v0.2 New Modules
+
+```
+backend/
+  models/
+    analysis_run.py        — AnalysisRun (staged pipeline lifecycle)
+    local_extraction.py    — Per-chunk LLM extraction result
+    extracted_atom.py      — Normalized atomic facts
+    analysis_artifact.py   — Large JSON file storage pointer
+  services/
+    stable_id_service.py       — Canonical ID generation (CJK-safe)
+    atom_normalizer.py         — JSON → ExtractedAtom normalization
+    analysis_selection_service.py — Chunk selection (preview/range/full/incremental)
+    analysis_response_parser.py   — LLM response JSON parsing + validation
+    local_extraction_worker.py    — Single-chunk LLM extraction (pure function)
+    analysis_run_service.py       — Orchestrator: create/start/cancel/retry/resume
+    merge_service.py              — Deterministic merge (8 types)
+    final_output_service.py       — Merge → v0.1-compatible AnalysisOutput
+    artifact_storage_service.py   — Hybrid storage (inline + disk artifacts)
+  routers/
+    analysis_runs.py  — v2 run CRUD + retry/resume/cancel
+```
+
+### v0.2 Database Additions
+
+| Table | Purpose |
+|-------|---------|
+| `analysis_run` | One row per v2 pipeline run |
+| `local_extraction` | One row per chunk per run (LLM output) |
+| `extracted_atom` | Normalized atomic facts per extraction |
+| `analysis_artifact` | Large JSON file storage metadata |
+
+Existing tables enhanced: `analysis_output.run_id` (nullable FK to analysis_run), `analysis_run.final_*` columns.
+
+### v0.2 Storage Strategy
+
+- SQLite: all structured data + small analysis JSON (≤64KB)
+- Disk (`data/topics/{id}/artifacts/`): large analysis JSON (>64KB)
+- Artifacts tracked in `analysis_artifact` table with path/size/SHA256
+- Cascade cleanup: Topic/Document deletion removes all artifacts
+
+### v0.2 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/topics/{id}/analysis/runs` | POST | Create and start v2 run |
+| `/api/topics/{id}/analysis/runs` | GET | List runs for topic |
+| `/api/topics/{id}/chunks/meta` | GET | Lightweight chunk statistics |
+| `/api/analysis/runs/{id}` | GET | Run status with stage summaries |
+| `/api/analysis/runs/{id}/cancel` | POST | Cancel pending/running run |
+| `/api/analysis/runs/{id}/retry-failed` | POST | Retry failed chunks |
+| `/api/analysis/runs/{id}/resume` | POST | Resume interrupted run |
+
+Legacy endpoints enhanced:
+- `POST /analysis/run?pipeline=v2` — creates v2 run
+- `GET /analysis/outputs?run_id=X&latest_only=true` — v2 output filtering
+- `GET /analysis/status` — includes `latest_v2_run` and `v2_available`

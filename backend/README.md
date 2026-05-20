@@ -24,7 +24,7 @@ backend/
 ├── pyproject.toml           # Dependencies: fastapi, uvicorn, sqlmodel, httpx, python-multipart
 ├── provider_presets.py      # Provider preset catalog (DeepSeek, OpenAI, Qwen, Moonshot)
 ├── models/
-│   ├── enums.py             # StrEnum: AnalysisType, JobType, JobStatus, etc.
+│   ├── enums.py             # StrEnum: AnalysisType, JobType, JobStatus, AnalysisMode, AtomType
 │   ├── __init__.py          # Exports all table models → SQLModel.metadata
 │   ├── topic.py             # Topic (provider_id FK→model_provider)
 │   ├── model_provider.py    # ModelProvider (masked_api_key @property, validators)
@@ -32,7 +32,11 @@ backend/
 │   ├── document.py          # Document (topic_id unique, status, encoding)
 │   ├── chapter.py           # Chapter (chapter_index, title, char offsets)
 │   ├── chunk.py             # Chunk (text in SQLite, estimated_tokens)
-│   ├── analysis_output.py   # AnalysisOutput (content_json, evidence, confidence)
+│   ├── analysis_output.py   # AnalysisOutput (content_json, evidence, confidence, run_id FK)
+│   ├── analysis_run.py      # AnalysisRun (v2 staged pipeline lifecycle)
+│   ├── local_extraction.py  # LocalExtraction (per-chunk LLM extraction result)
+│   ├── extracted_atom.py    # ExtractedAtom (normalized atomic facts, stable_id)
+│   ├── analysis_artifact.py # AnalysisArtifact (large JSON file storage metadata)
 │   ├── chat.py              # ChatSession, ChatMessage (+ ChatMessageCreate validation)
 │   ├── job.py               # Job (job_type: parse|analysis, progress, metadata)
 │   └── job_item.py          # JobItem (item_type: AnalysisType values)
@@ -44,30 +48,46 @@ backend/
 │   ├── topic_provider_config.py # Per-topic config, effective config, recommendation
 │   ├── documents.py         # upload, get current, delete (with cascade)
 │   ├── parse.py             # parse, chapters, chunks, storage
-│   ├── analysis_jobs.py     # job CRUD, status, cancel (two routers)
-│   ├── analysis_outputs.py  # run analysis, list/delete outputs (topic check)
+│   ├── analysis_jobs.py     # job CRUD, status (with latest_v2_run), cancel
+│   ├── analysis_outputs.py  # run analysis (v1 + pipeline=v2 bridge), list/delete outputs
+│   ├── analysis_runs.py     # v2 run CRUD, retry-failed, resume, cancel
 │   └── chat.py              # session CRUD, send message with validation (two routers)
 ├── services/
 │   ├── llm_client.py        # OpenAICompatibleLLMClient (httpx, 2 retries, 120s timeout)
-│   ├── prompt_loader.py     # Load prompt templates from prompts/ dir
-│   ├── analysis_service.py  # run_single_analysis_output + batch-map-merge pipeline
-│   ├── analysis_worker.py   # Worker: run_one_analysis_type (no DB, pure LLM + retry)
+│   ├── prompt_loader.py     # Load v1 + v2 prompt templates from prompts/ dir
+│   ├── analysis_service.py  # v1: run_single_analysis_output + batch-map-merge pipeline
+│   ├── analysis_worker.py   # v1 worker: run_one_analysis_type (no DB, pure LLM + retry)
 │   ├── job_service.py       # run_analysis_job (async parallel execution, bounded pool)
 │   ├── provider_config_service.py # Effective config resolution + recommendations
-│   ├── document_service.py  # upload (multi-encoding→UTF-8), delete with cascade
+│   ├── document_service.py  # upload (multi-encoding→UTF-8), delete with v2 cascade
 │   ├── chat_service.py      # send_user_message (evidence retrieval + history + LLM)
 │   ├── retrieval_service.py # Keyword retrieval (stopwords, _make_excerpt, top_k=8)
-│   ├── topic_service.py     # delete_topic (full cascade), summary helpers
+│   ├── topic_service.py     # delete_topic (full cascade including v2 data), summary helpers
 │   ├── storage.py           # File I/O with path traversal protection (_is_safe)
 │   ├── parser_service.py    # Chapter detection (regex), chunk splitting
-│   └── provider_test_service.py # Connection test (minimal LLM call)
-├── prompts/                 # 6 prompt templates (overview, characters, relations, events, causality, themes)
-├── tests/                   # 162 passing tests (see test section below)
+│   ├── provider_test_service.py # Connection test (minimal LLM call)
+│   │   # ── v0.2 services ──
+│   ├── stable_id_service.py       # Canonical stable ID generation (CJK-safe)
+│   ├── atom_normalizer.py         # JSON → ExtractedAtom normalization (contract-strict)
+│   ├── analysis_selection_service.py # Chunk meta + selection (preview/range/full/incremental)
+│   ├── analysis_response_parser.py   # LLM JSON response parsing + validation
+│   ├── local_extraction_worker.py    # Single-chunk v2 local_extraction (pure function, retry)
+│   ├── analysis_run_service.py       # v2 orchestrator: create/start/cancel/retry/resume
+│   ├── merge_service.py              # Deterministic merge (8 types, Python-only)
+│   ├── final_output_service.py       # Merge → v0.1-compatible final AnalysisOutput
+│   └── artifact_storage_service.py   # Hybrid storage (inline + disk artifacts, 64KB threshold)
+├── prompts/
+│   ├── overview.md, characters.md, relations.md, events.md, causality.md, themes.md
+│   └── v2/                   # v0.2 staged pipeline prompts
+│       ├── local/            # local_extraction prompt
+│       └── merge/            # merge_<type> prompts
+├── tests/                   # 367 passing tests (see test section below)
 └── scripts/
-    └── smoke_backend.py     # End-to-end smoke test (safe + --real-llm modes)
+    ├── smoke_backend.py     # v0.1 smoke test (safe + --real-llm modes)
+    └── smoke_v2_backend.py  # v0.2 smoke test (safe + --real-llm modes)
 ```
 
-## Data Model (11 tables)
+## Data Model (15 tables: 11 v0.1 + 4 v0.2)
 
 ```
 ModelProvider  ?──*  Topic
@@ -80,6 +100,12 @@ Topic          1──*  ChatSession
 ChatSession    1──*  ChatMessage
 Topic          1──*  Job
 Job            1──*  JobItem
+Topic          1──*  AnalysisRun (v2)
+AnalysisRun    1──*  LocalExtraction (v2)
+Topic          1──*  LocalExtraction (v2)
+LocalExtraction1──*  ExtractedAtom (v2)
+Topic          1──*  ExtractedAtom (v2)
+Topic          1──*  AnalysisArtifact (v2)
 ```
 
 ## Enums (all lowercase StrEnum)
@@ -87,8 +113,10 @@ Job            1──*  JobItem
 | Enum | Values |
 |------|--------|
 | `AnalysisType` | `overview`, `characters`, `relations`, `events`, `causality`, `themes` |
+| `AnalysisMode` (v2) | `preview`, `range`, `full`, `incremental` |
+| `AtomType` (v2) | `character`, `event`, `relation`, `causal_link`, `theme_signal`, `worldbuilding`, `foreshadowing`, `open_question` |
 | `JobType` | `parse`, `analysis` |
-| `JobStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
+| `JobStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled`, `partial_success` |
 | `JobItemStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
 | `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
 | `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
@@ -152,9 +180,20 @@ Job            1──*  JobItem
 ### Analysis Outputs
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/analysis/run` | Run structured analysis (?limit_chunks) |
-| GET | `/api/topics/{id}/analysis/outputs` | List (?output_type filter) |
-| DELETE | `/api/topics/{id}/analysis/outputs` | Delete all |
+| POST | `/api/topics/{id}/analysis/run` | Run structured analysis (?pipeline=v1|v2, ?limit_chunks) |
+| GET | `/api/topics/{id}/analysis/outputs` | List (?output_type, ?run_id, ?latest_only) |
+| DELETE | `/api/topics/{id}/analysis/outputs` | Delete all (?run_id for targeted) |
+
+### v0.2 Analysis Runs (`/api/analysis/runs` and `/api/topics/{id}/analysis/runs`)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/topics/{id}/analysis/runs` | Create and start v2 staged run (201) |
+| GET | `/api/topics/{id}/analysis/runs` | List runs for topic |
+| GET | `/api/topics/{id}/chunks/meta` | Lightweight chunk statistics |
+| GET | `/api/analysis/runs/{id}` | Run status with extraction/merge/final summaries |
+| POST | `/api/analysis/runs/{id}/cancel` | Cancel pending/running run |
+| POST | `/api/analysis/runs/{id}/retry-failed` | Retry failed chunks, re-merge, re-final |
+| POST | `/api/analysis/runs/{id}/resume` | Resume interrupted run (?retry_failed=true) |
 
 ### Analysis Jobs (internal/dev)
 | Method | Path | Description |
@@ -232,9 +271,10 @@ Job: pending → running → succeeded / partial_success / failed / cancelled
 - **Set bounded parallelism** (default 3). Higher values (>4) may trigger provider rate limits.
 - **Enable thinking only when quality requires it** — primarily for complex reasoning tasks, not structured extraction.
 - **Large novels (>300k chars)** should use preview mode with limited chunks. Full direct analysis on large texts repeats selected chunks ~6 times, consuming significant API credits.
-- **v0.1 limitation**: Direct structured analysis sends selected chunks once per output_type (6 separate LLM calls with identical prefix). A future v0.2 map-reduce pipeline will reduce this overhead.
+- **v0.1 limitation**: Direct structured analysis sends selected chunks once per output_type (6 separate LLM calls with identical prefix).
+- **v0.2 staged pipeline**: Each chunk is sent to the LLM once (local_extraction), then deterministic merge and final stages run without LLM (~4× token savings). Full retry/resume/idempotency support.
 
-## Test Summary (162 tests, all passing)
+## Test Summary (367 tests, all passing)
 
 | File | Tests | Key areas |
 |------|-------|-----------|
@@ -250,6 +290,16 @@ Job: pending → running → succeeded / partial_success / failed / cancelled
 | `test_llm_client.py` | 8 | Normal/401/network/invalid JSON/empty choices/retry/api_key leak |
 | `test_model_provider_test.py` | 4 | Provider test success/404/LLM error/api_key leak |
 | `test_health.py` | 1 | Health endpoint |
+| `test_stable_id.py` (v2) | 26 | Stable ID generation, CJK safety, idempotency |
+| `test_analysis_run.py` (v2) | 15 | AnalysisRun CRUD, migration, status transitions |
+| `test_analysis_runs.py` (v2) | 28 | v2 pipeline, retry, resume, idempotency, error classification |
+| `test_analysis_selection.py` (v2) | 22 | Chunk meta, preview/range/full/incremental selection |
+| `test_atom_normalizer.py` (v2) | 15 | JSON normalization, evidence/confidence contract |
+| `test_v2_prompts.py` (v2) | 28 | v1+v2 prompt loading, JSON parsing, validation |
+| `test_local_extraction_worker.py` (v2) | 13 | Single-chunk extraction, retry, api_key mask |
+| `test_merge_service.py` (v2) | 17 | Deterministic merge (8 types), dedup, per-item fields |
+| `test_final_output_service.py` (v2) | 11 | Merge → v0.1-compatible final outputs |
+| `test_artifact_storage.py` (v2) | 6 | Hybrid storage, write/read/delete, threshold |
 
 All tests mock LLM calls. No real external API calls in CI.
 
@@ -262,7 +312,7 @@ All tests mock LLM calls. No real external API calls in CI.
 - **Per-type token budgets**: Each of the 6 analysis types has a tuned `max_tokens` limit (overview: 1024, characters: 3072, relations: 2048, events: 3072, causality: 2048, themes: 1536). Overridable by effective config.
 - **Retry policy**: Per-type retries (max 2) with exponential backoff for 429/5xx/timeout/rate-limit errors. JSON parse failures retry once with doubled max_tokens.
 - **Thinking mode**: DeepSeek-compatible `extra_body={"thinking": {"type": "enabled/disabled"}}`. Only sent when provider preset supports thinking. Non-thinking (disabled) recommended for structured extraction — faster, cheaper, and temperature has effect.
-- **No file-per-chunk**: v0.1 stores chunk text and analysis JSON in SQLite columns. Migration to disk files planned for v0.2.
+- **No file-per-chunk**: v0.1 stores chunk text in SQLite columns. v0.2 adds hybrid storage: large analysis JSON (>64KB) stored on disk under `data/topics/{id}/artifacts/` with `analysis_artifact` table tracking; small JSON stays inline in SQLite.
 - **Batch-map-merge**: For novels with many chunks, analysis uses a two-stage pipeline: partial analysis per batch, then multi-level merge.
 - **api_key safety**: `ModelProvider.masked_api_key` @property; all API responses exclude raw `api_key`; errors use `mask_api_key()` before logging.
 - **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()` instead of string `startswith`.

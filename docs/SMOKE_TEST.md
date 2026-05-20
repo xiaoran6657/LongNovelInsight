@@ -120,3 +120,35 @@ Additional steps (beyond safe mode):
 --provider-api-key-env ENV Environment variable for API key (default: DEEPSEEK_API_KEY)
 --timeout SECONDS         HTTP request timeout (default: 60)
 ```
+
+## v0.2 Smoke Test
+
+A separate v0.2 smoke test script exercises the v2 staged analysis pipeline:
+
+```bash
+# Safe mode (no real LLM):
+python scripts/smoke_v2_backend.py --base-url http://127.0.0.1:8000 --cleanup
+
+# Real LLM mode:
+python scripts/smoke_v2_backend.py --real-llm --provider-api-key-env DEEPSEEK_API_KEY
+```
+
+The v0.2 smoke test covers:
+1. Health check
+2. Create provider → topic → upload → parse
+3. GET chunks/meta (v2 lightweight statistics)
+4. Create v2 AnalysisRun (POST /analysis/runs)
+5. Poll run status (GET /analysis/runs/{id})
+6. List runs → GET outputs → GET legacy status
+7. Cleanup
+
+In safe mode, the run is created but stays pending (no real extraction). Use `--real-llm` to execute actual LLM extraction.
+
+### v0.2 CLI Flags
+
+```
+--base-url URL            Backend base URL (default: http://127.0.0.1:8000)
+--real-llm                Use real LLM provider (consumes API quota)
+--provider-api-key-env ENV Environment variable for API key (default: DEEPSEEK_API_KEY)
+--cleanup                 Delete created resources after test
+```

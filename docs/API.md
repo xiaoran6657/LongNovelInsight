@@ -1,10 +1,10 @@
-# LongNovelInsight v0.1.0 — API Reference
+# LongNovelInsight v0.2.0-dev — API Reference
 
 Base URL: `http://localhost:8000/api`
 
 All request/response bodies are JSON. IDs are UUID strings.
 
-> All endpoints documented below are implemented as of v0.1.0.
+> v0.1 endpoints marked as **(v1 legacy)**. v0.2 endpoints marked as **(v2 preferred)**.
 
 ## Health
 
@@ -610,3 +610,109 @@ All error responses follow:
 ```json
 { "detail": "Human-readable error message" }
 ```
+
+---
+
+## v0.2 Analysis Runs (v2 preferred)
+
+### `GET /api/topics/{id}/chunks/meta`
+
+Lightweight chunk statistics without text content.
+
+**Response 200:**
+```json
+{
+  "topic_id": "uuid", "document_id": "uuid",
+  "chunk_count": 120, "chapter_count": 30,
+  "total_chars": 500000, "estimated_tokens": 333333,
+  "first_chunk_index": 0, "last_chunk_index": 119,
+  "chunks_by_chapter": [
+    {"chapter_index": 0, "title": "第一章", "chunk_count": 4, "char_count": 12000, "estimated_tokens": 8000}
+  ]
+}
+```
+
+---
+
+### `POST /api/topics/{id}/analysis/runs` (201)
+
+Create and start a v2 staged analysis run. Runs in background thread.
+
+**Request:**
+```json
+{
+  "mode": "preview",
+  "requested_types": ["overview", "characters", "relations", "events", "causality", "themes"],
+  "limit_chunks": 5,
+  "chunk_index_start": null, "chunk_index_end": null,
+  "chapter_index_start": null, "chapter_index_end": null,
+  "force": false, "start_immediately": true
+}
+```
+
+**Response 201:**
+```json
+{
+  "run": {"id": "uuid", "topic_id": "uuid", "mode": "preview", "status": "pending", "progress_total": 8},
+  "status_url": "/api/analysis/runs/{id}"
+}
+```
+Errors: `404` topic, `409` no chunks/no provider/already running, `422` invalid mode/range/requested_types.
+
+---
+
+### `GET /api/topics/{id}/analysis/runs`
+
+List all v2 runs for a topic, most recent first.
+
+---
+
+### `GET /api/analysis/runs/{id}`
+
+Run status with extraction, merge, and final stage summaries.
+
+**Response 200:**
+```json
+{
+  "run": {"id": "uuid", "status": "succeeded", "extraction_succeeded": 3, "extraction_failed": 0,
+          "merge_succeeded": 5, "merge_failed": 0, "final_succeeded": 5, "final_failed": 0,
+          "progress_current": 13, "progress_total": 14, "total_tokens": 15000, ...},
+  "extractions": [{"id": "uuid", "chunk_id": "uuid", "status": "succeeded", "attempt_count": 1}],
+  "merge": {"total": 5, "succeeded": 5, "outputs": [...]},
+  "final": {"total": 5, "succeeded": 5, "outputs": [{"id": "uuid", "output_type": "characters", "title": "Character List"}]}
+}
+```
+
+---
+
+### `POST /api/analysis/runs/{id}/cancel`
+
+Cancel a pending or running run.
+
+---
+
+### `POST /api/analysis/runs/{id}/retry-failed`
+
+Retry all failed chunks, then re-run merge and final stages. Background execution.
+
+---
+
+### `POST /api/analysis/runs/{id}/resume?retry_failed=true`
+
+Resume an interrupted run. If `retry_failed=true` (default), also retry failed chunks.
+
+---
+
+## v0.2 Legacy Bridge
+
+### `POST /api/topics/{id}/analysis/run?pipeline=v2`
+
+Legacy endpoint with `pipeline=v2` creates a v2 AnalysisRun. Default `pipeline=v1` preserves original v0.1 behavior.
+
+### `GET /api/topics/{id}/analysis/outputs?run_id=X&latest_only=true`
+
+New query params: `run_id` filters by v2 run, `latest_only` returns one per output_type. Default listing excludes `merge_*` intermediates.
+
+### `GET /api/topics/{id}/analysis/status`
+
+Now includes `latest_v2_run` summary and `v2_available: true`.

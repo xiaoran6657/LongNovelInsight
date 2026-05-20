@@ -2,33 +2,25 @@
 
 LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt format) and produce structured insights — character profiles, relationship maps, event timelines, causal chains, and thematic analysis — all stored on your own machine.
 
-## v0.1.0
+## v0.2.0-dev (current)
 
-### What It Does
+Backend v0.2 is complete (Steps 1–13). The frontend has not yet been updated for v0.2; it still uses the v0.1 analysis API. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
 
-- Open a browser at localhost and configure an LLM provider (DeepSeek or any OpenAI-compatible API). Provider can be added before or after creating a Topic.
-- Create a Topic, optionally bind a provider, and upload one `.txt` novel file.
-- Automatically split the novel into chapters and chunks, with token/word/disk-usage statistics.
-- Call the LLM to generate:
-  - **Work overview** — summary, style, narrative structure.
-  - **Character list** — profiles with evidence-backed traits.
-  - **Character relationships** — typed relationships between characters.
-  - **Key events** — chronological list of major plot events.
-  - **Event causal chain** — how events lead to one another.
-  - **Theme / philosophy analysis** — identified themes and philosophical ideas.
-- Ask free-form questions within a Topic; answers are grounded in the existing analysis and relevant source chunks.
-- All data (novels, analysis, chat history) is stored locally in `data/` and SQLite.
-- Delete any Topic, its original text, analysis results, and chat history at any time.
-- View storage usage, task progress, and analysis status in the frontend.
+### What's New in v0.2 Backend
 
-### What It Does NOT Do (v0.1.0)
+- **Staged analysis pipeline**: Per-chunk `local_extraction` (LLM) → `deterministic merge` (Python) → `final outputs` (Python). Each chunk is sent to the LLM once instead of 6 times.
+- **8 atom types**: characters, events, relations, causal links, theme signals, worldbuilding, foreshadowing, open questions — all with stable IDs, evidence quotes, and source tracking.
+- **Analysis modes**: `preview`, `range`, `full`, `incremental` — flexible chunk selection.
+- **Retry & resume**: Failed chunks can be retried. Interrupted runs can be resumed.
+- **Hybrid storage**: Large analysis JSON is stored on disk (under `data/topics/{id}/artifacts/`); small JSON stays inline in SQLite.
+- **Active-run guard**: Prevents duplicate concurrent analysis runs for the same Topic.
+- **Legacy bridge**: Existing v0.1 endpoints (`/analysis/run`, `/analysis/outputs`) still work. `pipeline=v2` parameter on legacy endpoints delegates to v2.
 
-- No login system. No multi-user support.
-- No cloud sync. Everything stays on your machine.
-- No multi-novel cross-analysis. One Topic = one `.txt` novel.
-- No `.epub` or PDF support — `.txt` only.
-- No Docker, no Redis, no Celery, no PostgreSQL.
-- No LangChain, no vector databases, no plugin system.
+### What It Does NOT Do (v0.2.0-dev)
+
+- Same restrictions as v0.1, plus:
+- Frontend has NOT been updated for v0.2. The UI still shows v0.1 analysis cards.
+- No EPUB/PDF parsing, no multi-novel cross-analysis, no vector DB, no Docker.
 
 ### You Bring Your Own API Key
 
@@ -86,15 +78,17 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the version roadmap.
 
 A step-by-step manual smoke test covering the full product workflow (health, provider, topic, upload, parse, analysis, chat, cleanup) is at [docs/FRONTEND_SMOKE_TEST.md](docs/FRONTEND_SMOKE_TEST.md). Run through it after any significant frontend change.
 
-### Backend (automated script)
+### Backend (automated scripts)
 
-A live-server end-to-end test script is at `backend/scripts/smoke_backend.py`. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
+v0.1 smoke test at `backend/scripts/smoke_backend.py`. v0.2 smoke test at `backend/scripts/smoke_v2_backend.py`. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
 
 ```bash
-# Quick safe-mode smoke test (no real LLM calls):
+# v0.1 safe-mode smoke test (no real LLM calls):
 cd backend
-python -m uvicorn main:app --reload --port 8000   # Terminal 1
-python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup  # Terminal 2
+python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup
+
+# v0.2 safe-mode smoke test:
+python scripts/smoke_v2_backend.py --base-url http://127.0.0.1:8000 --cleanup
 ```
 
 ## v0.1.0 Feature Checklist
