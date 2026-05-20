@@ -22,11 +22,9 @@ import StoragePanel from "../features/topic/StoragePanel";
 import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
 import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
 import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
-import AnalysisModeSelector from "../features/analysis/AnalysisModeSelector";
-import AnalysisCostProjection from "../features/analysis/AnalysisCostProjection";
-import { estimateTokens } from "../features/analysis/analysisSelection";
 import type { AnalysisMode } from "../api/types";
 import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
+import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
@@ -293,25 +291,6 @@ export default function TopicDetailPage() {
       {chunksMeta && (
         <ChunkRangeSelector meta={chunksMeta} value={chunkRange} onChange={setChunkRange} />
       )}
-      {chunksMeta && (
-        <>
-          <AnalysisModeSelector
-            mode={analysisMode}
-            limitChunks={previewLimitChunks}
-            totalChunks={chunksMeta.chunk_count}
-            hasPreviousRun={false}
-            onChangeMode={setAnalysisMode}
-            onChangeLimitChunks={setPreviewLimitChunks}
-          />
-          {(() => {
-            const est = estimateTokens(chunksMeta, analysisMode, previewLimitChunks, chunkRange);
-            if (est.selectedChunks > 0) {
-              return <AnalysisCostProjection {...est} />;
-            }
-            return null;
-          })()}
-        </>
-      )}
       <ChaptersPanel chapters={chapterData?.chapters} />
 
       {showChunkText && chunks.length > 0 && (
@@ -330,6 +309,19 @@ export default function TopicDetailPage() {
       </button>
 
       <StoragePanel topicId={topic.id} />
+
+      <AnalysisRunPanel
+        topicId={topic.id}
+        meta={chunksMeta}
+        mode={analysisMode}
+        limitChunks={previewLimitChunks}
+        range={chunkRange}
+        hasDoc={hasDoc}
+        isParsed={topic.status === "parsed"}
+        boundProvider={!!boundProvider}
+        onChangeMode={setAnalysisMode}
+        onChangeLimitChunks={setPreviewLimitChunks}
+      />
 
       <LegacyAnalysisPanel
         topicId={topic.id}
