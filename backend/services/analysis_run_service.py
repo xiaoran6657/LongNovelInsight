@@ -549,8 +549,24 @@ def _save_extraction(
     total_tokens: int = 0,
     model_used: str | None = None,
     retry_count: int = 0,
+    force: bool = False,
 ) -> None:
-    """Write a LocalExtraction row and, if successful, normalize atoms."""
+    """Write a LocalExtraction row and, if successful, normalize atoms.
+
+    Idempotent: if a succeeded extraction already exists for this run+chunk,
+    skip unless force=True.
+    """
+    if ok and not force:
+        existing = session.exec(
+            select(LocalExtraction).where(
+                LocalExtraction.run_id == run_id,
+                LocalExtraction.chunk_id == chunk_id,
+                LocalExtraction.status == "succeeded",
+            )
+        ).first()
+        if existing is not None:
+            return
+
     ext = LocalExtraction(
         run_id=run_id,
         topic_id=topic_id,
@@ -724,3 +740,309 @@ def cancel_analysis_run(session: Session, run_id: str) -> AnalysisRun | None:
         session.commit()
         session.refresh(run)
     return run
+
+
+# ── Error classification ──
+
+
+def _classify_error(error: str, status_code: int | None = None) -> str:
+    if status_code and status_code not in (429, 500, 502, 503, 504):
+        pass  # non-retryable http errors
+    err_lower = error.lower()
+    if "json" in err_lower and "parse" in err_lower:
+        return "json_parse_error"
+    if any(kw in err_lower for kw in ("rate limit", "rate_limit", "timeout", "timed out")):
+        return "llm_error"
+    if any(kw in err_lower for kw in ("validation", "invalid", "mismatch")):
+        return "validation_error"
+    if "cancelled" in err_lower or "cancel" in err_lower:
+        return "cancelled"
+    if "provider" in err_lower or "api key" in err_lower or "auth" in err_lower:
+        return "provider_config_error"
+    return "unknown"
+
+
+def _classify_result_error(result) -> str:
+    """Classify error from a LocalExtractionResult."""
+    return _classify_error(result.error or "", result.status_code)
+
+
+# ── Retry / Resume ──
+
+
+def _clear_atoms_for_chunk(session: Session, run_id: str, chunk_id: str) -> int:
+    """Delete ExtractedAtom rows for a specific chunk in a run. Returns count."""
+    from models.extracted_atom import ExtractedAtom
+
+    atoms = session.exec(
+        select(ExtractedAtom).where(
+            ExtractedAtom.run_id == run_id,
+            ExtractedAtom.chunk_id == chunk_id,
+        )
+    ).all()
+    count = len(atoms)
+    for a in atoms:
+        session.delete(a)
+    return count
+
+
+def retry_failed_extractions(
+    session: Session,
+    run_id: str,
+) -> dict:
+    """Retry all failed LocalExtraction chunks for a run, then re-merge and re-final.
+
+    Returns a summary dict with counts.
+    """
+    from models.chunk import Chunk
+
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise ValueError(f"AnalysisRun not found: {run_id}")
+
+    failed_exts = session.exec(
+        select(LocalExtraction).where(
+            LocalExtraction.run_id == run_id,
+            LocalExtraction.status == "failed",
+        )
+    ).all()
+
+    if not failed_exts:
+        return {"retried": 0, "succeeded": 0, "failed": 0, "message": "No failed extractions"}
+
+    config = run.get_effective_config()
+    api_key = _resolve_api_key(session, run.topic_id)
+    model_name = config.get("model_name", "")
+    base_url = config.get("base_url", "")
+    temperature = config.get("temperature") or 0.1
+    max_tokens = config.get("max_output_tokens") or 3072
+    thinking_mode = config.get("thinking_mode", "disabled")
+
+    # Load chapters for metadata
+    from models.chapter import Chapter
+
+    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
+    chapter_map = {ch.chapter_index: ch.title for ch in chapters}
+
+    # Collect chunk IDs to retry
+    chunk_ids = {e.chunk_id for e in failed_exts if e.chunk_id}
+    chunks = session.exec(select(Chunk).where(Chunk.id.in_(chunk_ids))).all()  # noqa: E711
+    chunk_map = {c.id: c for c in chunks}
+
+    retried = 0
+    retry_succeeded = 0
+    retry_failed = 0
+    error_types: dict[str, int] = {}
+
+    for ext in failed_exts:
+        if not ext.chunk_id or ext.chunk_id not in chunk_map:
+            continue
+        chunk = chunk_map[ext.chunk_id]
+        retried += 1
+
+        result = _extraction_worker.run_local_extraction_for_chunk(
+            chunk_id=chunk.id,
+            chunk_text=chunk.text,
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            thinking_mode=thinking_mode,
+            chapter_index=chunk.chapter_index,
+            chunk_index=chunk.chunk_index,
+            chapter_title=chapter_map.get(chunk.chapter_index),
+        )
+
+        # Delete old atoms before re-normalizing
+        _clear_atoms_for_chunk(session, run_id, chunk.id)
+
+        ext.status = "succeeded" if result.ok else "failed"
+        ext.attempt_count = ext.attempt_count + 1
+        ext.content_json = result.content_json
+        ext.error_message = result.error[:1000] if result.error else None
+        ext.confidence = 0.5
+        ext.prompt_tokens = result.prompt_tokens
+        ext.completion_tokens = result.completion_tokens
+        ext.total_tokens = result.total_tokens
+        ext.model_used = result.model_used
+        ext.finished_at = _now()
+        session.add(ext)
+        session.flush()
+
+        if result.ok:
+            retry_succeeded += 1
+            run.extraction_succeeded = (run.extraction_succeeded or 0) + 1
+            run.extraction_failed = max(0, (run.extraction_failed or 0) - 1)
+            if result.content_json:
+                _atom_normalizer.normalize_local_extraction(
+                    extraction_id=ext.id,
+                    run_id=run_id,
+                    topic_id=run.topic_id,
+                    chunk_id=chunk.id,
+                    content_json_str=result.content_json,
+                    session=session,
+                )
+        else:
+            retry_failed += 1
+            etype = _classify_result_error(result)
+            error_types[etype] = error_types.get(etype, 0) + 1
+
+    session.commit()
+
+    # Re-run merge and final stages
+    _run_merge_and_final(session, run_id)
+
+    # Update metadata
+    run = session.get(AnalysisRun, run_id)
+    if run:
+        metadata = run.get_metadata()
+        metadata["retry_summary"] = {
+            "retried": retried,
+            "succeeded": retry_succeeded,
+            "failed": retry_failed,
+            "error_types": error_types,
+        }
+        run.set_metadata(metadata)
+        session.add(run)
+        session.commit()
+
+    return {
+        "retried": retried,
+        "succeeded": retry_succeeded,
+        "failed": retry_failed,
+        "error_types": error_types,
+    }
+
+
+def _run_merge_and_final(session: Session, run_id: str) -> None:
+    """Re-run merge and final stages for a run. Used after retry/resume."""
+    from services.final_output_service import run_final_output_stage
+    from services.merge_service import run_merge_stage
+
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        return
+
+    requested_types = run.get_requested_types()
+    valid_merge = {
+        "overview",
+        "characters",
+        "relations",
+        "events",
+        "causality",
+        "themes",
+        "worldbuilding",
+        "foreshadowing",
+    }
+    merge_types = [t for t in requested_types if t in valid_merge]
+
+    merge_succeeded = 0
+    merge_failed = 0
+    if merge_types:
+        merge_summaries = run_merge_stage(session, run_id, requested_types=merge_types)
+        merge_succeeded = sum(
+            1
+            for s in merge_summaries
+            if s.atom_count >= 0 and not any("Merge failed:" in w for w in s.warnings)
+        )
+        merge_failed = sum(
+            1 for s in merge_summaries if any("Merge failed:" in w for w in s.warnings)
+        )
+
+    final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
+    final_merge_types = [t for t in merge_types if t in final_types]
+    final_succeeded = 0
+    final_failed = 0
+    if final_merge_types and merge_succeeded > 0:
+        final_summaries = run_final_output_stage(session, run_id, requested_types=final_merge_types)
+        final_succeeded = sum(
+            1 for s in final_summaries if not any("Final output failed:" in w for w in s.warnings)
+        )
+        final_failed = sum(
+            1 for s in final_summaries if any("Final output failed:" in w for w in s.warnings)
+        )
+
+    run = session.get(AnalysisRun, run_id)
+    if run:
+        run.merge_succeeded = merge_succeeded
+        run.merge_failed = merge_failed
+        run.final_succeeded = final_succeeded
+        run.final_failed = final_failed
+        if run.extraction_succeeded == 0:
+            run.status = JobStatus.FAILED
+        elif (run.extraction_failed or 0) == 0 and merge_failed == 0 and final_failed == 0:
+            run.status = JobStatus.SUCCEEDED
+        else:
+            run.status = JobStatus.PARTIAL_SUCCESS
+        run.finished_at = _now()
+        session.add(run)
+        session.commit()
+
+
+def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True) -> AnalysisRun:
+    """Resume an interrupted run, optionally retrying failed chunks."""
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise ValueError(f"AnalysisRun not found: {run_id}")
+
+    if run.status == JobStatus.CANCELLED:
+        raise ValueError("Cannot resume a cancelled run")
+
+    if run.status in (JobStatus.SUCCEEDED,):
+        return run  # Nothing to do
+
+    if retry_failed:
+        retry_failed_extractions(session, run_id)
+    else:
+        # Just re-run merge and final without retrying extractions
+        _run_merge_and_final(session, run_id)
+
+    run = session.get(AnalysisRun, run_id)
+    return run
+
+
+def start_retry_failed(run_id: str) -> None:
+    """Start background retry of failed chunks for a run."""
+    thread = threading.Thread(
+        target=_execute_retry,
+        args=(run_id,),
+        name=f"analysis-retry-{run_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def start_resume(run_id: str, retry_failed: bool = True) -> None:
+    """Start background resume of an interrupted run."""
+    thread = threading.Thread(
+        target=_execute_resume,
+        args=(run_id, retry_failed),
+        name=f"analysis-resume-{run_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _execute_retry(run_id: str, engine=None) -> None:
+    if engine is None:
+        from db import engine as db_engine
+
+        engine = db_engine
+    try:
+        with Session(engine) as session:
+            retry_failed_extractions(session, run_id)
+    except Exception as e:
+        _fail_run(run_id, engine, str(e))
+
+
+def _execute_resume(run_id: str, retry_failed: bool, engine=None) -> None:
+    if engine is None:
+        from db import engine as db_engine
+
+        engine = db_engine
+    try:
+        with Session(engine) as session:
+            resume_analysis_run(session, run_id, retry_failed=retry_failed)
+    except Exception as e:
+        _fail_run(run_id, engine, str(e))

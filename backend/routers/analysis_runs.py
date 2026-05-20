@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlmodel import Session
 
 from db import get_session
+from models.analysis_run import AnalysisRun
 from models.topic import Topic
 from services import analysis_run_service
 
@@ -160,4 +161,38 @@ def cancel_run(run_id: str, session: Session = Depends(get_session)) -> dict:
             "id": run.id,
             "status": run.status,
         }
+    }
+
+
+@run_router.post("/{run_id}/retry-failed")
+def retry_failed_chunks(run_id: str, session: Session = Depends(get_session)) -> dict:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="AnalysisRun not found")
+    if run.status not in ("partial_success", "failed"):
+        raise HTTPException(status_code=409, detail="Run has no failed extractions to retry")
+
+    analysis_run_service.start_retry_failed(run_id)
+    return {
+        "run": {"id": run.id, "status": run.status},
+        "message": "Retry started in background",
+    }
+
+
+@run_router.post("/{run_id}/resume")
+def resume_run(
+    run_id: str,
+    retry_failed: bool = True,
+    session: Session = Depends(get_session),
+) -> dict:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="AnalysisRun not found")
+    if run.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cannot resume a cancelled run")
+
+    analysis_run_service.start_resume(run_id, retry_failed=retry_failed)
+    return {
+        "run": {"id": run.id, "status": run.status},
+        "message": f"Resume started in background (retry_failed={retry_failed})",
     }

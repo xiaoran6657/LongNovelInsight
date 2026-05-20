@@ -1441,3 +1441,205 @@ def test_legacy_status_merge_only_has_outputs_false(client, engine):
     assert data["has_outputs"] is False
     assert "merge_characters" not in data.get("output_counts_by_type", {})
     client.delete(f"/api/topics/{topic_id}")
+
+
+# ── Step 11: Retry / Resume / Idempotency tests ──
+
+
+def test_retry_failed_endpoint_starts_background(client):
+    """POST /analysis/runs/{id}/retry-failed starts background retry."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_retry"):
+        with patch("services.analysis_run_service._execute_run"):
+            r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+            run_id = r.json()["run"]["id"]
+
+        # Manually set run to partial_success for the endpoint to accept it
+        from main import app
+
+        for dep in app.dependency_overrides.values():
+            gen = dep()
+            session = next(gen)
+            try:
+                from models.analysis_run import AnalysisRun
+
+                run = session.get(AnalysisRun, run_id)
+                if run:
+                    run.status = "partial_success"
+                    session.add(run)
+                    session.commit()
+            finally:
+                session.close()
+
+        r = client.post(f"/api/analysis/runs/{run_id}/retry-failed")
+        assert r.status_code == 200
+        assert "Retry started" in r.json()["message"]
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_retry_failed_succeeded_run_409(client):
+    """Retry on a fully succeeded run should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    with patch("services.analysis_run_service._execute_retry"):
+        # Run is "pending" (mocked _execute_run), so retry should be 409
+        r = client.post(f"/api/analysis/runs/{run_id}/retry-failed")
+        assert r.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_resume_endpoint(client):
+    """POST /analysis/runs/{id}/resume starts background resume."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_resume"):
+        with patch("services.analysis_run_service._execute_run"):
+            r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+            run_id = r.json()["run"]["id"]
+
+        r = client.post(f"/api/analysis/runs/{run_id}/resume?retry_failed=true")
+        assert r.status_code == 200
+        assert "Resume started" in r.json()["message"]
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_resume_cancelled_run_409(client):
+    """Resume on a cancelled run should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+    client.post(f"/api/analysis/runs/{run_id}/cancel")
+
+    with patch("services.analysis_run_service._execute_resume"):
+        r = client.post(f"/api/analysis/runs/{run_id}/resume")
+        assert r.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_idempotent_save_extraction(engine):
+    """Same run+chunk should not create duplicate succeeded LocalExtraction rows."""
+    from sqlmodel import Session, select
+
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import _save_extraction
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Idem P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Idem", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.flush()
+        run = AnalysisRun(topic_id=topic.id, mode="preview")
+        session.add(run)
+        session.flush()
+        session.commit()
+        rid = run.id
+        tid = topic.id
+        cid = ck.id
+
+    # First save — should create
+    with Session(engine) as session:
+        _save_extraction(
+            session,
+            rid,
+            tid,
+            cid,
+            ok=True,
+            content_json='{"analysis_type":"local_extraction","chunk_id":"x"}',
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        exts = session.exec(
+            select(LocalExtraction).where(
+                LocalExtraction.run_id == rid,
+                LocalExtraction.chunk_id == cid,
+                LocalExtraction.status == "succeeded",
+            )
+        ).all()
+        assert len(exts) == 1
+
+    # Second save with same params — should skip
+    with Session(engine) as session:
+        _save_extraction(
+            session,
+            rid,
+            tid,
+            cid,
+            ok=True,
+            content_json='{"analysis_type":"local_extraction","chunk_id":"x"}',
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        exts = session.exec(
+            select(LocalExtraction).where(
+                LocalExtraction.run_id == rid,
+                LocalExtraction.chunk_id == cid,
+                LocalExtraction.status == "succeeded",
+            )
+        ).all()
+        assert len(exts) == 1, "Idempotent guard should prevent duplicate succeeded rows"
+
+
+def test_error_classification():
+    """_classify_error categorizes errors correctly."""
+    from services.analysis_run_service import _classify_error
+
+    assert _classify_error("JSON parse failed: ...") == "json_parse_error"
+    assert _classify_error("rate limit exceeded", 429) == "llm_error"
+    assert _classify_error("timed out") == "llm_error"
+    assert _classify_error("Validation failed: chunk_id mismatch") == "validation_error"
+    assert _classify_error("auth error") == "provider_config_error"
+    assert _classify_error("something unexpected happened") == "unknown"
