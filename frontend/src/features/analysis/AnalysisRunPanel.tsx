@@ -10,6 +10,7 @@ import AnalysisModeSelector from "./AnalysisModeSelector";
 import AnalysisCostProjection from "./AnalysisCostProjection";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
+import AnalysisStageProgress from "./AnalysisStageProgress";
 
 interface Props {
   topicId: string;
@@ -197,11 +198,7 @@ export default function AnalysisRunPanel({
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.35rem", fontSize: "0.82rem" }}>
-            <div><strong>Extraction:</strong> {run.run.extraction_succeeded}/{run.run.extraction_total} succeeded, {run.run.extraction_failed} failed</div>
-            <div><strong>Merge:</strong> {run.run.merge_succeeded}/{run.run.merge_total} succeeded, {run.run.merge_failed} failed</div>
-            <div><strong>Final:</strong> {run.run.final_succeeded ?? "—"}/{run.run.final_total ?? "—"} succeeded, {run.run.final_failed ?? "—"} failed</div>
-          </div>
+          <AnalysisStageProgress run={run} />
 
           {run.run.total_tokens > 0 && (
             <p className="text-dim" style={{ fontSize: "0.78rem", marginTop: "0.35rem" }}>
