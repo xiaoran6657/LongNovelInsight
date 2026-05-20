@@ -64,8 +64,17 @@ def _migrate_analysis_run_final_columns() -> None:
         conn.commit()
 
 
+def _migrate_analysis_artifact() -> None:
+    """Create analysis_artifact table if it doesn't exist."""
+    SQLModel.metadata.create_all(
+        engine,
+        tables=[models.analysis_artifact.AnalysisArtifact.__table__],  # type: ignore[arg-type]
+    )
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
     _migrate_analysis_output_run_id()
     _migrate_analysis_run_final_columns()
+    _migrate_analysis_artifact()

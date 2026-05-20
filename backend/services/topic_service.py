@@ -47,6 +47,11 @@ def delete_topic(topic_id: str, session: Session) -> dict:
             session.delete(m)
         session.delete(s)
 
+    # Delete analysis artifacts
+    from services.artifact_storage_service import delete_artifacts_for_topic
+
+    delete_artifacts_for_topic(session, topic_id)
+
     # Delete analysis outputs first (FK to analysis_run)
     outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
     for o in outputs:
