@@ -26,6 +26,7 @@ import type { AnalysisMode } from "../api/types";
 import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
+import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
 
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
@@ -339,6 +340,12 @@ export default function TopicDetailPage() {
         topicId={topic.id}
         activeRunId={activeRunId}
         onSelectRun={setActiveRunId}
+      />
+
+      <AnalysisOutputsPanel
+        topicId={topic.id}
+        runId={activeRunId}
+        isRunActive={false}
       />
 
       <LegacyAnalysisPanel

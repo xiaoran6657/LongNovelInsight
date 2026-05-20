@@ -184,6 +184,7 @@ export interface AnalysisOutput {
   id: string;
   topic_id: string;
   job_id: string | null;
+  run_id?: string | null;
   output_type: string;
   title: string;
   content_json: Record<string, unknown> | null;
