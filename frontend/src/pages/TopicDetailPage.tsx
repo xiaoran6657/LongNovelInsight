@@ -281,6 +281,7 @@ export default function TopicDetailPage() {
         hasDoc={hasDoc}
         isParsed={topic.status === "parsed"}
         boundProvider={!!boundProvider}
+        effectiveConfig={effectiveConfig}
         activeRunId={activeRunId}
         onActiveRunIdChange={setActiveRunId}
         onChangeMode={setAnalysisMode}

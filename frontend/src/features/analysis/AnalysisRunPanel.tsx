@@ -11,6 +11,8 @@ import AnalysisCostProjection from "./AnalysisCostProjection";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 import AnalysisStageProgress from "./AnalysisStageProgress";
+import EffectiveProviderConfigCard from "../provider/EffectiveProviderConfigCard";
+import type { EffectiveProviderConfig } from "../../api/types";
 
 interface Props {
   topicId: string;
@@ -21,6 +23,7 @@ interface Props {
   hasDoc: boolean;
   isParsed: boolean;
   boundProvider: boolean;
+  effectiveConfig: EffectiveProviderConfig | undefined;
   activeRunId: string | null;
   onActiveRunIdChange: (runId: string | null) => void;
   onChangeMode: (m: AnalysisMode) => void;
@@ -30,7 +33,7 @@ interface Props {
 export default function AnalysisRunPanel({
   topicId, meta, mode, limitChunks, range,
   hasDoc, isParsed, boundProvider,
-  activeRunId, onActiveRunIdChange,
+  effectiveConfig, activeRunId, onActiveRunIdChange,
   onChangeMode, onChangeLimitChunks,
 }: Props) {
   const [runError, setRunError] = useState("");
@@ -49,7 +52,8 @@ export default function AnalysisRunPanel({
   const previousRun = runsData?.runs?.[0];
   const hasPreviousRun = !!previousRun;
 
-  const canRun = boundProvider && isParsed && hasDoc;
+  const configReady = effectiveConfig?.is_ready ?? false;
+  const canRun = boundProvider && isParsed && hasDoc && configReady;
 
   function handleCreate() {
     if (mode === "full" && !showFullConfirm) {
@@ -94,6 +98,21 @@ export default function AnalysisRunPanel({
             {!boundProvider ? "Bind a provider first." :
              !hasDoc ? "Upload and parse a document first." :
              "Parse the document to enable analysis."}
+          </p>
+        </div>
+      )}
+
+      {boundProvider && (
+        <EffectiveProviderConfigCard config={effectiveConfig} />
+      )}
+
+      {boundProvider && !configReady && (
+        <div className="card" style={{ background: "#fff3e0", fontSize: "0.82rem" }}>
+          <p style={{ color: "#e65100", fontWeight: 600, marginBottom: "0.25rem" }}>
+            Provider config is incomplete.
+          </p>
+          <p className="text-dim">
+            Configure the provider above (model, API key, base URL) before running analysis.
           </p>
         </div>
       )}
