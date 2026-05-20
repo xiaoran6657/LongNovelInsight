@@ -1,4 +1,5 @@
 import type { ModelProvider, EffectiveProviderConfig, ProviderModelPreset } from "../../api/types";
+import TokenRangeSlider from "../../components/TokenRangeSlider";
 
 interface Props {
   providers: ModelProvider[];
@@ -24,16 +25,12 @@ interface Props {
   onEditTemp: (v: string) => void;
   onEditThinking: (v: string) => void;
   onEditParallel: (v: string) => void;
-  onStartMaxTokensChange: (dir: 1 | -1) => void;
-  onStopMaxTokensChange: () => void;
   onSaveConfig: () => void;
   onApplyPreset: (model: string, maxTok: number, temp: number, thinking: string, parallel: number) => void;
-  maxTokensWarning: (raw: string) => string | null;
 }
 
 export default function ProviderBindingPanel(props: Props) {
   const p = props;
-  const warning = p.maxTokensWarning(p.editMaxTokens);
 
   return (
     <div className="card">
@@ -95,12 +92,13 @@ export default function ProviderBindingPanel(props: Props) {
             <label>
               {p.configErrors.maxTokens && <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>}
               Max Tokens
-              <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-                <button onMouseDown={() => p.onStartMaxTokensChange(-1)} onMouseUp={p.onStopMaxTokensChange} onMouseLeave={p.onStopMaxTokensChange} tabIndex={-1} style={{ padding: "0 4px" }}>▼</button>
-                <input data-max-tokens-input type="text" value={p.editMaxTokens} onChange={(e) => { p.onEditMaxTokens(e.target.value); }} style={{ width: 60, textAlign: "center" }} />
-                <button onMouseDown={() => p.onStartMaxTokensChange(1)} onMouseUp={p.onStopMaxTokensChange} onMouseLeave={p.onStopMaxTokensChange} tabIndex={-1} style={{ padding: "0 4px" }}>▲</button>
-              </div>
-              {warning && <span style={{ color: "#f57f17", fontSize: "0.7rem" }}>{warning}</span>}
+              <TokenRangeSlider
+                value={Number(p.editMaxTokens) || 2048}
+                min={512}
+                max={16384}
+                recommendedValue={p.effectiveConfig?.max_output_tokens ?? undefined}
+                onChange={(v) => p.onEditMaxTokens(String(v))}
+              />
             </label>
             <label>
               Temperature

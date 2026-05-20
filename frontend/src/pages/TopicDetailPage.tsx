@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DocumentSummary } from "../api/types";
@@ -31,8 +31,6 @@ import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
   const queryClient = useQueryClient();
-  const maxTokensTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const maxTokensHoldRef = useRef(0);
   const [showChunkText, setShowChunkText] = useState(false);
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
@@ -91,50 +89,6 @@ export default function TopicDetailPage() {
         delete n[field];
         return n;
       });
-    }
-  }
-
-  function maxTokensWarning(raw: string): string | null {
-    const v = Number(raw);
-    if (!raw || isNaN(v)) return null;
-    if (v < 512) return null;
-    if (v < 1024)
-      return "Below 1024 — JSON output may be truncated for complex types like characters or events.";
-    if (v > 12288)
-      return "Above 12288 — unnecessary for structured extraction; consider lowering to reduce API cost.";
-    return null;
-  }
-
-  function clampTokens(v: number) {
-    return Math.max(512, Math.min(16384, v));
-  }
-
-  function startMaxTokensChange(direction: 1 | -1) {
-    const input = document.querySelector("[data-max-tokens-input]") as HTMLInputElement | null;
-    const read = (): number => {
-      const raw = input?.value || input?.placeholder || "2048";
-      const v = Number(raw);
-      return isNaN(v) ? 2048 : v;
-    };
-    const current = read();
-    setEditMaxTokens(String(clampTokens(current + direction)));
-    markDirty("maxTokens");
-    maxTokensHoldRef.current = Date.now();
-    maxTokensTimerRef.current = setInterval(() => {
-      const elapsed = Date.now() - maxTokensHoldRef.current;
-      const val = read();
-      let step = 1;
-      if (elapsed > 3000) step = 100;
-      else if (elapsed > 1000) step = 10;
-      setEditMaxTokens(String(clampTokens(val + direction * step)));
-      markDirty("maxTokens");
-    }, 60);
-  }
-
-  function stopMaxTokensChange() {
-    if (maxTokensTimerRef.current !== null) {
-      clearInterval(maxTokensTimerRef.current);
-      maxTokensTimerRef.current = null;
     }
   }
 
@@ -283,11 +237,8 @@ export default function TopicDetailPage() {
         onEditTemp={(v) => { setEditTemp(v); markDirty("temp"); }}
         onEditThinking={(v) => { setEditThinking(v); markDirty(); }}
         onEditParallel={(v) => { setEditParallel(v); markDirty("parallel"); }}
-        onStartMaxTokensChange={startMaxTokensChange}
-        onStopMaxTokensChange={stopMaxTokensChange}
         onSaveConfig={handleSaveConfig}
         onApplyPreset={applyPreset}
-        maxTokensWarning={maxTokensWarning}
       />
 
       <DocumentPanel
