@@ -24,6 +24,7 @@ export function useAnalysisRun(runId: string | null, topicId: string) {
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
       qc.invalidateQueries({ queryKey: ["outputs", topicId] });
+      qc.invalidateQueries({ queryKey: ["analysis-status", topicId] });
     },
   });
 

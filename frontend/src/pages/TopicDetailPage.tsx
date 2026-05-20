@@ -38,6 +38,14 @@ export default function TopicDetailPage() {
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
+  // Clear topic-scoped state when topic changes
+  useEffect(() => {
+    setActiveRunId(null);
+    setChunkRange({ mode: "chunk", start: null, end: null });
+    setAnalysisMode("preview");
+    setPreviewLimitChunks(3);
+  }, [topicId]);
+
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
   const [bindError, setBindError] = useState("");

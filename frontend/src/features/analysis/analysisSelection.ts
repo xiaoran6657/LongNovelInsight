@@ -60,6 +60,7 @@ export function estimateTokens(
     estimatedInputTokens: extractionInput,
     estimatedOutputTokens: extractionOutput,
     note: [
+      ...noteParts,
       `v2 staged pipeline: ~${selected} chunks × 1 extraction each`,
       `v0.1 would use ~${selected * typeCount} LLM calls; v0.2 uses ~${selected}`,
       `~${tokensPerChunk.toLocaleString()} tokens/chunk`,
