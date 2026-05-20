@@ -12,13 +12,16 @@ import {
 } from "../api/topics";
 import { listProviders, listProviderPresets } from "../api/providers";
 import { getCurrentDocument } from "../api/documents";
-import { listChapters, listChunks } from "../api/parse";
+import { listChapters, listChunks, getChunksMeta } from "../api/parse";
 import TopicHeader from "../features/topic/TopicHeader";
 import ProviderBindingPanel from "../features/topic/ProviderBindingPanel";
 import DocumentPanel from "../features/topic/DocumentPanel";
 import ParsePanel from "../features/topic/ParsePanel";
 import ChaptersPanel from "../features/topic/ChaptersPanel";
 import StoragePanel from "../features/topic/StoragePanel";
+import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
+import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
+import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
 import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 
 export default function TopicDetailPage() {
@@ -27,6 +30,7 @@ export default function TopicDetailPage() {
   const maxTokensTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const maxTokensHoldRef = useRef(0);
   const [showChunkText, setShowChunkText] = useState(false);
+  const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
 
   // Provider binding state
   const [bindProviderId, setBindProviderId] = useState("");
@@ -216,6 +220,12 @@ export default function TopicDetailPage() {
     enabled: !!topicId && hasDoc,
   });
 
+  const { data: chunksMeta } = useQuery({
+    queryKey: ["chunks-meta", topicId],
+    queryFn: () => getChunksMeta(topicId!),
+    enabled: !!topicId && hasDoc,
+  });
+
   const { data: chunkData } = useQuery({
     queryKey: ["chunks", topicId, showChunkText],
     queryFn: () => listChunks(topicId!, { include_text: showChunkText, limit: 20 }),
@@ -273,6 +283,10 @@ export default function TopicDetailPage() {
       />
 
       <ParsePanel topicId={topic.id} hasDocument={hasDoc} />
+      <ChunksMetaPanel topicId={topic.id} hasDoc={hasDoc} />
+      {chunksMeta && (
+        <ChunkRangeSelector meta={chunksMeta} value={chunkRange} onChange={setChunkRange} />
+      )}
       <ChaptersPanel chapters={chapterData?.chapters} />
 
       {showChunkText && chunks.length > 0 && (
