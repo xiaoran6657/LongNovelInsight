@@ -395,6 +395,32 @@ export interface FinalStageSummary {
   outputs: MergeOutputSummary[];
 }
 
+// POST /api/topics/{id}/analysis/runs response
+export interface AnalysisRunCreateSummary {
+  id: string;
+  topic_id: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  progress_total: number;
+}
+
+// GET /api/topics/{id}/analysis/runs list item
+export interface AnalysisRunListItem {
+  id: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  extraction_succeeded: number;
+  extraction_failed: number;
+  merge_succeeded: number;
+  merge_failed: number;
+  total_tokens: number;
+  model_used: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string | null;
+}
+
+// GET /api/analysis/runs/{id} full detail
 export interface AnalysisRun {
   id: string;
   topic_id: string;
@@ -416,7 +442,7 @@ export interface AnalysisRun {
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;
-  created_at: string | null;
+  created_at?: string | null;
 }
 
 export interface AnalysisRunDetail {
@@ -427,11 +453,11 @@ export interface AnalysisRunDetail {
 }
 
 export interface AnalysisRunListResponse {
-  runs: AnalysisRun[];
+  runs: AnalysisRunListItem[];
 }
 
 export interface CreateAnalysisRunResponse {
-  run: AnalysisRun;
+  run: AnalysisRunCreateSummary;
   status_url: string;
 }
 

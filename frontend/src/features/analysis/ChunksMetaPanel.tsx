@@ -46,6 +46,12 @@ function MetaDisplay({ data }: { data: ChunksMetaResponse }) {
 }
 
 export default function ChunksMetaPanel({ topicId, hasDoc }: Props) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["chunks-meta", topicId],
+    queryFn: () => getChunksMeta(topicId),
+    enabled: !!topicId && hasDoc,
+  });
+
   if (!hasDoc) {
     return (
       <div className="card">
@@ -54,12 +60,6 @@ export default function ChunksMetaPanel({ topicId, hasDoc }: Props) {
       </div>
     );
   }
-
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["chunks-meta", topicId],
-    queryFn: () => getChunksMeta(topicId),
-    enabled: !!topicId && hasDoc,
-  });
 
   if (isLoading) return <LoadingBlock text="Loading chunks meta..." />;
   if (isError || !data) {

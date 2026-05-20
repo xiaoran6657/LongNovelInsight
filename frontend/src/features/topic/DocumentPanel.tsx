@@ -19,17 +19,14 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const uploadMut = useMutation({
-    mutationFn: (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      return uploadDocument(topicId, form as unknown as File);
-    },
+    mutationFn: (file: File) => uploadDocument(topicId, file),
     onSuccess: () => {
       setUploadError("");
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       queryClient.invalidateQueries({ queryKey: ["document", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
     },
     onError: (e: Error) => setUploadError(e.message),
   });

@@ -16,8 +16,13 @@ export default function ParsePanel({ topicId, hasDocument }: Props) {
     mutationFn: (force?: boolean) => parseTopic(topicId, force ?? false),
     onSuccess: () => {
       setParseError("");
+      queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
       queryClient.invalidateQueries({ queryKey: ["chapters", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["chunks", topicId] });
       queryClient.invalidateQueries({ queryKey: ["chunks-meta", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["storage", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["document", topicId] });
     },
     onError: (e: Error) => setParseError(e.message),
   });

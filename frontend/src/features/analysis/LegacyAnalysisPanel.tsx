@@ -61,6 +61,7 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
   const [runError, setRunError] = useState("");
   const [outputTypeFilter, setOutputTypeFilter] = useState("");
   const [retryingType, setRetryingType] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState("");
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
 
   const { data: chunksMeta } = useQuery({
@@ -84,15 +85,8 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
     refetchInterval: 3000,
   });
 
-  const summaryKey = `analysis-summary-${topicId}`;
-  const runningKey = `analysis-running-${topicId}`;
-
-  function setRunning() { sessionStorage.setItem(runningKey, "1"); }
-  function clearRunning() { sessionStorage.removeItem(runningKey); }
-
   const runAnalysisMut = useMutation({
     mutationFn: async () => {
-      setRunning();
       const start = Date.now();
       await runAnalysisAsync(topicId, limitChunks);
       let done = false;
@@ -129,18 +123,15 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
       for (const t of ALL_TYPES) { if (!typeStats[t]) typeStats[t] = { runs: 0, inputTokens: 0, outputTokens: 0, confidence: null }; }
       const summary: RunSummary = { elapsedSec, estimatedInputTokens: realInput, estimatedOutputTokens: realOutput, completedTypes: completed, typeStats };
       setRunSummary(summary);
-      sessionStorage.setItem(summaryKey, JSON.stringify(summary));
       return data;
     },
     onSuccess: () => {
-      clearRunning();
       qc.invalidateQueries({ queryKey: ["outputs", topicId] });
       qc.invalidateQueries({ queryKey: ["topic", topicId] });
       qc.invalidateQueries({ queryKey: ["analysis-status", topicId] });
       setRunError("");
     },
     onError: (err: Error) => {
-      clearRunning();
       setRunSummary(null);
       setRunError(err.message);
     },
@@ -160,6 +151,11 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["outputs", topicId] });
       setRetryingType(null);
+      setRetryError("");
+    },
+    onError: (err: Error) => {
+      setRetryingType(null);
+      setRetryError(err.message);
     },
   });
 
@@ -204,6 +200,7 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
             </p>
           )}
           {runError && <p className="field-error">{runError}</p>}
+          {retryError && <p className="field-error" style={{ marginTop: "0.25rem" }}>{retryError}</p>}
         </div>
       )}
 
@@ -246,10 +243,10 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
             <div key={o.id} style={{ marginBottom: "1rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <strong>{o.output_type}</strong>
-                <button onClick={() => retrySingleMut.mutate({ outputType: o.output_type, deepen: false })}
+                <button onClick={() => { setRetryingType(o.output_type); setRetryError(""); retrySingleMut.mutate({ outputType: o.output_type, deepen: false }); }}
                   disabled={retryingType === o.output_type}
                   style={{ fontSize: "0.75rem", padding: "0.1em 0.4em" }}>
-                  Retry
+                  {retryingType === o.output_type ? "Retrying..." : "Retry"}
                 </button>
               </div>
               <AnalysisOutputCard output={o} />
