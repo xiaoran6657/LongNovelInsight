@@ -82,6 +82,27 @@ class AnalysisOutputRead(SQLModel):
         )
 
 
+def resolve_content_json(session, content_json: str) -> str:
+    """Resolve content_json to plain text for search/retrieval.
+
+    If content_json is an artifact stub, read the real content from disk.
+    Otherwise return as-is. Never raises — falls back to original string.
+    """
+    try:
+        stub = json.loads(content_json)
+        if isinstance(stub, dict) and stub.get("_artifact") and session is not None:
+            owner_table = stub.get("owner_table", "analysis_output")
+            owner_id = stub.get("owner_id", "")
+            from services.artifact_storage_service import read_json_artifact
+
+            resolved = read_json_artifact(session, owner_table, owner_id)
+            if resolved is not None:
+                return resolved
+    except (json.JSONDecodeError, TypeError, Exception):
+        pass
+    return content_json
+
+
 def _safe_json_parse(
     value: str,
     session=None,

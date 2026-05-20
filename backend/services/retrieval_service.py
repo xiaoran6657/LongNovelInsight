@@ -124,11 +124,14 @@ def retrieve_analysis(
 
     outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
 
+    from models.analysis_output import resolve_content_json
+
     results = []
     for o in outputs:
+        resolved_content = resolve_content_json(session, o.content_json)
         score = 0
         lower_query = query.lower()
-        lower_content = o.content_json.lower()
+        lower_content = resolved_content.lower()
         lower_title = o.title.lower()
         lower_type = o.output_type.lower()
 
@@ -144,7 +147,7 @@ def retrieve_analysis(
             score += 4
 
         if score > 0:
-            excerpt = _make_excerpt(o.content_json, query)
+            excerpt = _make_excerpt(resolved_content, query)
             results.append(
                 {
                     "output_id": o.id,

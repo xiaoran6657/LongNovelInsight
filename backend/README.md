@@ -312,7 +312,7 @@ All tests mock LLM calls. No real external API calls in CI.
 - **Per-type token budgets**: Each of the 6 analysis types has a tuned `max_tokens` limit (overview: 1024, characters: 3072, relations: 2048, events: 3072, causality: 2048, themes: 1536). Overridable by effective config.
 - **Retry policy**: Per-type retries (max 2) with exponential backoff for 429/5xx/timeout/rate-limit errors. JSON parse failures retry once with doubled max_tokens.
 - **Thinking mode**: DeepSeek-compatible `extra_body={"thinking": {"type": "enabled/disabled"}}`. Only sent when provider preset supports thinking. Non-thinking (disabled) recommended for structured extraction — faster, cheaper, and temperature has effect.
-- **No file-per-chunk**: v0.1 stores chunk text in SQLite columns. v0.2 adds hybrid storage: large analysis JSON (>64KB) stored on disk under `data/topics/{id}/artifacts/` with `analysis_artifact` table tracking; small JSON stays inline in SQLite.
+- **No file-per-chunk**: v0.1 stores chunk text in SQLite columns. v0.2 adds hybrid storage for merge/final analysis JSON: large content (>64KB) stored on disk under `data/topics/{id}/artifacts/` with `analysis_artifact` table tracking; small JSON stays inline in SQLite. LocalExtraction content remains inline by design.
 - **Batch-map-merge**: For novels with many chunks, analysis uses a two-stage pipeline: partial analysis per batch, then multi-level merge.
 - **api_key safety**: `ModelProvider.masked_api_key` @property; all API responses exclude raw `api_key`; errors use `mask_api_key()` before logging.
 - **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()` instead of string `startswith`.

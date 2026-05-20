@@ -301,3 +301,67 @@ def test_chinese_stopwords_dont_score(client):
         results = retrieval_service.retrieve_chunks(topic_id, "的了是在", session)
         # Stopwords alone should yield 0 score
         assert all(r["score"] == 0 for r in results) or len(results) == 0
+
+
+def test_retrieval_searches_resolved_artifact_content(engine):
+    """retrieve_relevant_chunks should search resolved artifact, not stub."""
+    import json
+
+    from sqlmodel import Session
+
+    from models.analysis_output import AnalysisOutput
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.artifact_storage_service import (
+        ARTIFACT_THRESHOLD_BYTES,
+        maybe_store_large_json,
+    )
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="RetrievalArt P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="RetrievalArt", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.commit()
+        tid = topic.id
+
+    keyword = "UNIQUE_ARTIFACT_KEYWORD_98765"
+    large = json.dumps({"data": "x" * ARTIFACT_THRESHOLD_BYTES, "keyword": keyword})
+
+    with Session(engine) as session:
+        stored = maybe_store_large_json(
+            session,
+            tid,
+            None,
+            "final_output",
+            "analysis_output",
+            "retrieval-art-1",
+            large,
+        )
+        session.add(
+            AnalysisOutput(
+                topic_id=tid,
+                run_id=None,
+                output_type="characters",
+                title="Test",
+                content_json=stored,
+                source_chunk_ids="[]",
+                evidence_quotes="[]",
+                confidence=0.9,
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        results = retrieval_service.retrieve_analysis(tid, keyword, session)
+        assert len(results) > 0, "Should find artifact-backed output by keyword"
+        assert results[0]["score"] >= 5
+        assert "characters" == results[0]["output_type"]

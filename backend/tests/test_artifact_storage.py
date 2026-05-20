@@ -233,3 +233,79 @@ def test_delete_artifacts_for_topic(engine):
             __import__("sqlmodel").select(AnalysisArtifact).where(AnalysisArtifact.topic_id == tid)
         ).all()
         assert len(rows) == 0
+
+
+def test_large_to_large_rewrite_keeps_one_row(engine):
+    """Same owner large → large rewrite should keep only one artifact row."""
+    with Session(engine) as session:
+        tid = _setup_topic(session)
+        session.commit()
+
+    large1 = json.dumps({"data": "a" * ARTIFACT_THRESHOLD_BYTES})
+    large2 = json.dumps({"data": "b" * ARTIFACT_THRESHOLD_BYTES})
+
+    with Session(engine) as session:
+        maybe_store_large_json(session, tid, None, "final_output", "ao", "rewrite-1", large1)
+        session.commit()
+
+    with Session(engine) as session:
+        rows = session.exec(
+            __import__("sqlmodel")
+            .select(AnalysisArtifact)
+            .where(AnalysisArtifact.owner_id == "rewrite-1")
+        ).all()
+        assert len(rows) == 1
+
+    with Session(engine) as session:
+        maybe_store_large_json(session, tid, None, "final_output", "ao", "rewrite-1", large2)
+        session.commit()
+
+    with Session(engine) as session:
+        rows = session.exec(
+            __import__("sqlmodel")
+            .select(AnalysisArtifact)
+            .where(AnalysisArtifact.owner_id == "rewrite-1")
+        ).all()
+        assert len(rows) == 1
+        abs_path = config.DATA_DIR.resolve() / rows[0].storage_path
+        content = abs_path.read_text(encoding="utf-8")
+        assert "b" * ARTIFACT_THRESHOLD_BYTES in content
+
+
+def test_large_to_small_cleans_artifact(engine):
+    """Large → small rewrite for same owner should delete old artifact."""
+    with Session(engine) as session:
+        tid = _setup_topic(session)
+        session.commit()
+
+    large = json.dumps({"data": "x" * ARTIFACT_THRESHOLD_BYTES})
+
+    with Session(engine) as session:
+        maybe_store_large_json(session, tid, None, "merge_characters", "ao", "ls-1", large)
+        session.commit()
+
+    with Session(engine) as session:
+        rows = session.exec(
+            __import__("sqlmodel")
+            .select(AnalysisArtifact)
+            .where(AnalysisArtifact.owner_id == "ls-1")
+        ).all()
+        assert len(rows) == 1
+        old_path = config.DATA_DIR.resolve() / rows[0].storage_path
+        assert old_path.exists()
+
+    small = json.dumps({"small": True})
+    with Session(engine) as session:
+        result = maybe_store_large_json(session, tid, None, "merge_characters", "ao", "ls-1", small)
+        assert "small" in result
+        assert "_artifact" not in result
+        session.commit()
+
+    with Session(engine) as session:
+        rows = session.exec(
+            __import__("sqlmodel")
+            .select(AnalysisArtifact)
+            .where(AnalysisArtifact.owner_id == "ls-1")
+        ).all()
+        assert len(rows) == 0
+        assert not old_path.exists()

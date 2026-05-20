@@ -130,11 +130,7 @@ def maybe_store_large_json(
     json_str: str,
 ) -> str:
     """Store large JSON as artifact, return empty string. Small JSON returns json_str unchanged."""
-    size = len(json_str.encode("utf-8"))
-    if size <= ARTIFACT_THRESHOLD_BYTES:
-        return json_str
-
-    # Delete old artifact for same owner before writing new one (idempotent upsert)
+    # Delete old artifact for same owner before deciding inline vs artifact
     old = session.exec(
         select(AnalysisArtifact).where(
             AnalysisArtifact.owner_table == owner_table,
@@ -146,6 +142,10 @@ def maybe_store_large_json(
         if abs_path.exists():
             abs_path.unlink()
         session.delete(o)
+
+    size = len(json_str.encode("utf-8"))
+    if size <= ARTIFACT_THRESHOLD_BYTES:
+        return json_str
 
     artifact = write_json_artifact(
         topic_id=topic_id,

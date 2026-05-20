@@ -12,7 +12,7 @@ Backend v0.2 is complete (Steps 1–14). The frontend has not yet been updated f
 - **8 atom types**: characters, events, relations, causal links, theme signals, worldbuilding, foreshadowing, open questions — all with stable IDs, evidence quotes, and source tracking.
 - **Analysis modes**: `preview`, `range`, `full`, `incremental` — flexible chunk selection.
 - **Retry & resume**: Failed chunks can be retried. Interrupted runs can be resumed.
-- **Hybrid storage**: Large analysis JSON is stored on disk (under `data/topics/{id}/artifacts/`); small JSON stays inline in SQLite.
+- **Hybrid storage**: Large merge/final analysis JSON is stored on disk (under `data/topics/{id}/artifacts/`); small JSON stays inline in SQLite. LocalExtraction stays inline.
 - **Active-run guard**: Prevents duplicate concurrent analysis runs for the same Topic.
 - **Legacy bridge**: Existing v0.1 endpoints (`/analysis/run`, `/analysis/outputs`) still work. `pipeline=v2` parameter on legacy endpoints delegates to v2.
 

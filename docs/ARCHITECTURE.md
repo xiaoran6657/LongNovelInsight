@@ -273,8 +273,8 @@ Existing tables enhanced: `analysis_output.run_id` (nullable FK to analysis_run)
 
 ### v0.2 Storage Strategy
 
-- SQLite: all structured data + small analysis JSON (≤64KB)
-- Disk (`data/topics/{id}/artifacts/`): large analysis JSON (>64KB)
+- SQLite: all structured data + small analysis JSON (≤64KB) + all LocalExtraction content
+- Disk (`data/topics/{id}/artifacts/`): large merge/final AnalysisOutput JSON (>64KB)
 - Artifacts tracked in `analysis_artifact` table with path/size/SHA256
 - Cascade cleanup: Topic/Document deletion removes all artifacts
 
