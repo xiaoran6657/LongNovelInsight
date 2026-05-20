@@ -590,18 +590,37 @@ def run_single_output_type(
 
 
 def get_analysis_outputs(
-    topic_id: str, session: Session, output_type: str | None = None
+    topic_id: str,
+    session: Session,
+    output_type: str | None = None,
+    run_id: str | None = None,
+    latest_only: bool = False,
 ) -> list[AnalysisOutput]:
     stmt = select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
     if output_type:
         stmt = stmt.where(AnalysisOutput.output_type == output_type)
-    return list(
-        session.exec(stmt.order_by(AnalysisOutput.output_type, AnalysisOutput.created_at)).all()
-    )
+    if run_id:
+        stmt = stmt.where(AnalysisOutput.run_id == run_id)
+    stmt = stmt.order_by(AnalysisOutput.output_type, AnalysisOutput.created_at.desc())
+    outputs = list(session.exec(stmt).all())
+
+    if latest_only:
+        seen: set[str] = set()
+        filtered = []
+        for o in outputs:
+            if o.output_type not in seen:
+                seen.add(o.output_type)
+                filtered.append(o)
+        return filtered
+
+    return outputs
 
 
-def delete_analysis_outputs(topic_id: str, session: Session) -> int:
-    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
+def delete_analysis_outputs(topic_id: str, session: Session, run_id: str | None = None) -> int:
+    stmt = select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
+    if run_id:
+        stmt = stmt.where(AnalysisOutput.run_id == run_id)
+    outputs = session.exec(stmt).all()
     count = len(outputs)
     for o in outputs:
         session.delete(o)

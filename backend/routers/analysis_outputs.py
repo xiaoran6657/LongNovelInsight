@@ -24,9 +24,46 @@ def _check_topic(topic_id: str, session: Session) -> Topic:
 def run_analysis(
     topic_id: str,
     limit_chunks: int = 5,
+    pipeline: str = "v1",
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
+
+    if pipeline == "v2":
+        from services import analysis_run_service as v2_service
+
+        try:
+            run = v2_service.create_analysis_run(
+                session,
+                topic_id,
+                mode="preview",
+                limit_chunks=limit_chunks,
+            )
+        except ValueError as e:
+            msg = str(e)
+            conflict_keywords = ("no provider", "no chunks", "not parsed", "parse document")
+            status = 409 if any(kw in msg.lower() for kw in conflict_keywords) else 422
+            raise HTTPException(status_code=status, detail=msg)
+
+        v2_service.start_analysis_run(run.id)
+
+        return {
+            "pipeline": "v2",
+            "run": {
+                "id": run.id,
+                "topic_id": run.topic_id,
+                "mode": run.mode,
+                "status": run.status,
+                "progress_total": run.progress_total,
+            },
+            "status_url": f"/api/analysis/runs/{run.id}",
+        }
+
+    if pipeline not in ("v1",):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid pipeline: {pipeline}. Must be v1 or v2",
+        )
 
     if not analysis_service.acquire_topic_analysis_lock(topic_id):
         raise HTTPException(
@@ -50,6 +87,7 @@ def run_analysis(
         analysis_service.release_topic_analysis_lock(topic_id)
 
     return {
+        "pipeline": "v1",
         "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
         "count": len(outputs),
     }
@@ -160,10 +198,14 @@ def run_single_type_analysis(
 def get_analysis_outputs(
     topic_id: str,
     output_type: str | None = None,
+    run_id: str | None = None,
+    latest_only: bool = False,
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
-    outputs = analysis_service.get_analysis_outputs(topic_id, session, output_type)
+    outputs = analysis_service.get_analysis_outputs(
+        topic_id, session, output_type, run_id=run_id, latest_only=latest_only
+    )
     return {
         "outputs": [AnalysisOutputRead.from_orm_with_json(o).model_dump() for o in outputs],
         "count": len(outputs),
@@ -173,8 +215,9 @@ def get_analysis_outputs(
 @router.delete("/outputs")
 def delete_analysis_outputs(
     topic_id: str,
+    run_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
-    count = analysis_service.delete_analysis_outputs(topic_id, session)
+    count = analysis_service.delete_analysis_outputs(topic_id, session, run_id=run_id)
     return {"deleted": True, "count": count}

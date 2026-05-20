@@ -598,3 +598,241 @@ def test_late_character_appears_in_output(client):
         content = json.dumps(char_outputs[0].get("content_json", {}))
         # At minimum we have outputs — batch-merge completed without errors
         assert len(outputs_resp.json()["outputs"]) >= 1
+
+
+# ── v0.2 Step 10: Legacy compatibility tests ──
+
+
+def test_legacy_run_with_pipeline_v2(client):
+    """POST /analysis/run?pipeline=v2 creates a v2 AnalysisRun."""
+    from io import BytesIO
+
+    # Setup: provider + topic + document + parse
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "LegacyV2 P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "LegacyV2 Topic"})
+    tid = r.json()["id"]
+    client.put(
+        f"/api/topics/{tid}/provider-config",
+        json={"provider_id": prov["id"]},
+    )
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{tid}/analysis/run?pipeline=v2&limit_chunks=1")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["pipeline"] == "v2"
+        assert "run" in data
+        assert "status_url" in data
+        assert data["run"]["mode"] == "preview"
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_legacy_run_pipeline_invalid_422(client):
+    """POST /analysis/run?pipeline=invalid returns 422."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "BadPipe P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "BadPipe Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    r = client.post(f"/api/topics/{tid}/analysis/run?pipeline=v3")
+    assert r.status_code == 422
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_outputs_run_id_filter(client):
+    """GET /analysis/outputs?run_id=X filters outputs by v2 run."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "OutFilter P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "OutFilter Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{tid}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    # Filter by run_id
+    r = client.get(f"/api/topics/{tid}/analysis/outputs?run_id={run_id}")
+    assert r.status_code == 200
+    data = r.json()
+    # May be empty since run didn't actually execute, but shouldn't error
+    assert "outputs" in data
+
+    # Invalid run_id should not error
+    r = client.get(f"/api/topics/{tid}/analysis/outputs?run_id=nonexistent")
+    assert r.status_code == 200
+    assert r.json()["count"] == 0
+
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_outputs_latest_only(client):
+    """GET /analysis/outputs?latest_only=true returns one per output_type."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "Latest P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "Latest Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
+        client.post(f"/api/topics/{tid}/analysis/run?limit_chunks=5")
+
+    r = client.get(f"/api/topics/{tid}/analysis/outputs?latest_only=true")
+    assert r.status_code == 200
+    data = r.json()
+    types_seen = [o["output_type"] for o in data["outputs"]]
+    # Each type appears at most once
+    assert len(types_seen) == len(set(types_seen))
+
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_delete_outputs_by_run_id(client):
+    """DELETE /analysis/outputs?run_id=X deletes only that run's outputs."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "DelRun P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "DelRun Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    # Create some v1 outputs
+    with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
+        client.post(f"/api/topics/{tid}/analysis/run?limit_chunks=5")
+
+    total_before = client.get(f"/api/topics/{tid}/analysis/outputs").json()["count"]
+    assert total_before >= 1
+
+    # Delete with nonexistent run_id — should delete nothing
+    r = client.delete(f"/api/topics/{tid}/analysis/outputs?run_id=nonexistent")
+    assert r.status_code == 200
+    total_after = client.get(f"/api/topics/{tid}/analysis/outputs").json()["count"]
+    assert total_after == total_before  # Nothing deleted
+
+    # Delete all (no run_id) — should work as before
+    r = client.delete(f"/api/topics/{tid}/analysis/outputs")
+    assert r.status_code == 200
+    assert r.json()["count"] == total_before
+    assert client.get(f"/api/topics/{tid}/analysis/outputs").json()["count"] == 0
+
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_legacy_run_v1_still_works(client):
+    """Original v1 analysis run still works and returns pipeline=v1."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "StillV1 P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "StillV1 Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
+        r = client.post(f"/api/topics/{tid}/analysis/run?limit_chunks=5")
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("pipeline") == "v1"
+        assert "outputs" in data
+        assert data["count"] >= 1
+
+    client.delete(f"/api/topics/{tid}")
