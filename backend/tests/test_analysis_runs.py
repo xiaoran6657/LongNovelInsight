@@ -155,13 +155,18 @@ def test_create_run_invalid_range_422(client):
 
 def test_list_runs(client):
     topic_id = _setup_topic(client)
+    topic_id2 = _setup_topic(client)
     with patch("services.analysis_run_service._execute_run"):
         client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
-        client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "full"})
+        client.post(f"/api/topics/{topic_id2}/analysis/runs", json={"mode": "full"})
     r = client.get(f"/api/topics/{topic_id}/analysis/runs")
     assert r.status_code == 200
-    assert len(r.json()["runs"]) >= 2
+    assert len(r.json()["runs"]) >= 1
+    r2 = client.get(f"/api/topics/{topic_id2}/analysis/runs")
+    assert r2.status_code == 200
+    assert len(r2.json()["runs"]) >= 1
     client.delete(f"/api/topics/{topic_id}")
+    client.delete(f"/api/topics/{topic_id2}")
 
 
 def test_get_run_status(client):
@@ -1306,3 +1311,99 @@ def test_legacy_status_includes_latest_v2_run(client):
     if data["latest_v2_run"]:
         assert data["latest_v2_run"]["mode"] == "preview"
     client.delete(f"/api/topics/{topic_id}")
+
+
+def test_create_run_while_active_returns_409(client):
+    """Creating a second v2 run while one is pending should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        assert r.status_code == 201
+        # Second run should be rejected
+        r2 = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        assert r2.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_legacy_pipeline_v2_active_run_409(client):
+    """Legacy pipeline=v2 should also be blocked by active-run guard."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        assert r.status_code == 201
+    r2 = client.post(f"/api/topics/{topic_id}/analysis/run?pipeline=v2")
+    assert r2.status_code == 409
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_create_run_after_completed_allowed(engine):
+    """A completed/failed/cancelled run should not block a new one."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="CompleteBlock P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="CompleteBlock", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockExtractionResult(),
+    ):
+        with Session(engine) as session:
+            run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+            run_id = run.id
+        _execute_run(run_id, engine=engine)
+
+    # After completed, a new run should be allowed
+    with Session(engine) as session:
+        run2 = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        assert run2.id != run_id

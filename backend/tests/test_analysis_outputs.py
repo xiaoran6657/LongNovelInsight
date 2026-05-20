@@ -836,3 +836,75 @@ def test_legacy_run_v1_still_works(client):
         assert data["count"] >= 1
 
     client.delete(f"/api/topics/{tid}")
+
+
+def test_merge_outputs_excluded_by_default(client):
+    """Default GET /outputs should not return merge_* intermediate outputs."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "MergeHide P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "MergeHide Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
+        client.post(f"/api/topics/{tid}/analysis/run?limit_chunks=5")
+
+    r = client.get(f"/api/topics/{tid}/analysis/outputs")
+    assert r.status_code == 200
+    for o in r.json()["outputs"]:
+        assert not o["output_type"].startswith("merge_")
+
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_latest_only_excludes_merge_outputs(client):
+    """latest_only=true should exclude merge_* intermediates."""
+    from io import BytesIO
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "LatestNoMerge P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "LatestNoMerge Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with patch(PATCH_PATH, side_effect=_mock_chat_side_effect):
+        client.post(f"/api/topics/{tid}/analysis/run?limit_chunks=5")
+
+    r = client.get(f"/api/topics/{tid}/analysis/outputs?latest_only=true")
+    assert r.status_code == 200
+    for o in r.json()["outputs"]:
+        assert not o["output_type"].startswith("merge_")
+
+    client.delete(f"/api/topics/{tid}")

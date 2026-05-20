@@ -87,7 +87,13 @@ def create_run(
     except ValueError as e:
         msg = str(e)
         # 409 for state conflicts (no provider, not parsed, etc.)
-        conflict_keywords = ("no provider", "no chunks", "not parsed", "parse document")
+        conflict_keywords = (
+            "no provider",
+            "no chunks",
+            "not parsed",
+            "parse document",
+            "already running",
+        )
         if any(kw in msg.lower() for kw in conflict_keywords):
             raise HTTPException(status_code=409, detail=msg)
         # 422 for invalid input (mode, range, body)

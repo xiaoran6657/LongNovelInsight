@@ -1,12 +1,15 @@
 from sqlmodel import Session, select
 
 from models.analysis_output import AnalysisOutput
+from models.analysis_run import AnalysisRun
 from models.chapter import Chapter
 from models.chat import ChatMessage, ChatSession
 from models.chunk import Chunk
 from models.document import Document
+from models.extracted_atom import ExtractedAtom
 from models.job import Job
 from models.job_item import JobItem
+from models.local_extraction import LocalExtraction
 from models.topic import Topic
 from services import storage
 
@@ -43,6 +46,19 @@ def delete_topic(topic_id: str, session: Session) -> dict:
         for m in messages:
             session.delete(m)
         session.delete(s)
+
+    # Delete v2 analysis artifacts: atoms → extractions → runs → outputs
+    atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
+    for a in atoms:
+        session.delete(a)
+    extractions = session.exec(
+        select(LocalExtraction).where(LocalExtraction.topic_id == topic_id)
+    ).all()
+    for e in extractions:
+        session.delete(e)
+    runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
+    for r in runs:
+        session.delete(r)
 
     # Delete analysis outputs
     outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
@@ -99,5 +115,7 @@ def get_topic_analysis_summary(topic_id: str, session: Session) -> dict:
         return {}
     summary: dict = {}
     for o in outputs:
+        if o.output_type.startswith("merge_"):
+            continue
         summary[o.output_type] = "completed"
     return summary

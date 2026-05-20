@@ -599,6 +599,9 @@ def get_analysis_outputs(
     stmt = select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
     if output_type:
         stmt = stmt.where(AnalysisOutput.output_type == output_type)
+    else:
+        # Exclude v2 merge_* intermediates from default listings
+        stmt = stmt.where(AnalysisOutput.output_type.not_like("merge_%"))  # type: ignore[attr-defined]
     if run_id:
         stmt = stmt.where(AnalysisOutput.run_id == run_id)
     stmt = stmt.order_by(AnalysisOutput.output_type, AnalysisOutput.created_at.desc())

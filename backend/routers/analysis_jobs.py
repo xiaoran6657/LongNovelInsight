@@ -86,6 +86,8 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
     outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
     output_counts: dict[str, int] = {}
     for o in outputs:
+        if o.output_type.startswith("merge_"):
+            continue
         output_counts[o.output_type] = output_counts.get(o.output_type, 0) + 1
 
     # Latest v2 AnalysisRun summary

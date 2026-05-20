@@ -41,7 +41,13 @@ def run_analysis(
             )
         except ValueError as e:
             msg = str(e)
-            conflict_keywords = ("no provider", "no chunks", "not parsed", "parse document")
+            conflict_keywords = (
+                "no provider",
+                "no chunks",
+                "not parsed",
+                "parse document",
+                "already running",
+            )
             status = 409 if any(kw in msg.lower() for kw in conflict_keywords) else 422
             raise HTTPException(status_code=status, detail=msg)
 

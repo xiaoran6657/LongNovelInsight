@@ -283,3 +283,116 @@ def _mock_topic_analysis(messages, model, temperature, max_tokens, response_form
         model="test",
         usage={},
     )
+
+
+def test_delete_topic_cascades_v2_data(engine):
+    """Deleting a topic should cascade-delete v2 AnalysisRun/LocalExtraction/ExtractedAtom."""
+    from sqlmodel import Session, select
+
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.extracted_atom import ExtractedAtom
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.topic_service import delete_topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="CascadeV2 P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="CascadeV2", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
+        )
+        session.add(ck)
+        session.flush()
+        ck_id = ck.id
+        session.commit()
+        tid = topic.id
+
+    # Create v2 run + extraction + atom
+    with Session(engine) as session:
+        run = AnalysisRun(topic_id=tid, mode="preview")
+        session.add(run)
+        session.flush()
+        rid = run.id
+        ext = LocalExtraction(run_id=rid, topic_id=tid, chunk_id=ck_id, status="succeeded")
+        session.add(ext)
+        session.flush()
+        atom = ExtractedAtom(
+            run_id=rid,
+            topic_id=tid,
+            local_extraction_id=ext.id,
+            chunk_id=ck_id,
+            atom_type="character",
+            stable_id="char_x",
+        )
+        session.add(atom)
+        session.commit()
+
+    # Verify v2 rows exist
+    with Session(engine) as session:
+        assert len(session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == tid)).all()) == 1
+        assert (
+            len(session.exec(select(LocalExtraction).where(LocalExtraction.topic_id == tid)).all())
+            == 1
+        )
+        assert (
+            len(session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == tid)).all()) == 1
+        )
+
+    # Delete topic
+    with Session(engine) as session:
+        delete_topic(tid, session)
+
+    # Verify v2 rows are gone
+    with Session(engine) as session:
+        assert len(session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == tid)).all()) == 0
+        assert (
+            len(session.exec(select(LocalExtraction).where(LocalExtraction.topic_id == tid)).all())
+            == 0
+        )
+        assert (
+            len(session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == tid)).all()) == 0
+        )

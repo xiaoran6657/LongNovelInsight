@@ -48,7 +48,10 @@ def _create_atom(
         atom_type=atom_type,
         stable_id=stable_id,
         title=title or content.get("title"),
-        canonical_name=canonical_name or content.get("name") or content.get("canonical_name"),
+        canonical_name=canonical_name
+        or content.get("name")
+        or content.get("canonical_name")
+        or content.get("theme_name"),
         content_json=json.dumps(content, ensure_ascii=False),
         source_chunk_ids=json.dumps([chunk_id], ensure_ascii=False),
         evidence_quotes=json.dumps([content.get("evidence", "test")], ensure_ascii=False),
@@ -122,7 +125,7 @@ def _setup_run(engine):
 
 
 class TestBuildFinalCharacters:
-    def test_creates_analysis_output_with_correct_type(self, engine):
+    def test_creates_output_with_characters_key(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -137,10 +140,7 @@ class TestBuildFinalCharacters:
             )
             session.commit()
             merge_characters(session, rid)
-
-            summary = build_final_characters(session, rid)
-            assert summary.output_type == "characters"
-            assert summary.item_count == 1
+            build_final_characters(session, rid)
 
         with Session(engine) as session:
             out = session.exec(
@@ -154,8 +154,9 @@ class TestBuildFinalCharacters:
             assert out is not None
             content = json.loads(out.content_json)
             assert content["analysis_type"] == "characters"
-            assert len(content["results"]) == 1
-            assert content["results"][0]["name"] == "张三"
+            assert "characters" in content
+            assert len(content["characters"]) == 1
+            assert content["characters"][0]["name"] == "张三"
 
     def test_has_evidence_and_source_and_confidence(self, engine):
         tid, rid, cid = _setup_run(engine)
@@ -198,7 +199,7 @@ class TestBuildFinalCharacters:
 
 
 class TestBuildFinalEvents:
-    def test_creates_output(self, engine):
+    def test_creates_output_with_events_key(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -226,11 +227,13 @@ class TestBuildFinalEvents:
             ).first()
             assert out is not None
             content = json.loads(out.content_json)
-            assert content["results"][0]["title"] == "Battle"
+            assert "events" in content
+            assert content["events"][0]["title"] == "Battle"
+            assert "event_id" in content["events"][0]
 
 
 class TestBuildFinalRelations:
-    def test_creates_output(self, engine):
+    def test_creates_output_with_relationships_key(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -258,11 +261,14 @@ class TestBuildFinalRelations:
             ).first()
             assert out is not None
             content = json.loads(out.content_json)
-            assert content["results"][0]["relationship_type"] == "ally"
+            assert "relationships" in content
+            item = content["relationships"][0]
+            assert item["relationship_type"] == "ally"
+            assert item["relation_type"] == "ally"
 
 
 class TestBuildFinalCausality:
-    def test_creates_output_with_resolved_flag(self, engine):
+    def test_creates_output_with_causal_chains_key(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -310,11 +316,12 @@ class TestBuildFinalCausality:
             ).first()
             assert out is not None
             content = json.loads(out.content_json)
-            assert content["results"][0]["resolved"] is True
+            assert "causal_chains" in content
+            assert content["causal_chains"][0]["resolved"] is True
 
 
 class TestBuildFinalThemes:
-    def test_creates_output(self, engine):
+    def test_creates_output_with_themes_key(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -341,10 +348,15 @@ class TestBuildFinalThemes:
                 )
             ).first()
             assert out is not None
+            content = json.loads(out.content_json)
+            assert "themes" in content
+            item = content["themes"][0]
+            assert item["theme_name"] == "复仇"
+            assert item["theme"] == "复仇"
 
 
 class TestBuildFinalOverview:
-    def test_creates_output(self, engine):
+    def test_creates_output_with_summary(self, engine):
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
@@ -382,6 +394,7 @@ class TestBuildFinalOverview:
             ).first()
             assert out is not None
             content = json.loads(out.content_json)
+            assert "summary" in content
             assert content["character_count"] == 1
             assert content["event_count"] == 1
 
@@ -403,7 +416,6 @@ class TestRunFinalOutputStage:
             session.commit()
             merge_characters(session, rid)
             merge_overview(session, rid)
-
             summaries = run_final_output_stage(
                 session, rid, requested_types=["overview", "characters"]
             )

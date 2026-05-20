@@ -1,8 +1,8 @@
-"""Convert v0.2 merge results into v0.1-compatible final AnalysisOutput rows.
+"""Convert v0.2 merge results into v0.1/frontend-compatible final AnalysisOutput.
 
-Pure Python — no LLM calls. Each build_final_<type> function reads the
-corresponding merge output, transforms into a frontend-compatible JSON
-shape, and writes an AnalysisOutput with output_type matching v0.1.
+Pure Python — no LLM calls. Each build_final_<type> reads the corresponding
+merge output, transforms to a shape matching the existing frontend
+AnalysisOutputCard renderers, and writes an AnalysisOutput row.
 """
 
 import json
@@ -25,7 +25,6 @@ class FinalOutputSummary:
 
 
 def _load_merge_content(session: Session, run_id: str, merge_type: str) -> list[dict]:
-    """Load parsed content_json from a merge output."""
     out = session.exec(
         select(AnalysisOutput).where(
             AnalysisOutput.run_id == run_id,
@@ -56,7 +55,6 @@ def _save_final(
     evidence_quotes: list[str],
     confidence: float,
 ) -> AnalysisOutput:
-    # Delete previous final output for this run+type to avoid duplicates
     existing = session.exec(
         select(AnalysisOutput).where(
             AnalysisOutput.run_id == run_id,
@@ -64,7 +62,7 @@ def _save_final(
         )
     ).all()
     for old in existing:
-        if old.output_type == output_type:  # skip merge_* intermediates
+        if old.output_type == output_type:
             session.delete(old)
 
     out = AnalysisOutput(
@@ -125,6 +123,14 @@ def build_final_overview(session: Session, run_id: str) -> FinalOutputSummary:
     content = {
         "analysis_type": "overview",
         "based_on": "v0.2 merge_overview",
+        "summary": (
+            f"v0.2 analysis: {summary_data.get('total_atom_count', 0)} atoms extracted "
+            f"({summary_data.get('character_count', 0)} characters, "
+            f"{summary_data.get('event_count', 0)} events, "
+            f"{summary_data.get('relation_count', 0)} relations, "
+            f"{summary_data.get('causal_link_count', 0)} causal links, "
+            f"{summary_data.get('theme_signal_count', 0)} theme signals)"
+        ),
         "total_atoms": summary_data.get("total_atom_count", 0),
         "character_count": summary_data.get("character_count", 0),
         "event_count": summary_data.get("event_count", 0),
@@ -167,8 +173,10 @@ def build_final_characters(session: Session, run_id: str) -> FinalOutputSummary:
                 "stable_id": item.get("stable_id", ""),
                 "aliases": item.get("names", []),
                 "traits": item.get("traits", []),
-                "atom_count": item.get("atom_count", 0),
+                "description": "",
+                "role": "",
                 "first_appearance_chapter": item.get("first_chapter"),
+                "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
                 "evidence_quotes": item.get("evidence_quotes", []),
                 "confidence": item.get("confidence", 0.0),
@@ -181,7 +189,11 @@ def build_final_characters(session: Session, run_id: str) -> FinalOutputSummary:
         _get_run_topic(session, run_id),
         "characters",
         "Character List",
-        {"analysis_type": "characters", "based_on": "v0.2 merge_characters", "results": results},
+        {
+            "analysis_type": "characters",
+            "based_on": "v0.2 merge_characters",
+            "characters": results,
+        },
         _collect_source_chunk_ids(items),
         _collect_evidence_quotes(items),
         _average_confidence(items),
@@ -196,12 +208,15 @@ def build_final_relations(session: Session, run_id: str) -> FinalOutputSummary:
 
     results = []
     for item in items:
+        rtype = item.get("relation_type", "")
         results.append(
             {
                 "character_a": item.get("character_a", ""),
                 "character_b": item.get("character_b", ""),
-                "relationship_type": item.get("relation_type", ""),
+                "relationship_type": rtype,
+                "relation_type": rtype,
                 "stable_id": item.get("stable_id", ""),
+                "description": "",
                 "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
                 "evidence_quotes": item.get("evidence_quotes", []),
@@ -215,7 +230,11 @@ def build_final_relations(session: Session, run_id: str) -> FinalOutputSummary:
         _get_run_topic(session, run_id),
         "relations",
         "Character Relationships",
-        {"analysis_type": "relations", "based_on": "v0.2 merge_relations", "results": results},
+        {
+            "analysis_type": "relations",
+            "based_on": "v0.2 merge_relations",
+            "relationships": results,
+        },
         _collect_source_chunk_ids(items),
         _collect_evidence_quotes(items),
         _average_confidence(items),
@@ -232,12 +251,15 @@ def build_final_events(session: Session, run_id: str) -> FinalOutputSummary:
     for item in items:
         results.append(
             {
+                "event_id": item.get("stable_id", ""),
                 "title": item.get("title", ""),
-                "stable_id": item.get("stable_id", ""),
                 "summary": item.get("summary", ""),
-                "participants": item.get("participants", []),
+                "description": item.get("summary", ""),
+                "chapter": item.get("first_chapter"),
+                "chapter_index": item.get("first_chapter"),
                 "chapters": item.get("chapters", []),
-                "first_chapter": item.get("first_chapter"),
+                "participants": item.get("participants", []),
+                "importance": "",
                 "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
                 "evidence_quotes": item.get("evidence_quotes", []),
@@ -251,7 +273,11 @@ def build_final_events(session: Session, run_id: str) -> FinalOutputSummary:
         _get_run_topic(session, run_id),
         "events",
         "Key Events",
-        {"analysis_type": "events", "based_on": "v0.2 merge_events", "results": results},
+        {
+            "analysis_type": "events",
+            "based_on": "v0.2 merge_events",
+            "events": results,
+        },
         _collect_source_chunk_ids(items),
         _collect_evidence_quotes(items),
         _average_confidence(items),
@@ -269,9 +295,13 @@ def build_final_causality(session: Session, run_id: str) -> FinalOutputSummary:
     for item in items:
         results.append(
             {
-                "cause_event": item.get("cause_event", ""),
-                "effect_event": item.get("effect_event", ""),
+                "cause_event_id": item.get("cause_event", ""),
+                "effect_event_id": item.get("effect_event", ""),
                 "stable_id": item.get("stable_id", ""),
+                "causal_description": (
+                    item.get("cause_event", "") + " → " + item.get("effect_event", "")
+                ),
+                "causal_strength": "inferred",
                 "resolved": item.get("resolved", False),
                 "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
@@ -288,7 +318,11 @@ def build_final_causality(session: Session, run_id: str) -> FinalOutputSummary:
         _get_run_topic(session, run_id),
         "causality",
         "Event Causal Chain",
-        {"analysis_type": "causality", "based_on": "v0.2 merge_causality", "results": results},
+        {
+            "analysis_type": "causality",
+            "based_on": "v0.2 merge_causality",
+            "causal_chains": results,
+        },
         _collect_source_chunk_ids(items),
         _collect_evidence_quotes(items),
         _average_confidence(items),
@@ -303,11 +337,15 @@ def build_final_themes(session: Session, run_id: str) -> FinalOutputSummary:
 
     results = []
     for item in items:
+        tname = item.get("theme_name", "")
         results.append(
             {
-                "theme_name": item.get("theme_name", ""),
+                "theme_name": tname,
+                "theme": tname,
+                "name": tname,
                 "stable_id": item.get("stable_id", ""),
                 "signals": item.get("signals", []),
+                "description": "",
                 "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
                 "evidence_quotes": item.get("evidence_quotes", []),
@@ -321,7 +359,11 @@ def build_final_themes(session: Session, run_id: str) -> FinalOutputSummary:
         _get_run_topic(session, run_id),
         "themes",
         "Themes & Philosophy",
-        {"analysis_type": "themes", "based_on": "v0.2 merge_themes", "results": results},
+        {
+            "analysis_type": "themes",
+            "based_on": "v0.2 merge_themes",
+            "themes": results,
+        },
         _collect_source_chunk_ids(items),
         _collect_evidence_quotes(items),
         _average_confidence(items),
@@ -347,7 +389,6 @@ def run_final_output_stage(
     run_id: str,
     requested_types: list[str] | None = None,
 ) -> list[FinalOutputSummary]:
-    """Run all requested final output builders and return summaries."""
     types_to_run = requested_types or list(_FINAL_BUILDERS)
     summaries: list[FinalOutputSummary] = []
 

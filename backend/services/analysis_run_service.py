@@ -42,6 +42,15 @@ def create_analysis_run(
 
     validate_analysis_mode(mode)
 
+    # Guard: check for existing active run for this topic
+    active_run = session.exec(
+        select(AnalysisRun)
+        .where(AnalysisRun.topic_id == topic_id)
+        .where(AnalysisRun.status.in_([JobStatus.PENDING, JobStatus.RUNNING]))  # type: ignore[arg-type]
+    ).first()
+    if active_run is not None:
+        raise ValueError("Analysis is already running for this topic")
+
     # Validate chunks exist
     from models.chunk import Chunk
 
