@@ -103,3 +103,105 @@ export function runSingleAnalysis(
     { method: "POST" }
   );
 }
+
+// ── v0.2 Analysis Run API ──
+
+import type {
+  AnalysisRunCreateRequest,
+  AnalysisRunListResponse,
+  AnalysisRunDetail,
+  CreateAnalysisRunResponse,
+  RunRetryResponse,
+  RunResumeResponse,
+  RunCancelResponse,
+  AnalysisStatusV2Response,
+} from "./types";
+
+export function createAnalysisRun(
+  topicId: string,
+  body: AnalysisRunCreateRequest
+): Promise<CreateAnalysisRunResponse> {
+  return apiRequest<CreateAnalysisRunResponse>(
+    `/api/topics/${topicId}/analysis/runs`,
+    { method: "POST", json: body as unknown as Record<string, unknown> }
+  );
+}
+
+export function listAnalysisRuns(
+  topicId: string
+): Promise<AnalysisRunListResponse> {
+  return apiRequest<AnalysisRunListResponse>(
+    `/api/topics/${topicId}/analysis/runs`
+  );
+}
+
+export function getAnalysisRun(
+  runId: string
+): Promise<AnalysisRunDetail> {
+  return apiRequest<AnalysisRunDetail>(`/api/analysis/runs/${runId}`);
+}
+
+export function cancelAnalysisRun(
+  runId: string
+): Promise<RunCancelResponse> {
+  return apiRequest<RunCancelResponse>(
+    `/api/analysis/runs/${runId}/cancel`,
+    { method: "POST" }
+  );
+}
+
+export function retryFailedAnalysisRun(
+  runId: string
+): Promise<RunRetryResponse> {
+  return apiRequest<RunRetryResponse>(
+    `/api/analysis/runs/${runId}/retry-failed`,
+    { method: "POST" }
+  );
+}
+
+export function resumeAnalysisRun(
+  runId: string,
+  retryFailed: boolean = true
+): Promise<RunResumeResponse> {
+  const qs = retryFailed ? "?retry_failed=true" : "?retry_failed=false";
+  return apiRequest<RunResumeResponse>(
+    `/api/analysis/runs/${runId}/resume${qs}`,
+    { method: "POST" }
+  );
+}
+
+export function listAnalysisOutputsV2(
+  topicId: string,
+  params?: {
+    outputType?: string;
+    runId?: string;
+    latestOnly?: boolean;
+  }
+): Promise<OutputListResponse> {
+  const query = new URLSearchParams();
+  if (params?.outputType) query.set("output_type", params.outputType);
+  if (params?.runId) query.set("run_id", params.runId);
+  if (params?.latestOnly) query.set("latest_only", "true");
+  const qs = query.toString();
+  return apiRequest<OutputListResponse>(
+    `/api/topics/${topicId}/analysis/outputs${qs ? `?${qs}` : ""}`
+  );
+}
+
+export function getAnalysisStatusV2(
+  topicId: string
+): Promise<AnalysisStatusV2Response> {
+  return apiRequest<AnalysisStatusV2Response>(
+    `/api/topics/${topicId}/analysis/status`
+  );
+}
+
+export function runAnalysisV2(
+  topicId: string,
+  limitChunks: number = 5
+): Promise<CreateAnalysisRunResponse> {
+  return apiRequest<CreateAnalysisRunResponse>(
+    `/api/topics/${topicId}/analysis/run?pipeline=v2&limit_chunks=${limitChunks}`,
+    { method: "POST" }
+  );
+}

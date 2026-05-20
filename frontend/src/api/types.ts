@@ -308,3 +308,174 @@ export interface ChatAnswerRead {
   uncertainty: string | null;
   created_at: string;
 }
+
+// ── v0.2 Analysis Run types ──
+
+export type AnalysisMode = "preview" | "range" | "full" | "incremental";
+
+export type AnalysisRunStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "partial_success"
+  | "failed"
+  | "cancelled";
+
+export type AnalysisStage = "extraction" | "merge" | "final";
+
+export interface ChunkSelectionParams {
+  mode: AnalysisMode;
+  selected: number;
+  total: number;
+  limit_chunks?: number;
+  range_start?: number;
+  range_end?: number;
+  chapter_start?: number;
+  chapter_end?: number;
+}
+
+export interface ChunksByChapter {
+  chapter_index: number;
+  title: string;
+  chunk_count: number;
+  char_count: number;
+  estimated_tokens: number;
+}
+
+export interface ChunksMetaResponse {
+  topic_id: string;
+  document_id: string | null;
+  chunk_count: number;
+  chapter_count: number;
+  total_chars: number;
+  estimated_tokens: number;
+  first_chunk_index: number | null;
+  last_chunk_index: number | null;
+  chunks_by_chapter: ChunksByChapter[];
+}
+
+export interface AnalysisRunCreateRequest {
+  mode: AnalysisMode;
+  requested_types?: string[];
+  limit_chunks?: number;
+  chunk_index_start?: number;
+  chunk_index_end?: number;
+  chapter_index_start?: number;
+  chapter_index_end?: number;
+  force?: boolean;
+  start_immediately?: boolean;
+}
+
+export interface ExtractionSummary {
+  id: string;
+  chunk_id: string;
+  status: string;
+  attempt_count: number;
+  error_message: string | null;
+}
+
+export interface MergeOutputSummary {
+  id: string;
+  output_type: string;
+  title: string;
+}
+
+export interface MergeStageSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  outputs: MergeOutputSummary[];
+  warnings: string[];
+}
+
+export interface FinalStageSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  outputs: MergeOutputSummary[];
+}
+
+export interface AnalysisRun {
+  id: string;
+  topic_id: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  progress_current: number;
+  progress_total: number;
+  extraction_total: number;
+  extraction_succeeded: number;
+  extraction_failed: number;
+  merge_total: number;
+  merge_succeeded: number;
+  merge_failed: number;
+  final_total?: number;
+  final_succeeded?: number;
+  final_failed?: number;
+  total_tokens: number;
+  model_used: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string | null;
+}
+
+export interface AnalysisRunDetail {
+  run: AnalysisRun;
+  extractions: ExtractionSummary[];
+  merge: MergeStageSummary;
+  final: FinalStageSummary;
+}
+
+export interface AnalysisRunListResponse {
+  runs: AnalysisRun[];
+}
+
+export interface CreateAnalysisRunResponse {
+  run: AnalysisRun;
+  status_url: string;
+}
+
+export interface RunRetryResponse {
+  run: { id: string; status: string };
+  message: string;
+}
+
+export interface RunResumeResponse {
+  run: { id: string; status: string };
+  message: string;
+}
+
+export interface RunCancelResponse {
+  run: { id: string; status: string };
+}
+
+export interface LatestV2RunSummary {
+  id: string;
+  mode: AnalysisMode;
+  status: AnalysisRunStatus;
+  progress_current: number;
+  progress_total: number;
+  extraction_succeeded: number;
+  extraction_failed: number;
+  merge_succeeded: number;
+  merge_failed: number;
+  final_succeeded?: number;
+  final_failed?: number;
+  total_tokens: number;
+  model_used: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string | null;
+}
+
+// Updated v0.2 AnalysisStatusResponse
+export interface AnalysisStatusV2Response {
+  topic_id: string;
+  has_jobs: boolean;
+  has_outputs: boolean;
+  latest_job: Job | null;
+  analysis_types_completed: string[];
+  output_counts_by_type: Record<string, number>;
+  latest_v2_run: LatestV2RunSummary | null;
+  v2_available: boolean;
+}
