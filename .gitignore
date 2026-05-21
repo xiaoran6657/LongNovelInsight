@@ -65,3 +65,7 @@ Prompts/
 MVP/
 .claude/
 AGENTS.md
+# Agent runner runs (output artifacts, not tracked)
+agent/runner/runs/
+*.local.json
+*.log
