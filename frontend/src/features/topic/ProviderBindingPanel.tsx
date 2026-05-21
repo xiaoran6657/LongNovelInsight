@@ -1,5 +1,5 @@
 import type { ModelProvider, EffectiveProviderConfig, ProviderModelPreset } from "../../api/types";
-import TokenRangeSlider from "../../components/TokenRangeSlider";
+import ProviderConfigForm from "../provider/ProviderConfigForm";
 
 interface Props {
   providers: ModelProvider[];
@@ -65,57 +65,19 @@ export default function ProviderBindingPanel(props: Props) {
             )}
           </div>
           {p.configSaveError && <p style={{ color: "#e74c3c", fontSize: "0.76rem", marginBottom: "0.3rem" }}>{p.configSaveError}</p>}
-          <div className="topic-config-grid">
-            <label>
-              {p.configErrors.model && <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>}
-              Model
-              {p.activePresetModels.length > 0 ? (
-                <select
-                  value={p.activePresetModels.some((m) => m.model_name === p.editModel) ? p.editModel : p.editModel ? "__other__" : ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "__other__" || !v) { p.onEditModel(""); return; }
-                    p.onEditModel(v);
-                    const m = p.activePresetModels.find((pm) => pm.model_name === v);
-                    if (m) p.onApplyPreset(v, m.recommended_max_output_tokens ?? 2048, m.default_temperature ?? 0.1, m.default_thinking_mode ?? "disabled", p.effectiveConfig?.analysis_parallelism ?? 3);
-                  }}
-                >
-                  <option value="">-- preset --</option>
-                  {p.activePresetModels.map((pm) => (
-                    <option key={pm.model_name} value={pm.model_name}>{pm.display_name}</option>
-                  ))}
-                  <option value="__other__">Custom...</option>
-                </select>
-              ) : null}
-              <input type="text" value={p.editModel} onChange={(e) => p.onEditModel(e.target.value)} placeholder="deepseek-chat" />
-            </label>
-            <label>
-              {p.configErrors.maxTokens && <span style={{ color: "#e74c3c", fontWeight: 700 }}>✗ </span>}
-              Max Tokens
-              <TokenRangeSlider
-                value={Number(p.editMaxTokens) || 2048}
-                min={512}
-                max={16384}
-                recommendedValue={p.effectiveConfig?.max_output_tokens ?? undefined}
-                onChange={(v) => p.onEditMaxTokens(String(v))}
-              />
-            </label>
-            <label>
-              Temperature
-              <input type="text" value={p.editTemp} onChange={(e) => p.onEditTemp(e.target.value)} />
-            </label>
-            <label>
-              Thinking
-              <select value={p.editThinking} onChange={(e) => p.onEditThinking(e.target.value)}>
-                <option value="disabled">Disabled</option>
-                <option value="enabled">Enabled</option>
-              </select>
-            </label>
-            <label>
-              Parallelism
-              <input type="text" value={p.editParallel} onChange={(e) => p.onEditParallel(e.target.value)} />
-            </label>
-          </div>
+          <ProviderConfigForm
+            model={p.editModel} maxTokens={p.editMaxTokens}
+            temperature={p.editTemp} thinking={p.editThinking}
+            parallelism={p.editParallel}
+            effectiveConfig={p.effectiveConfig}
+            presetModels={p.activePresetModels}
+            showParallelism
+            onModelChange={p.onEditModel}
+            onMaxTokensChange={p.onEditMaxTokens}
+            onTempChange={p.onEditTemp}
+            onThinkingChange={p.onEditThinking}
+            onParallelismChange={p.onEditParallel}
+          />
         </div>
       )}
     </div>

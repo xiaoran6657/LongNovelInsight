@@ -12,6 +12,7 @@ import {
 import { getTopic, getEffectiveConfig, updateTopicProviderConfig } from "../api/topics";
 import { listProviderPresets } from "../api/providers";
 import { listChunks } from "../api/parse";
+import ProviderConfigForm from "../features/provider/ProviderConfigForm";
 import type {
   ChatSessionRead,
   ChatMessageRead,
@@ -848,8 +849,6 @@ function RightConfigTab({
     (p) => p.provider_key === config.provider_key
   );
   const presetModels = currentPreset?.models ?? [];
-  const isManualModel =
-    !!editModel && !presetModels.some((m) => m.model_name === editModel);
 
   return (
     <div>
@@ -867,116 +866,16 @@ function RightConfigTab({
           Provider Config
         </p>
 
-        {/* Model */}
-        <FieldLabel>Model</FieldLabel>
-        {presetModels.length > 0 ? (
-          <>
-            <select
-              value={
-                presetModels.some((m) => m.model_name === editModel)
-                  ? editModel
-                  : editModel
-                    ? "__other__"
-                    : ""
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "__other__") { onModelChange(""); return; }
-                if (!v) { onModelChange(""); return; }
-                onModelChange(v);
-              }}
-              style={fieldInputStyle}
-            >
-              <option value="">Inherit ({config.model_name || "none"})</option>
-              {presetModels.map((m) => (
-                <option key={m.model_name} value={m.model_name}>
-                  {m.display_name}
-                </option>
-              ))}
-              <option value="__other__">Other (type)...</option>
-            </select>
-            {isManualModel && (
-              <input
-                type="text"
-                value={editModel}
-                onChange={(e) => onModelChange(e.target.value)}
-                placeholder="Custom model name..."
-                style={{ ...fieldInputStyle, marginTop: "0.2rem" }}
-              />
-            )}
-          </>
-        ) : (
-          <input
-            type="text"
-            value={editModel}
-            onChange={(e) => onModelChange(e.target.value)}
-            placeholder={config.model_name || "e.g. deepseek-chat"}
-            style={fieldInputStyle}
-          />
-        )}
-
-        {/* Max Tokens */}
-        <FieldLabel>Max Tokens</FieldLabel>
-        <div style={{ display: "flex", gap: "0.15rem", alignItems: "center" }}>
-          <StepperBtn
-            direction={-1}
-            editMaxTokens={editMaxTokens}
-            fallback={config.max_output_tokens || 2048}
-            onChange={onMaxTokensChange}
-          />
-          <input
-            type="number"
-            min={512}
-            max={16384}
-            value={editMaxTokens}
-            onChange={(e) => onMaxTokensChange(e.target.value)}
-            onBlur={(e) => {
-              const v = Number(e.target.value);
-              if (e.target.value && !isNaN(v))
-                onMaxTokensChange(String(Math.max(512, Math.min(16384, v))));
-            }}
-            placeholder={config.max_output_tokens?.toString() || "2048"}
-            className="no-spinner"
-            style={{ ...fieldInputStyle, textAlign: "center", width: "100%" }}
-          />
-          <StepperBtn
-            direction={1}
-            editMaxTokens={editMaxTokens}
-            fallback={config.max_output_tokens || 2048}
-            onChange={onMaxTokensChange}
-          />
-        </div>
-
-        {/* Temperature */}
-        <FieldLabel>Temperature (0–2)</FieldLabel>
-        <input
-          type="number"
-          min={0}
-          max={2}
-          step={0.1}
-          value={editTemp}
-          onChange={(e) => onTempChange(e.target.value)}
-          placeholder={config.temperature?.toString() || "0.1"}
-          style={fieldInputStyle}
+        <ProviderConfigForm
+          model={editModel} maxTokens={editMaxTokens}
+          temperature={editTemp} thinking={editThinking}
+          effectiveConfig={config}
+          presetModels={presetModels}
+          onModelChange={onModelChange}
+          onMaxTokensChange={onMaxTokensChange}
+          onTempChange={onTempChange}
+          onThinkingChange={onThinkingChange}
         />
-
-        {/* Thinking */}
-        <FieldLabel>Thinking</FieldLabel>
-        <select
-          value={editThinking}
-          onChange={(e) => onThinkingChange(e.target.value)}
-          style={fieldInputStyle}
-        >
-          <option value="disabled">disabled</option>
-          <option value="enabled">enabled</option>
-          <option value="provider_default">provider default</option>
-        </select>
-
-        {/* Base URL (read-only) */}
-        <FieldLabel>Base URL</FieldLabel>
-        <p style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.1rem", wordBreak: "break-all" }}>
-          {config.base_url || "—"}
-        </p>
 
         {/* Save / Cancel */}
         {configDirty && (
@@ -1058,97 +957,6 @@ function RightConfigTab({
         )}
       </div>
     </div>
-  );
-}
-
-const fieldInputStyle: React.CSSProperties = {
-  width: "100%",
-  fontSize: "0.75rem",
-  padding: "0.25rem 0.35rem",
-  border: "1px solid #ccc",
-  borderRadius: 4,
-  fontFamily: "inherit",
-  marginTop: "0.1rem",
-  marginBottom: "0.35rem",
-};
-
-const miniBtnStyle: React.CSSProperties = {
-  width: "1.4rem",
-  height: "1.4rem",
-  fontSize: "0.85rem",
-  fontWeight: 700,
-  lineHeight: 1,
-  cursor: "pointer",
-  flexShrink: 0,
-  padding: 0,
-};
-
-function StepperBtn({
-  direction,
-  editMaxTokens,
-  fallback,
-  onChange,
-}: {
-  direction: 1 | -1;
-  editMaxTokens: string;
-  fallback: number;
-  onChange: (v: string) => void;
-}) {
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const holdRef = useRef(0);
-  const valueRef = useRef(Number(editMaxTokens) || fallback);
-  // Keep ref in sync across renders so the interval closure always sees the latest value
-  valueRef.current = Number(editMaxTokens) || fallback;
-
-  function read(): number {
-    return valueRef.current || fallback;
-  }
-
-  function start() {
-    const first = direction === -1 ? Math.max(512, read() + direction) : Math.min(16384, read() + direction);
-    valueRef.current = first;
-    onChange(String(first));
-    holdRef.current = Date.now();
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      const elapsed = Date.now() - holdRef.current;
-      let step = 1;
-      if (elapsed > 3000) step = 100;
-      else if (elapsed > 1000) step = 10;
-      const next = direction === -1
-        ? Math.max(512, valueRef.current + direction * step)
-        : Math.min(16384, valueRef.current + direction * step);
-      valueRef.current = next;
-      onChange(String(next));
-    }, 60);
-  }
-
-  function stop() {
-    if (timerRef.current !== null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onMouseDown={start}
-      onMouseUp={stop}
-      onMouseLeave={stop}
-      onContextMenu={(e) => e.preventDefault()}
-      style={miniBtnStyle}
-    >
-      {direction === -1 ? "−" : "+"}
-    </button>
-  );
-}
-
-function FieldLabel({ children }: { children: string }) {
-  return (
-    <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#888" }}>
-      {children}
-    </span>
   );
 }
 

@@ -30,6 +30,8 @@ export default function AnalysisStageProgress({ run }: Props) {
   if (!run) return null;
   const r = run.run;
   const pct = r.progress_total > 0 ? Math.round((r.progress_current / r.progress_total) * 100) : 0;
+  const failedExtractions = run.extractions.filter((e) => e.status === "failed");
+  const visibleFailed = failedExtractions.slice(0, 20);
 
   return (
     <div style={{ fontSize: "0.85rem" }}>
@@ -69,13 +71,13 @@ export default function AnalysisStageProgress({ run }: Props) {
       )}
 
       {/* Failed chunks */}
-      {run.extractions.some((e) => e.status === "failed") && (
+      {failedExtractions.length > 0 && (
         <details style={{ marginTop: "0.5rem", fontSize: "0.78rem" }}>
           <summary style={{ cursor: "pointer", color: "#e74c3c", fontWeight: 600 }}>
-            Failed Extractions ({run.extractions.filter((e) => e.status === "failed").length})
+            Failed Extractions ({failedExtractions.length})
           </summary>
           <div style={{ maxHeight: 200, overflowY: "auto", marginTop: "0.25rem" }}>
-            {run.extractions.filter((e) => e.status === "failed").slice(0, 20).map((e) => (
+            {visibleFailed.map((e) => (
               <div key={e.id} style={{ marginBottom: "0.25rem", padding: "0.25rem", background: "#fff5f5", borderRadius: 3 }}>
                 <span className="text-dim">Chunk {e.chunk_id.slice(0, 8)}… · {e.attempt_count} attempt(s)</span>
                 {e.error_message && (
@@ -85,9 +87,9 @@ export default function AnalysisStageProgress({ run }: Props) {
                 )}
               </div>
             ))}
-            {run.extractions.filter((e) => e.status === "failed").length > 20 && (
+            {failedExtractions.length > 20 && (
               <p className="text-dim" style={{ fontSize: "0.75rem" }}>
-                +{run.extractions.filter((e) => e.status === "failed").length - 20} more failed extractions
+                +{failedExtractions.length - 20} more failed extractions
               </p>
             )}
           </div>

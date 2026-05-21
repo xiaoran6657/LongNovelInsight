@@ -62,8 +62,8 @@ export default function TokenRangeSlider({
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - holdRef.current;
       let s = step;
-      if (elapsed > 3000) s = 100;
-      else if (elapsed > 1000) s = 10;
+      if (elapsed > 3000) s = step * 5;
+      else if (elapsed > 1000) s = step * 2;
       const nextVal = clamp(valueRef.current + direction * s);
       valueRef.current = nextVal;
       onChange(nextVal);
@@ -84,12 +84,7 @@ export default function TokenRangeSlider({
     <div style={{ fontSize: "0.82rem" }}>
       {label && <div style={{ marginBottom: "0.15rem", fontWeight: 600 }}>{label}</div>}
       <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: "0.25rem" }}>
-        <input
-          type="text" value={String(min)}
-          readOnly
-          style={{ width: 55, textAlign: "center", fontSize: "0.72rem", background: "#f5f5f5" }}
-          aria-label="Min tokens"
-        />
+        <span className="text-dim" style={{ fontSize: "0.7rem", minWidth: 40, textAlign: "right" }}>{min}</span>
         <button
           onMouseDown={() => startAdjust(-1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust} onTouchStart={() => startAdjust(-1)} onTouchEnd={stopAdjust}
           disabled={disabled} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▼</button>
@@ -105,12 +100,7 @@ export default function TokenRangeSlider({
         <button
           onMouseDown={() => startAdjust(1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust} onTouchStart={() => startAdjust(1)} onTouchEnd={stopAdjust}
           disabled={disabled} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▲</button>
-        <input
-          type="text" value={String(max)}
-          readOnly
-          style={{ width: 55, textAlign: "center", fontSize: "0.72rem", background: "#f5f5f5" }}
-          aria-label="Max tokens"
-        />
+        <span className="text-dim" style={{ fontSize: "0.7rem", minWidth: 40 }}>{max}</span>
       </div>
       <input
         type="range" min={min} max={max} step={step} value={clamp(value)}
