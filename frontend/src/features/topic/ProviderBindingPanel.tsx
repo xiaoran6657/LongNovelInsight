@@ -77,6 +77,13 @@ export default function ProviderBindingPanel(props: Props) {
             onTempChange={p.onEditTemp}
             onThinkingChange={p.onEditThinking}
             onParallelismChange={p.onEditParallel}
+            onPresetSelect={(preset) => p.onApplyPreset(
+              preset.model_name,
+              preset.recommended_max_output_tokens ?? 2048,
+              preset.default_temperature ?? 0.1,
+              preset.default_thinking_mode ?? "disabled",
+              p.effectiveConfig?.analysis_parallelism ?? 3,
+            )}
           />
         </div>
       )}

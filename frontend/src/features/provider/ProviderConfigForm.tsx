@@ -15,6 +15,7 @@ interface Props {
   onTempChange: (v: string) => void;
   onThinkingChange: (v: string) => void;
   onParallelismChange?: (v: string) => void;
+  onPresetSelect?: (preset: ProviderModelPreset) => void;
 }
 
 const fieldInputStyle: React.CSSProperties = {
@@ -30,6 +31,7 @@ export default function ProviderConfigForm({
   model, maxTokens, temperature, thinking, parallelism,
   effectiveConfig, presetModels, showParallelism,
   onModelChange, onMaxTokensChange, onTempChange, onThinkingChange, onParallelismChange,
+  onPresetSelect,
 }: Props) {
   const isManualModel = !!model && !presetModels.some((m) => m.model_name === model);
 
@@ -49,6 +51,8 @@ export default function ProviderConfigForm({
               const v = e.target.value;
               if (v === "__other__" || !v) { onModelChange(""); return; }
               onModelChange(v);
+              const preset = presetModels.find((m) => m.model_name === v);
+              if (preset && onPresetSelect) onPresetSelect(preset);
             }}
             style={fieldInputStyle}
           >
