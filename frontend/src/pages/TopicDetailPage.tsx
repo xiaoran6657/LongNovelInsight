@@ -297,7 +297,6 @@ export default function TopicDetailPage() {
       <AnalysisOutputsPanel
         topicId={topic.id}
         runId={activeRunId}
-        isRunActive={false}
       />
 
       <LegacyAnalysisPanel

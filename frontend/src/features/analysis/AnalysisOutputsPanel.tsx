@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { deleteAnalysisOutputs, listAnalysisOutputsV2 } from "../../api/analysis";
+import { getAnalysisRun, deleteAnalysisOutputs, listAnalysisOutputsV2 } from "../../api/analysis";
 import type { AnalysisOutput } from "../../api/types";
 import AnalysisOutputCard from "../../components/AnalysisOutputCard";
 import LoadingBlock from "../../components/LoadingBlock";
@@ -25,12 +25,19 @@ function groupLatest(outputs: AnalysisOutput[]): AnalysisOutput[] {
 interface Props {
   topicId: string;
   runId: string | null;
-  isRunActive: boolean;
 }
 
-export default function AnalysisOutputsPanel({ topicId, runId, isRunActive }: Props) {
+export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
   const qc = useQueryClient();
   const [outputTypeFilter, setOutputTypeFilter] = useState("");
+
+  // Check if selected run is still active
+  const { data: runDetail } = useQuery({
+    queryKey: ["analysisRun", runId],
+    queryFn: () => getAnalysisRun(runId!),
+    enabled: !!runId,
+  });
+  const isRunActive = runDetail?.run.status === "pending" || runDetail?.run.status === "running";
 
   // Fetch outputs filtered by run if runId is set, otherwise all
   const { data: outputsData, isLoading } = useQuery({
@@ -101,12 +108,14 @@ export default function AnalysisOutputsPanel({ topicId, runId, isRunActive }: Pr
                 <option value="">All types</option>
                 {ALL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
-              <button
-                onClick={() => { if (confirm("Delete all analysis outputs?")) deleteMut.mutate(); }}
-                disabled={deleteMut.isPending}
-                style={{ fontSize: "0.75rem", background: "#e74c3c" }}>
-                Delete All
-              </button>
+              {!runId && (
+                <button
+                  onClick={() => { if (confirm("Delete ALL analysis outputs for this topic?")) deleteMut.mutate(); }}
+                  disabled={deleteMut.isPending}
+                  style={{ fontSize: "0.75rem", background: "#e74c3c" }}>
+                  Delete All
+                </button>
+              )}
             </div>
           </div>
 

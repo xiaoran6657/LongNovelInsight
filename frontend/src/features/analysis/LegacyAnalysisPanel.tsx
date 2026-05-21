@@ -1,14 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AnalysisOutput } from "../../api/types";
-import AnalysisOutputCard from "../../components/AnalysisOutputCard";
 import LoadingBlock from "../../components/LoadingBlock";
 import {
   listAnalysisOutputs,
   runAnalysisAsync,
-  deleteAnalysisOutputs,
   getAnalysisStatus,
-  runSingleAnalysis,
 } from "../../api/analysis";
 import { getChunksMeta } from "../../api/parse";
 
@@ -29,25 +25,6 @@ interface RunSummary {
   typeStats: Record<string, TypeStat>;
 }
 
-function groupLatestOutputs(
-  outputs: AnalysisOutput[]
-): { latest: AnalysisOutput[]; hiddenCounts: Record<string, number> } {
-  const grouped: Record<string, AnalysisOutput[]> = {};
-  for (const o of outputs) {
-    if (!grouped[o.output_type]) grouped[o.output_type] = [];
-    grouped[o.output_type].push(o);
-  }
-  const latest: AnalysisOutput[] = [];
-  const hiddenCounts: Record<string, number> = {};
-  for (const [type, items] of Object.entries(grouped)) {
-    items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    latest.push(items[0]);
-    if (items.length > 1) hiddenCounts[type] = items.length - 1;
-  }
-  latest.sort((a, b) => a.output_type.localeCompare(b.output_type));
-  return { latest, hiddenCounts };
-}
-
 interface Props {
   topicId: string;
   hasDoc: boolean;
@@ -59,9 +36,6 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
   const qc = useQueryClient();
   const [limitChunks, setLimitChunks] = useState(5);
   const [runError, setRunError] = useState("");
-  const [outputTypeFilter, setOutputTypeFilter] = useState("");
-  const [retryingType, setRetryingType] = useState<string | null>(null);
-  const [retryError, setRetryError] = useState("");
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
 
   const { data: chunksMeta } = useQuery({
@@ -137,33 +111,7 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
     },
   });
 
-  const deleteOutputsMut = useMutation({
-    mutationFn: () => deleteAnalysisOutputs(topicId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outputs", topicId] });
-      qc.invalidateQueries({ queryKey: ["topic", topicId] });
-    },
-  });
-
-  const retrySingleMut = useMutation({
-    mutationFn: ({ outputType, deepen }: { outputType: string; deepen: boolean }) =>
-      runSingleAnalysis(topicId, outputType, limitChunks, deepen),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outputs", topicId] });
-      setRetryingType(null);
-      setRetryError("");
-    },
-    onError: (err: Error) => {
-      setRetryingType(null);
-      setRetryError(err.message);
-    },
-  });
-
   const allOutputs = allOutputsData?.outputs ?? [];
-  const { latest: latestOutputs, hiddenCounts } = groupLatestOutputs(allOutputs);
-  const filteredOutputs = outputTypeFilter
-    ? allOutputs.filter((o) => o.output_type === outputTypeFilter)
-    : latestOutputs;
 
   const activeJob = jobStatus?.latest_job;
   const isRunning = activeJob?.status === "pending" || activeJob?.status === "running";
@@ -200,7 +148,6 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
             </p>
           )}
           {runError && <p className="field-error">{runError}</p>}
-          {retryError && <p className="field-error" style={{ marginTop: "0.25rem" }}>{retryError}</p>}
         </div>
       )}
 
@@ -225,38 +172,10 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
       )}
 
       {allOutputs.length > 0 && (
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-            <h3 style={{ margin: 0 }}>Outputs ({allOutputs.length})</h3>
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <select value={outputTypeFilter} onChange={(e) => setOutputTypeFilter(e.target.value)}>
-                <option value="">All types</option>
-                {ALL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <button onClick={() => { if (confirm("Delete all analysis outputs?")) deleteOutputsMut.mutate(); }}
-                disabled={deleteOutputsMut.isPending} style={{ background: "#e74c3c", fontSize: "0.78rem" }}>
-                Delete All
-              </button>
-            </div>
-          </div>
-          {filteredOutputs.map((o) => (
-            <div key={o.id} style={{ marginBottom: "1rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong>{o.output_type}</strong>
-                <button onClick={() => { setRetryingType(o.output_type); setRetryError(""); retrySingleMut.mutate({ outputType: o.output_type, deepen: false }); }}
-                  disabled={retryingType === o.output_type}
-                  style={{ fontSize: "0.75rem", padding: "0.1em 0.4em" }}>
-                  {retryingType === o.output_type ? "Retrying..." : "Retry"}
-                </button>
-              </div>
-              <AnalysisOutputCard output={o} />
-              {hiddenCounts[o.output_type] > 0 && (
-                <p className="text-dim" style={{ fontSize: "0.75rem" }}>
-                  +{hiddenCounts[o.output_type]} older version(s) — use filter to view
-                </p>
-              )}
-            </div>
-          ))}
+        <div className="card" style={{ fontSize: "0.82rem" }}>
+          <p className="text-dim">
+            {allOutputs.length} output(s) available. See the <strong>Outputs</strong> section above for details.
+          </p>
         </div>
       )}
     </div>

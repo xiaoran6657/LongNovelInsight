@@ -75,7 +75,7 @@ export default function AnalysisStageProgress({ run }: Props) {
             Failed Extractions ({run.extractions.filter((e) => e.status === "failed").length})
           </summary>
           <div style={{ maxHeight: 200, overflowY: "auto", marginTop: "0.25rem" }}>
-            {run.extractions.filter((e) => e.status === "failed").map((e) => (
+            {run.extractions.filter((e) => e.status === "failed").slice(0, 20).map((e) => (
               <div key={e.id} style={{ marginBottom: "0.25rem", padding: "0.25rem", background: "#fff5f5", borderRadius: 3 }}>
                 <span className="text-dim">Chunk {e.chunk_id.slice(0, 8)}… · {e.attempt_count} attempt(s)</span>
                 {e.error_message && (
@@ -85,6 +85,11 @@ export default function AnalysisStageProgress({ run }: Props) {
                 )}
               </div>
             ))}
+            {run.extractions.filter((e) => e.status === "failed").length > 20 && (
+              <p className="text-dim" style={{ fontSize: "0.75rem" }}>
+                +{run.extractions.filter((e) => e.status === "failed").length - 20} more failed extractions
+              </p>
+            )}
           </div>
         </details>
       )}

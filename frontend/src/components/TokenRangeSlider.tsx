@@ -28,10 +28,12 @@ export default function TokenRangeSlider({
   const [error, setError] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const holdRef = useRef(0);
+  const valueRef = useRef(value);
   const step = adaptiveStep(min, max);
 
-  // Sync external value changes
+  // Sync ref + editText when value changes externally
   useEffect(() => {
+    valueRef.current = value;
     setEditText(String(value));
     setError("");
   }, [value]);
@@ -42,30 +44,35 @@ export default function TokenRangeSlider({
     const v = Number(raw);
     if (isNaN(v) || v < min || v > max) {
       setError(`Must be ${min}–${max}`);
-      setEditText(String(value));
+      setEditText(String(valueRef.current));
       return;
     }
     setError("");
     const c = clamp(v);
+    valueRef.current = c;
     onChange(c);
     if (onCommit) onCommit(c);
   }
 
   function startAdjust(direction: 1 | -1) {
     holdRef.current = Date.now();
-    onChange(clamp(value + direction * step));
+    const next = clamp(valueRef.current + direction * step);
+    valueRef.current = next;
+    onChange(next);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - holdRef.current;
       let s = step;
       if (elapsed > 3000) s = 100;
       else if (elapsed > 1000) s = 10;
-      onChange(clamp(value + direction * s));
+      const nextVal = clamp(valueRef.current + direction * s);
+      valueRef.current = nextVal;
+      onChange(nextVal);
     }, 60);
   }
 
   function stopAdjust() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (onCommit) onCommit(value);
+    if (onCommit) onCommit(valueRef.current);
   }
 
   // Cleanup on unmount
@@ -77,10 +84,15 @@ export default function TokenRangeSlider({
     <div style={{ fontSize: "0.82rem" }}>
       {label && <div style={{ marginBottom: "0.15rem", fontWeight: 600 }}>{label}</div>}
       <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: "0.25rem" }}>
-        <span className="text-dim" style={{ fontSize: "0.7rem" }}>{min}</span>
+        <input
+          type="text" value={String(min)}
+          readOnly
+          style={{ width: 55, textAlign: "center", fontSize: "0.72rem", background: "#f5f5f5" }}
+          aria-label="Min tokens"
+        />
         <button
-          onMouseDown={() => startAdjust(-1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust}
-          disabled={disabled} tabIndex={-1} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▼</button>
+          onMouseDown={() => startAdjust(-1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust} onTouchStart={() => startAdjust(-1)} onTouchEnd={stopAdjust}
+          disabled={disabled} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▼</button>
         <input
           type="text" value={editText}
           onChange={(e) => { setEditText(e.target.value); setError(""); }}
@@ -88,17 +100,23 @@ export default function TokenRangeSlider({
           onKeyDown={(e) => { if (e.key === "Enter") commitText(editText); }}
           disabled={disabled}
           style={{ width: 70, textAlign: "center", fontSize: "0.85rem", fontWeight: 600 }}
-          aria-label={label || "Max tokens"}
+          aria-label={label || "Max tokens value"}
         />
         <button
-          onMouseDown={() => startAdjust(1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust}
-          disabled={disabled} tabIndex={-1} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▲</button>
-        <span className="text-dim" style={{ fontSize: "0.7rem" }}>{max}</span>
+          onMouseDown={() => startAdjust(1)} onMouseUp={stopAdjust} onMouseLeave={stopAdjust} onTouchStart={() => startAdjust(1)} onTouchEnd={stopAdjust}
+          disabled={disabled} style={{ padding: "0 4px", fontSize: "0.7rem" }}>▲</button>
+        <input
+          type="text" value={String(max)}
+          readOnly
+          style={{ width: 55, textAlign: "center", fontSize: "0.72rem", background: "#f5f5f5" }}
+          aria-label="Max tokens"
+        />
       </div>
       <input
         type="range" min={min} max={max} step={step} value={clamp(value)}
-        onChange={(e) => { const v = Number(e.target.value); onChange(v); }}
-        onMouseUp={() => { if (onCommit) onCommit(value); }}
+        onChange={(e) => { const v = Number(e.target.value); valueRef.current = v; onChange(v); }}
+        onMouseUp={() => { if (onCommit) onCommit(valueRef.current); }}
+        onTouchEnd={() => { if (onCommit) onCommit(valueRef.current); }}
         disabled={disabled}
         style={{ width: "100%", margin: 0 }}
         aria-label={label || "Max tokens slider"}
