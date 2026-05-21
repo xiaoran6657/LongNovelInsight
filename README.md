@@ -16,11 +16,19 @@ Backend v0.2 is complete (Steps 1–14). Frontend v0.2 Steps 1–10 complete (mo
 - **Active-run guard**: Prevents duplicate concurrent analysis runs for the same Topic.
 - **Legacy bridge**: Existing v0.1 endpoints (`/analysis/run`, `/analysis/outputs`) still work. `pipeline=v2` parameter on legacy endpoints delegates to v2.
 
+### What's New in v0.2 Frontend (Steps 1–10)
+
+- **v2 Analysis Run UI**: Mode selector (preview/range/full/incremental), cost projection, run creation, status polling, cancel.
+- **Run history**: List past runs with retry failed / resume actions.
+- **Stage progress**: Per-stage progress bars (extraction/merge/final) with warnings and failed extractions.
+- **Unified outputs panel**: v1 and v2 outputs in one view, filtered by run, with Delete All safety.
+- **Token slider**: Reusable TokenRangeSlider with long-press acceleration, shared between Topic Detail and Chat config.
+- **Provider config form**: Shared component used by both Topic Detail and Chat Right Panel.
+
 ### What It Does NOT Do (v0.2.0-dev)
 
-- Same restrictions as v0.1, plus:
-- Frontend has NOT been updated for v0.2. The UI still shows v0.1 analysis cards.
 - No EPUB/PDF parsing, no multi-novel cross-analysis, no vector DB, no Docker.
+- Frontend Steps 11–13 (error recovery, smoke test, documentation pass) still pending.
 
 ### You Bring Your Own API Key
 
