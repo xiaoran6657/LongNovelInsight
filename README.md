@@ -4,7 +4,7 @@ LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.t
 
 ## v0.2.0-dev (current)
 
-Backend v0.2 is complete (Steps 1–14). The frontend has not yet been updated for v0.2; it still uses the v0.1 analysis API. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
+Backend v0.2 is complete (Steps 1–14). Frontend v0.2 Steps 1–10 complete (mode selector, run creation, polling, stage progress, outputs, config). Steps 11–13 remain. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
 
 ### What's New in v0.2 Backend
 
