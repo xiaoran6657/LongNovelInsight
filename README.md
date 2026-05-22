@@ -4,7 +4,7 @@ LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.t
 
 ## v0.2.0-dev (current)
 
-Backend v0.2 is complete (Steps 1–14). Frontend v0.2 Steps 1–10 complete (mode selector, run creation, polling, stage progress, outputs, config). Steps 11–13 remain. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
+Backend v0.2 is complete (Steps 1–14). Frontend v0.2 is complete (Steps 1–13) with error recovery, sessionStorage persistence, smoke test, and Playwright e2e. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
 
 ### What's New in v0.2 Backend
 
@@ -16,19 +16,21 @@ Backend v0.2 is complete (Steps 1–14). Frontend v0.2 Steps 1–10 complete (mo
 - **Active-run guard**: Prevents duplicate concurrent analysis runs for the same Topic.
 - **Legacy bridge**: Existing v0.1 endpoints (`/analysis/run`, `/analysis/outputs`) still work. `pipeline=v2` parameter on legacy endpoints delegates to v2.
 
-### What's New in v0.2 Frontend (Steps 1–10)
+### What's New in v0.2 Frontend (Steps 1–13)
 
 - **v2 Analysis Run UI**: Mode selector (preview/range/full/incremental), cost projection, run creation, status polling, cancel.
-- **Run history**: List past runs with retry failed / resume actions.
+- **Run history**: List past runs with retry failed / resume actions, truncated at 10 with "show all" toggle.
 - **Stage progress**: Per-stage progress bars (extraction/merge/final) with warnings and failed extractions.
 - **Unified outputs panel**: v1 and v2 outputs in one view, filtered by run, with Delete All safety.
 - **Token slider**: Reusable TokenRangeSlider with long-press acceleration, shared between Topic Detail and Chat config.
 - **Provider config form**: Shared component used by both Topic Detail and Chat Right Panel.
+- **Error recovery**: ErrorBlock with HTTP status badge, expandable detail, and retry on all API panels. Active run ID persisted in sessionStorage across refreshes with automatic cleanup on terminal state.
+- **UX hardening**: EmptyState and StatusBadge components integrated throughout. Run history truncated. Keyboard accessibility with aria-labels and focus indicators.
+- **Smoke test**: Updated manual smoke test covering full v0.2 workflow. Playwright e2e configured with basic smoke tests.
 
 ### What It Does NOT Do (v0.2.0-dev)
 
 - No EPUB/PDF parsing, no multi-novel cross-analysis, no vector DB, no Docker.
-- Frontend Steps 11–13 (error recovery, smoke test, documentation pass) still pending.
 
 ### You Bring Your Own API Key
 

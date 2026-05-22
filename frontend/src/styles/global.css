@@ -555,3 +555,43 @@ a:hover {
   background: #eef1f5;
   flex-shrink: 0;
 }
+
+/* ── Enhanced ErrorBlock ── */
+
+.error-status-badge {
+  display: inline-block;
+  background: #ffebee;
+  color: #c62828;
+  font-weight: 700;
+  font-size: 0.72rem;
+  font-family: monospace;
+  padding: 0.05em 0.4em;
+  border-radius: 3px;
+  margin-right: 0.35rem;
+}
+
+.error-detail {
+  font-size: 0.78rem;
+  color: #c62828;
+  margin-top: 0.35rem;
+}
+
+.error-detail-pre {
+  background: #fafafa;
+  border: 1px solid #ef9a9a;
+  padding: 0.5rem;
+  border-radius: 3px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Accessibility ── */
+
+[role="button"]:focus {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 2px;
+}

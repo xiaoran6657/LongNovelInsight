@@ -502,6 +502,56 @@ The `run` object now includes `final_total`, `final_succeeded`, `final_failed` f
 Response `200`: `{"run": {"id": "uuid", "status": "cancelled"}}`
 Errors: `404`.
 
+**`POST /api/analysis/runs/{run_id}/retry-failed`**
+
+Retry failed extractions in a previously failed or partially-successful analysis run.
+
+Response `200`:
+```json
+{
+  "run": {"id": "uuid", "status": "pending"},
+  "message": "Retrying 3 failed extractions"
+}
+```
+Errors: `404` run not found, `409` run is not in a retryable state.
+
+**`POST /api/analysis/runs/{run_id}/resume?retry_failed=true`**
+
+Resume an incomplete analysis run from where it stopped. Optionally retry failed extractions on resume.
+
+Response `200`:
+```json
+{
+  "run": {"id": "uuid", "status": "running"},
+  "message": "Resuming run"
+}
+```
+Errors: `404` run not found, `409` run is not in a resumable state.
+
+**`GET /api/topics/{topic_id}/analysis/status`** (v0.2 enhanced)
+
+Enhanced status response with `v2_available` and `latest_v2_run` fields.
+
+Response `200`:
+```json
+{
+  "topic_id": "uuid",
+  "has_jobs": false,
+  "has_outputs": true,
+  "latest_job": null,
+  "analysis_types_completed": ["overview", "characters"],
+  "output_counts_by_type": {"overview": 1, "characters": 2},
+  "latest_v2_run": {
+    "id": "uuid", "mode": "preview", "status": "succeeded",
+    "progress_current": 8, "progress_total": 8,
+    "extraction_succeeded": 3, "extraction_failed": 0,
+    "merge_succeeded": 5, "merge_failed": 0,
+    "total_tokens": 15000, "model_used": "deepseek-chat"
+  },
+  "v2_available": true
+}
+```
+
 ---
 
 ### 3.7 Analysis Jobs (internal API)

@@ -1,7 +1,12 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listAnalysisRuns, retryFailedAnalysisRun, resumeAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunListItem } from "../../api/types";
+import { ApiError } from "../../api/client";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
+import EmptyState from "../../components/EmptyState";
+import StatusBadge from "../../components/StatusBadge";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -13,16 +18,16 @@ function fmtTokens(n: number): string {
   return n.toLocaleString();
 }
 
-function statusColor(s: string): string {
+function statusTone(s: string): "ok" | "warn" | "error" | "neutral" {
   switch (s) {
-    case "succeeded": return "#27ae60";
-    case "partial_success": return "#f57f17";
-    case "failed": return "#e74c3c";
-    case "cancelled": return "#999";
-    case "running": return "#1976d2";
-    default: return "#999";
+    case "succeeded": return "ok";
+    case "partial_success": return "warn";
+    case "failed": return "error";
+    default: return "neutral";
   }
 }
+
+const INITIAL_SHOW = 10;
 
 interface Props {
   topicId: string;
@@ -32,13 +37,17 @@ interface Props {
 
 export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }: Props) {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const [showAll, setShowAll] = useState(false);
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["analysisRuns", topicId],
     queryFn: () => listAnalysisRuns(topicId),
     enabled: !!topicId,
   });
 
   const runs = data?.runs ?? [];
+  const visibleRuns = showAll ? runs : runs.slice(0, INITIAL_SHOW);
+  const hasMore = runs.length > INITIAL_SHOW;
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
@@ -59,13 +68,34 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   });
 
   if (isLoading) return <LoadingBlock text="Loading run history..." />;
-  if (runs.length === 0) return null;
+  if (isError) {
+    const apiErr = error instanceof ApiError ? error : undefined;
+    return (
+      <div className="card">
+        <h3>Run History</h3>
+        <ErrorBlock
+          title="Failed to load run history"
+          message={apiErr?.detail ?? error?.message ?? "Unable to fetch run history."}
+          status={apiErr?.status}
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
+  if (runs.length === 0) {
+    return (
+      <EmptyState
+        title="No runs yet"
+        description="Select an analysis mode above and click Run v2 Analysis to create your first run."
+      />
+    );
+  }
 
   return (
     <div className="card" style={{ fontSize: "0.85rem" }}>
-      <h3>Run History ({runs.length})</h3>
+      <h3>Run History ({showAll ? runs.length : Math.min(INITIAL_SHOW, runs.length)}/{runs.length})</h3>
       <div style={{ maxHeight: 400, overflowY: "auto" }}>
-        {runs.map((r) => (
+        {visibleRuns.map((r) => (
           <RunRow
             key={r.id}
             run={r}
@@ -78,6 +108,13 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
           />
         ))}
       </div>
+      {hasMore && (
+        <div style={{ marginTop: "0.5rem", textAlign: "center" }}>
+          <button onClick={() => setShowAll(!showAll)} style={{ fontSize: "0.78rem" }}>
+            {showAll ? "Show less" : `Show all ${runs.length} runs`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -94,11 +131,14 @@ function RunRow({
   resuming: boolean;
 }) {
   const canRetry = run.status === "partial_success" || run.status === "failed";
-  const canResume = run.status === "partial_success" || run.status === "failed";
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }}
+      aria-label={`Run ${run.id.slice(0, 8)}: ${run.mode} ${run.status}`}
       style={{
         padding: "0.5rem", marginBottom: "0.35rem", cursor: "pointer",
         background: isActive ? "#e3f2fd" : "#f9f9f9",
@@ -109,7 +149,7 @@ function RunRow({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.25rem" }}>
         <span>
           <strong>{run.mode}</strong>{" "}
-          <span style={{ color: statusColor(run.status), fontWeight: 600 }}>{run.status}</span>
+          <StatusBadge label={run.status} tone={statusTone(run.status)} />
         </span>
         <span className="text-dim" style={{ fontSize: "0.75rem" }}>
           {fmtDate(run.created_at)}
@@ -122,13 +162,15 @@ function RunRow({
       <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.35rem" }}>
         {canRetry && (
           <button onClick={(e) => { e.stopPropagation(); onRetry(); }} disabled={retrying}
-            style={{ fontSize: "0.72rem", padding: "0.15em 0.5em" }}>
+            style={{ fontSize: "0.72rem", padding: "0.15em 0.5em" }}
+            aria-label="Retry failed extractions for this run">
             {retrying ? "Retrying..." : "Retry Failed"}
           </button>
         )}
-        {canResume && (
+        {canRetry && (
           <button onClick={(e) => { e.stopPropagation(); onResume(); }} disabled={resuming}
-            style={{ fontSize: "0.72rem", padding: "0.15em 0.5em" }}>
+            style={{ fontSize: "0.72rem", padding: "0.15em 0.5em" }}
+            aria-label="Resume this run">
             {resuming ? "Resuming..." : "Resume"}
           </button>
         )}

@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { getChunksMeta } from "../../api/parse";
 import type { ChunksMetaResponse } from "../../api/types";
+import { ApiError } from "../../api/client";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
 
 function fmt(n: number): string {
   return n.toLocaleString();
@@ -46,7 +48,7 @@ function MetaDisplay({ data }: { data: ChunksMetaResponse }) {
 }
 
 export default function ChunksMetaPanel({ topicId, hasDoc }: Props) {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["chunks-meta", topicId],
     queryFn: () => getChunksMeta(topicId),
     enabled: !!topicId && hasDoc,
@@ -63,12 +65,17 @@ export default function ChunksMetaPanel({ topicId, hasDoc }: Props) {
 
   if (isLoading) return <LoadingBlock text="Loading chunks meta..." />;
   if (isError || !data) {
+    const apiErr = error instanceof ApiError ? error : undefined;
     return (
       <div className="card">
         <h3>Chunks Meta</h3>
-        <p className="text-dim">
-          {isError ? "Backend v2 /chunks/meta not available. Parse the document to see chunk counts." : "No chunk data yet."}
-        </p>
+        <ErrorBlock
+          title="Failed to load chunk metadata"
+          message={apiErr?.detail ?? (isError ? "Backend v2 /chunks/meta not available. Parse the document to see chunk counts." : "No chunk data yet.")}
+          status={apiErr?.status}
+          detail={apiErr?.detail ? `HTTP ${apiErr.status}: ${apiErr.detail}` : undefined}
+          onRetry={() => refetch()}
+        />
       </div>
     );
   }

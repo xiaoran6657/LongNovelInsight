@@ -9,6 +9,7 @@ export function useAnalysisRun(runId: string | null, topicId: string) {
     queryKey: ["analysisRun", runId],
     queryFn: () => getAnalysisRun(runId!),
     enabled: !!runId,
+    gcTime: 0,
     refetchInterval: (query) => {
       const status = query.state.data?.run.status;
       if (status === "succeeded" || status === "partial_success" || status === "failed" || status === "cancelled") {

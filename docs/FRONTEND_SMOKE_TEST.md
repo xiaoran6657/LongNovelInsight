@@ -259,3 +259,166 @@ MVP/
 ```
 
 These are already in `.gitignore` — do not use `git add -f` for them.
+
+---
+
+## 17. v0.2 Analysis Run — Creation & Polling
+
+**Prerequisites:** A Topic with document uploaded, parsed, and provider bound with complete config.
+
+### 17.1 Chunks Meta + Range Selection
+
+1. Navigate to the topic detail page
+2. Verify "Chunks Meta" card shows: chunk count, chapter count, total chars, estimated tokens
+3. Verify "Range Selection" section appears below with radio buttons: "By chunk index" / "By chapter index"
+4. Set start=0, end=5 in chunk mode — verify "Selected: 6 chunks"
+5. Set invalid range (start=5, end=0) — verify error message
+6. Switch to "By chapter index" — verify inputs switch context
+
+### 17.2 Analysis Mode Selection
+
+1. Verify 4 mode options: Preview, Range, Full, Incremental
+2. Select "Preview" — verify limit_chunks input appears
+3. Select "Range" — range selector becomes active for run scope
+4. Select "Full" — verify orange warning text appears
+5. Select "Incremental" — if no previous run, verify it is disabled with explanation
+6. Verify "Cost Projection" card updates when mode/range changes
+
+### 17.3 Create v2 Run
+
+1. Select "Preview" mode with limit_chunks=3
+2. Click "Run v2 Analysis"
+3. Verify API consumption warning is visible
+4. Verify active run card appears with status badge (pending → running → succeeded)
+5. Verify progress bar appears during running state
+6. Verify polling indicator shows "Polling..."
+7. Wait for completion — verify progress bar disappears and "Complete" text appears
+
+### 17.4 Full Mode Confirmation
+
+1. Select "Full" mode
+2. Click "Run v2 Analysis" — verify red confirmation box with chunk count appears
+3. Click "Cancel" — verify confirmation is dismissed
+4. Click "Run v2 Analysis" again — verify confirmation reappears
+5. Click "Yes, run full analysis" — verify run begins
+
+### 17.5 Cancel Run
+
+1. Create a run with many chunks so it takes time
+2. Verify "Cancel" button is visible with red background
+3. Click "Cancel" — verify status changes to "cancelled"
+4. Verify cancel button disappears after cancellation
+
+### 17.6 Stage Progress
+
+1. After run completes, verify three stage bars: Extraction, Merge, Final Outputs
+2. Verify each bar shows succeeded/failed/total counts
+3. If extraction failures exist, verify failed items listed (max 20) with "+N more" overflow
+4. Verify warnings section in a collapsible `<details>` element
+
+---
+
+## 18. v0.2 Run History & Actions
+
+### 18.1 Run History List
+
+1. Verify "Run History" section appears below the active run panel
+2. If no runs exist, verify EmptyState with "No runs yet" message
+3. Create several runs — verify they appear in reverse chronological order
+4. Verify each run shows: mode, StatusBadge, date, extraction/merge counts, tokens, model
+5. If more than 10 runs, verify only first 10 are shown with "Show all N runs" button
+6. Click "Show all" — verify all runs appear
+7. Click "Show less" — verify list collapses back to 10
+
+### 18.2 Select Run from History
+
+1. Click a run row in history — verify it highlights (blue border)
+2. Verify the outputs panel updates to show that run's outputs
+3. Click the same row again — verify deselection
+
+### 18.3 Retry Failed / Resume
+
+1. For a run with `partial_success` or `failed` status:
+   - Verify "Retry Failed" and "Resume" buttons appear in the history row
+   - Verify same buttons appear in the active run display when selected
+2. Click "Retry Failed" — verify run status changes to pending/running
+3. Click "Resume" — verify run resumes polling
+
+### 18.4 Inline Retry in Active Run
+
+1. Select a run with `partial_success` or `failed` status
+2. Verify the active run card shows "Retry Failed" and "Resume" buttons above error message
+3. Click "Retry Failed" — verify mutation starts and queries invalidate
+
+---
+
+## 19. v0.2 Refresh Resilience
+
+### 19.1 Active Run Persistence
+
+1. Create a v2 run and note the run ID
+2. While the run is still pending/running, refresh the page (F5)
+3. Verify the active run card reappears and polling resumes automatically
+4. Verify the run ID is stored in `sessionStorage` under key `activeAnalysisRun_<topicId>`
+5. Wait for the run to reach terminal state
+6. Verify the `sessionStorage` key is removed
+7. Refresh again — verify no run is auto-selected
+
+### 19.2 Backend Unavailable Recovery
+
+1. While viewing a topic detail page with run history, stop the backend
+2. Verify all three panels show ErrorBlock with retry button:
+   - Run History: "Failed to load run history"
+   - Outputs: "Failed to load analysis outputs"
+   - Chunks Meta: "Failed to load chunk metadata"
+3. Verify ErrorBlock shows HTTP status badge (e.g., `[0]` for network error)
+4. Restart the backend
+5. Click "Retry" on each panel — verify data reloads successfully
+6. For the active run, verify polling resumes after backend restart
+
+### 19.3 404 Run Recovery
+
+1. Select a run from history
+2. Delete the run externally (or simulate 404)
+3. Verify the active run display clears without crashing
+4. Verify sessionStorage key is removed
+
+---
+
+## 20. v0.2 Outputs & StatusBadge
+
+### 20.1 Outputs Panel
+
+1. After a run completes with outputs, verify outputs appear in the outputs panel
+2. Verify output type filter dropdown works
+3. If some output types are missing, verify orange "Missing types" card
+4. If a run is still active, verify "Analysis is still running" note
+5. Verify "Delete All" button with confirmation dialog works
+6. Verify output cards show type name, truncated run ID, date, and content
+
+### 20.2 EmptyState and StatusBadge
+
+1. When no runs exist, verify "No runs yet" EmptyState with description
+2. When no outputs exist, verify "No analysis outputs yet" EmptyState
+3. Verify all status displays use the StatusBadge component with proper coloring:
+   - succeeded: green, failed: red, partial_success: orange, running: blue
+
+---
+
+## 21. v0.2 Error Detail Expansion
+
+1. Trigger an API error (e.g., stop backend)
+2. Verify ErrorBlock shows an expandable "Show details" section
+3. Click "Show details" — verify error detail text appears in a scrollable pre block
+4. Verify long detail text is truncated at 500 characters with "..."
+5. Verify HTTP status badge appears (e.g., `[404]`, `[500]`) when applicable
+
+---
+
+## 22. Keyboard Accessibility
+
+1. Tab through the page — verify run history rows receive focus with visible outline
+2. Press Enter or Space on a focused run row — verify it selects/deselects
+3. Verify all buttons have keyboard-operable focus styles
+4. Verify disabled buttons are skipped in tab order or clearly indicated
+5. Verify aria-labels exist on: Retry Failed, Resume, Cancel, Create Run, Delete All buttons

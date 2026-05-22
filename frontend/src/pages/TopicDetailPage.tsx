@@ -27,6 +27,7 @@ import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
 import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
+import { useActiveRunPersistence } from "../features/analysis/useActiveRunPersistence";
 
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
@@ -35,7 +36,7 @@ export default function TopicDetailPage() {
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const { activeRunId, setActiveRunId, clearStorage } = useActiveRunPersistence(topicId ?? "");
 
   // Clear topic-scoped state when topic changes
   useEffect(() => {
@@ -286,6 +287,7 @@ export default function TopicDetailPage() {
         onActiveRunIdChange={setActiveRunId}
         onChangeMode={setAnalysisMode}
         onChangeLimitChunks={setPreviewLimitChunks}
+        onRunTerminal={clearStorage}
       />
 
       <AnalysisRunHistory

@@ -2,8 +2,11 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAnalysisRun, deleteAnalysisOutputs, listAnalysisOutputsV2 } from "../../api/analysis";
 import type { AnalysisOutput } from "../../api/types";
+import { ApiError } from "../../api/client";
 import AnalysisOutputCard from "../../components/AnalysisOutputCard";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
+import EmptyState from "../../components/EmptyState";
 
 const ALL_TYPES = ["overview", "characters", "relations", "events", "causality", "themes"];
 
@@ -40,7 +43,7 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
   const isRunActive = runDetail?.run.status === "pending" || runDetail?.run.status === "running";
 
   // Fetch outputs filtered by run if runId is set, otherwise all
-  const { data: outputsData, isLoading } = useQuery({
+  const { data: outputsData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["outputs", topicId, runId],
     queryFn: () => runId
       ? listAnalysisOutputsV2(topicId, { runId })
@@ -67,6 +70,20 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
   );
 
   if (isLoading) return <LoadingBlock text="Loading outputs..." />;
+  if (isError) {
+    const apiErr = error instanceof ApiError ? error : undefined;
+    return (
+      <div>
+        <h2>{runId ? "Run Outputs" : "Outputs"}</h2>
+        <ErrorBlock
+          title="Failed to load analysis outputs"
+          message={apiErr?.detail ?? error?.message ?? "Unable to fetch outputs."}
+          status={apiErr?.status}
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -79,11 +96,10 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
       )}
 
       {allOutputs.length === 0 && !isRunActive && (
-        <div className="card">
-          <p className="text-dim">
-            {runId ? "No outputs for this run yet." : "No analysis outputs yet. Run an analysis to see results."}
-          </p>
-        </div>
+        <EmptyState
+          title={runId ? "No outputs for this run yet" : "No analysis outputs yet"}
+          description={runId ? "The run hasn't produced any outputs." : "Run an analysis to see results here."}
+        />
       )}
 
       {missingTypes.length > 0 && missingTypes.length < ALL_TYPES.length && allOutputs.length > 0 && (
@@ -112,7 +128,8 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
                 <button
                   onClick={() => { if (confirm("Delete ALL analysis outputs for this topic?")) deleteMut.mutate(); }}
                   disabled={deleteMut.isPending}
-                  style={{ fontSize: "0.75rem", background: "#e74c3c" }}>
+                  style={{ fontSize: "0.75rem", background: "#e74c3c" }}
+                  aria-label="Delete all analysis outputs">
                   Delete All
                 </button>
               )}
