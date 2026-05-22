@@ -720,6 +720,7 @@ def run_analysis_async(
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job is None:
+            release_topic_analysis_lock(topic_id)
             return
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -750,6 +751,7 @@ def run_analysis_async(
             job.finished_at = datetime.now(timezone.utc)
             session.add(job)
             session.commit()
+            release_topic_analysis_lock(topic_id)
             return
 
         delete_analysis_outputs(topic_id, session)
@@ -825,6 +827,7 @@ def run_analysis_async(
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job is None:
+            release_topic_analysis_lock(topic_id)
             return
 
         completed = 0
@@ -900,3 +903,5 @@ def run_analysis_async(
         job.metadata_json = _json.dumps(metadata, ensure_ascii=False)
         session.add(job)
         session.commit()
+
+    release_topic_analysis_lock(topic_id)

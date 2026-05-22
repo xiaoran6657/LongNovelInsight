@@ -421,6 +421,7 @@ def run_final_output_stage(
 
     succeeded = 0
     failed = 0
+    skipped = 0
     for output_type in types_to_run:
         if output_type not in _FINAL_BUILDERS:
             summaries.append(
@@ -433,8 +434,10 @@ def run_final_output_stage(
                 summary.warnings.append(
                     f"No items for {output_type}; insufficient evidence for this type"
                 )
+                skipped += 1
+            else:
+                succeeded += 1
             summaries.append(summary)
-            succeeded += 1
         except Exception as e:
             summaries.append(
                 FinalOutputSummary(output_type, 0, warnings=[f"Final output failed: {e}"])

@@ -141,10 +141,7 @@ def run_analysis_async(
     for item in items:
         session.refresh(item)
 
-    # Release the lock — background thread will re-acquire
-    analysis_service.release_topic_analysis_lock(topic_id)
-
-    # Start background processing
+    # Start background processing (worker releases the lock when done)
     thread = threading.Thread(
         target=analysis_service.run_analysis_async,
         args=(topic_id, job.id, limit_chunks),

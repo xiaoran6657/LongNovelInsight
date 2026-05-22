@@ -306,4 +306,4 @@ Normalized atomic facts produced from local extraction results.
 v0.2 merge stage writes intermediate AnalysisOutput rows with these `output_type` values:
 `merge_overview`, `merge_characters`, `merge_events`, `merge_relations`, `merge_causality`, `merge_themes`, `merge_worldbuilding`, `merge_foreshadowing`.
 
-These are intermediate outputs — Step 8 (not yet implemented) will convert them to frontend-compatible types matching v0.1's output_type values.
+The 6 core types (overview, characters, relations, events, causality, themes) have final output builders that produce frontend-compatible AnalysisOutput rows. Worldbuilding and foreshadowing have merge support but no final output builders yet. Timeline and character_arcs are planned but not yet implemented.

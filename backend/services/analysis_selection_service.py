@@ -39,6 +39,8 @@ def get_chunks_meta(session: Session, topic_id: str) -> dict:
             "estimated_tokens": 0,
             "first_chunk_index": None,
             "last_chunk_index": None,
+            "first_global_chunk_index": None,
+            "last_global_chunk_index": None,
             "chunks_by_chapter": [],
         }
 
@@ -67,10 +69,10 @@ def get_chunks_meta(session: Session, topic_id: str) -> dict:
         "chapter_count": len(chapters),
         "total_chars": total_chars,
         "estimated_tokens": estimated_tokens,
-        "first_chunk_index": chunks[0].chunk_index,
-        "last_chunk_index": chunks[-1].chunk_index,
+        "first_chunk_index": 0,
+        "last_chunk_index": len(chunks) - 1,
         "first_global_chunk_index": 0,
-        "last_global_chunk_index": len(chunks) - 1 if chunks else None,
+        "last_global_chunk_index": len(chunks) - 1,
         "chunks_by_chapter": chunks_by_chapter,
     }
 

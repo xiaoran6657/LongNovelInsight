@@ -1,6 +1,6 @@
 # LongNovelInsight
 
-LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt format) and produce structured insights — character profiles, relationship maps, event timelines, causal chains, and thematic analysis — all stored on your own machine.
+LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt format) and produce structured insights — character profiles, relationship maps, key events, causal chains, and thematic analysis — all stored on your own machine.
 
 ## v0.2.0-dev (current)
 

@@ -349,9 +349,15 @@ def merge_relations(session: Session, run_id: str) -> MergeSummary:
         relation_type = ""
         for c in content_list:
             if isinstance(c, dict):
-                character_a = character_a or c.get("character_a", "")
-                character_b = character_b or c.get("character_b", "")
-                relation_type = relation_type or c.get("relation_type", "")
+                character_a = (
+                    character_a or c.get("character_a", "") or c.get("character_a_hint", "")
+                )
+                character_b = (
+                    character_b or c.get("character_b", "") or c.get("character_b_hint", "")
+                )
+                relation_type = (
+                    relation_type or c.get("relation_type", "") or c.get("interaction_type", "")
+                )
 
         merged.append(
             {
@@ -400,8 +406,12 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
         effect = ""
         for c in content_list:
             if isinstance(c, dict):
-                cause = cause or c.get("cause_event", c.get("cause_event_id", ""))
-                effect = effect or c.get("effect_event", c.get("effect_event_id", ""))
+                cause = cause or c.get(
+                    "cause_event", c.get("cause_event_id", c.get("cause_hint", ""))
+                )
+                effect = effect or c.get(
+                    "effect_event", c.get("effect_event_id", c.get("effect_hint", ""))
+                )
 
         is_resolved = (cause in all_events) and (effect in all_events)
         if not is_resolved:
