@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Basic smoke", () => {
   test("homepage loads and shows health", async ({ page }) => {
-    await page.route("**/api/health", (route) => {
+    await page.route(/\/api\/health(?:\?.*)?$/, (route) => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -29,31 +29,45 @@ test.describe("Basic smoke", () => {
   });
 
   test("topics page renders", async ({ page }) => {
-    await page.route("**/api/topics**", (route) => {
+    await page.route(/\/api\/topics(?:\?.*)?$/, (route) => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ topics: [] }),
       });
     });
-    await page.goto("/topics");
-    await expect(page.locator("text=Topics")).toBeVisible();
-  });
-
-  test("providers page renders", async ({ page }) => {
-    await page.route("**/api/providers**", (route) => {
+    await page.route(/\/api\/providers(?:\?.*)?$/, (route) => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ providers: [] }),
       });
     });
+    await page.goto("/topics");
+    await expect(page.getByRole("heading", { name: "Topics" })).toBeVisible();
+  });
+
+  test("providers page renders", async ({ page }) => {
+    await page.route(/\/api\/providers(?:\?.*)?$/, (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ providers: [] }),
+      });
+    });
+    await page.route(/\/api\/provider-presets(?:\?.*)?$/, (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ presets: [] }),
+      });
+    });
     await page.goto("/providers");
-    await expect(page.locator("text=Providers")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
   });
 
   test("404 page for unknown routes", async ({ page }) => {
     await page.goto("/nonexistent");
-    await expect(page.locator("text=404")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Page Not Found" })).toBeVisible();
   });
 });
