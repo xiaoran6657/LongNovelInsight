@@ -23,7 +23,7 @@ export default function AppLayout() {
         <Link to="/" className="header-title">
           LongNovelInsight
         </Link>
-        <span className="header-version">v0.1.0</span>
+        <span className="header-version">v0.2.0-dev</span>
       </header>
 
       <nav className="nav">

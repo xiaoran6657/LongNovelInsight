@@ -8,7 +8,7 @@ export default function DashboardPage() {
       <HealthPanel />
 
       <section className="card" style={{ marginTop: "1.5rem" }}>
-        <h3>v0.1.0 Workflow</h3>
+        <h3>v0.2.0 Workflow</h3>
         <ol className="workflow-list">
           <li>
             <strong>Configure Provider</strong> — Add an LLM provider
