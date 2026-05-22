@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DocumentSummary } from "../api/types";
@@ -38,12 +38,16 @@ export default function TopicDetailPage() {
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
   const { activeRunId, setActiveRunId, clearStorage } = useActiveRunPersistence(topicId ?? "");
 
-  // Clear topic-scoped state when topic changes
+  // Clear topic-scoped UI state when topic changes.
+  // activeRunId is managed by useActiveRunPersistence (re-reads sessionStorage on topic change).
+  const prevTopicIdRef = useRef(topicId);
   useEffect(() => {
-    setActiveRunId(null);
-    setChunkRange({ mode: "chunk", start: null, end: null });
-    setAnalysisMode("preview");
-    setPreviewLimitChunks(3);
+    if (prevTopicIdRef.current !== topicId) {
+      prevTopicIdRef.current = topicId;
+      setChunkRange({ mode: "chunk", start: null, end: null });
+      setAnalysisMode("preview");
+      setPreviewLimitChunks(3);
+    }
   }, [topicId]);
 
   // Provider binding state

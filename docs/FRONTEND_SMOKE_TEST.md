@@ -371,7 +371,7 @@ These are already in `.gitignore` — do not use `git add -f` for them.
    - Run History: "Failed to load run history"
    - Outputs: "Failed to load analysis outputs"
    - Chunks Meta: "Failed to load chunk metadata"
-3. Verify ErrorBlock shows HTTP status badge (e.g., `[0]` for network error)
+3. Verify ErrorBlock shows status badge (e.g., `[network]` for network error, `[404]` for not found)
 4. Restart the backend
 5. Click "Retry" on each panel — verify data reloads successfully
 6. For the active run, verify polling resumes after backend restart

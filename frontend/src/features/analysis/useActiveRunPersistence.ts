@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export function useActiveRunPersistence(topicId: string) {
   const storageKey = `activeAnalysisRun_${topicId}`;
@@ -10,6 +10,18 @@ export function useActiveRunPersistence(topicId: string) {
       return null;
     }
   });
+
+  // Re-read sessionStorage when topicId (and therefore storageKey) changes.
+  // This handles navigation between topics: the new topic's stored run is loaded,
+  // and the old topic's run is dropped from React state.
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      setActiveRunIdRaw(stored);
+    } catch {
+      setActiveRunIdRaw(null);
+    }
+  }, [storageKey]);
 
   const setActiveRunId = useCallback(
     (id: string | null) => {

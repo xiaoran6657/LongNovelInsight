@@ -123,9 +123,9 @@ export default function AnalysisRunPanel({
   // Auto-clear on 404 (run no longer exists on backend)
   useEffect(() => {
     if (runQuery.isError && runQuery.error instanceof ApiError && runQuery.error.status === 404) {
-      onRunTerminal?.();
+      onActiveRunIdChange(null);
     }
-  }, [runQuery.isError, runQuery.error, onRunTerminal]);
+  }, [runQuery.isError, runQuery.error, onActiveRunIdChange]);
 
   function runStatusTone(status: string): "ok" | "warn" | "error" | "info" | "neutral" {
     switch (status) {

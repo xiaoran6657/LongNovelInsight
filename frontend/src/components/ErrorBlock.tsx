@@ -12,8 +12,10 @@ export default function ErrorBlock({ title, message, detail, status, onRetry }: 
   return (
     <div className="card card-error" style={{ padding: "1rem" }}>
       <p style={{ fontWeight: 700, marginBottom: "0.35rem" }}>
-        {status != null && status > 0 && (
-          <span className="error-status-badge">[{status}]</span>
+        {status != null && (
+          <span className="error-status-badge">
+            [{status === 0 ? "network" : status}]
+          </span>
         )}
         {title || "Error"}
       </p>
