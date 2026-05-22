@@ -644,3 +644,96 @@ class TestMergeOverviewFields:
             assert item["source_chunk_ids"] == []
             assert item["evidence_quotes"] == []
             assert item["confidence"] == 0.0
+
+    def test_relation_hint_fields_in_merge(self, engine):
+        """merge_relations reads character_a_hint/character_b_hint/interaction_type."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.RELATION,
+                "rel_ab",
+                {
+                    "character_a_hint": "lady",
+                    "character_b_hint": "knight",
+                    "interaction_type": "rivalry",
+                },
+                cid,
+                confidence=0.9,
+            )
+            session.commit()
+            merge_relations(session, rid)
+
+        with Session(engine) as session:
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "merge_relations",
+                )
+            ).first()
+            assert out is not None
+            merged = json.loads(out.content_json)
+            assert len(merged) == 1
+            assert merged[0]["character_a"] == "lady"
+            assert merged[0]["character_b"] == "knight"
+            assert merged[0]["relation_type"] == "rivalry"
+
+    def test_causal_hint_fields_in_merge(self, engine):
+        """merge_causality reads cause_hint/effect_hint from atom content_json."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_sword",
+                {"title": "sword_drawn"},
+                cid,
+                confidence=0.9,
+            )
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_battle",
+                {"title": "battle_begins"},
+                cid,
+                confidence=0.9,
+            )
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
+                "caus_sword_battle",
+                {
+                    "cause_hint": "sword_drawn",
+                    "effect_hint": "battle_begins",
+                    "link_description": "sword drawn starts battle",
+                },
+                cid,
+                confidence=0.85,
+            )
+            session.commit()
+            merge_causality(session, rid)
+
+        with Session(engine) as session:
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "merge_causality",
+                )
+            ).first()
+            assert out is not None
+            merged = json.loads(out.content_json)
+            assert len(merged) == 1
+            assert merged[0]["cause_event"] == "sword_drawn"
+            assert merged[0]["effect_event"] == "battle_begins"

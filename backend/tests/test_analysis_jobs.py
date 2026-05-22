@@ -368,3 +368,51 @@ def _mock_analysis_llm(messages, model, temperature, max_tokens, response_format
         model="test",
         usage={},
     )
+
+
+# ── P1-4: Cancel refreshes from DB ──
+
+
+def test_run_analysis_job_cancel_detected_in_loop(client, engine):
+    """Session.refresh(job) in the loop enables cancel to stop execution mid-run."""
+    from sqlmodel import Session
+
+    from models.job import Job
+    from services import job_service
+
+    tid = _setup_topic(client)
+
+    with Session(engine) as s1:
+        job = job_service.create_analysis_job(tid, "analysis", s1)
+        job_service.create_default_analysis_items(job.id, s1)
+        s1.commit()
+        job_id = job.id
+
+    call_count = [0]
+
+    def cancel_after_first(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # Cancel by directly setting status via the same session
+            # (simulates a different thread cancelling via API)
+            kwargs["session"].expire_all()
+            job_inner = kwargs["session"].get(Job, job_id)
+            if job_inner:
+                job_inner.status = JobStatus.CANCELLED
+                kwargs["session"].add(job_inner)
+                kwargs["session"].flush()
+        return _mock_output(*args, **kwargs)
+
+    with patch(
+        "services.job_service.analysis_service.run_single_analysis_output",
+        side_effect=cancel_after_first,
+    ):
+        with Session(engine) as session:
+            job_service.run_analysis_job(job_id, session)
+
+    assert call_count[0] <= 1, f"Expected ≤1 LLM call, got {call_count[0]}"
+    # Verify the job was stopped by cancel
+    with Session(engine) as s3:
+        job_check = s3.get(Job, job_id)
+        assert job_check is not None
+        assert job_check.status == JobStatus.CANCELLED

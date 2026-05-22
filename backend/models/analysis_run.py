@@ -31,6 +31,7 @@ class AnalysisRun(SQLModel, table=True):
     final_total: int = 0
     final_succeeded: int = 0
     final_failed: int = 0
+    final_skipped: int = 0
 
     prompt_tokens: int = 0
     completion_tokens: int = 0

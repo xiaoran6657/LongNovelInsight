@@ -54,6 +54,7 @@ def _migrate_analysis_run_final_columns() -> None:
         ("final_total", "INTEGER NOT NULL DEFAULT 0"),
         ("final_succeeded", "INTEGER NOT NULL DEFAULT 0"),
         ("final_failed", "INTEGER NOT NULL DEFAULT 0"),
+        ("final_skipped", "INTEGER NOT NULL DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for col_name, col_def in columns:

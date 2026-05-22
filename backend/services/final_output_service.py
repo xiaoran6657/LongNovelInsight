@@ -448,7 +448,39 @@ def run_final_output_stage(
     if run:
         run.final_succeeded = succeeded
         run.final_failed = failed
+        run.final_skipped = skipped
         session.add(run)
         session.commit()
 
+    # Generate empty-but-valid outputs for skipped types
+    for output_type in types_to_run:
+        if output_type not in _FINAL_BUILDERS:
+            continue
+        summary = next((s for s in summaries if s.output_type == output_type), None)
+        if summary and summary.item_count == 0:
+            topic_id = _get_run_topic(session, run_id)
+            _save_final(
+                session,
+                run_id,
+                topic_id,
+                output_type,
+                _skip_title(output_type),
+                {"insufficient_evidence": True, "analysis_type": output_type, "items": []},
+                [],
+                [],
+                0.0,
+            )
+
     return summaries
+
+
+def _skip_title(output_type: str) -> str:
+    titles = {
+        "overview": "Work Overview",
+        "characters": "Character List",
+        "relations": "Character Relationships",
+        "events": "Key Events",
+        "causality": "Event Causal Chain",
+        "themes": "Themes & Philosophy",
+    }
+    return titles.get(output_type, output_type)

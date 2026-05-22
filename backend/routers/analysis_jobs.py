@@ -135,6 +135,7 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
             "merge_failed": latest_run.merge_failed,
             "final_succeeded": latest_run.final_succeeded,
             "final_failed": latest_run.final_failed,
+            "final_skipped": latest_run.final_skipped,
             "total_tokens": latest_run.total_tokens,
             "model_used": latest_run.model_used,
             "started_at": latest_run.started_at.isoformat() if latest_run.started_at else None,

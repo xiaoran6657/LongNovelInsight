@@ -455,23 +455,14 @@ def _execute_run_impl(run_id: str, engine) -> None:
                 final_summaries = run_final_output_stage(
                     session, run_id, requested_types=final_types
                 )
-                final_succeeded_count = sum(
-                    1
-                    for s in final_summaries
-                    if not any("Final output failed:" in w for w in s.warnings)
-                )
-                final_failed_count = sum(
-                    1
-                    for s in final_summaries
-                    if any("Final output failed:" in w for w in s.warnings)
-                )
                 for s in final_summaries:
                     final_warnings.extend(s.warnings)
 
                 run = session.get(AnalysisRun, run_id)
                 if run:
-                    run.final_succeeded = final_succeeded_count
-                    run.final_failed = final_failed_count
+                    final_succeeded_count = run.final_succeeded or 0
+                    final_failed_count = run.final_failed or 0
+                    final_skipped_count = run.final_skipped or 0
                     run.progress_current = (
                         succeeded
                         + failed
@@ -479,6 +470,7 @@ def _execute_run_impl(run_id: str, engine) -> None:
                         + merge_failed_count
                         + final_succeeded_count
                         + final_failed_count
+                        + final_skipped_count
                     )
 
         # ── Final status ──
@@ -671,6 +663,7 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "final_total": run.final_total or 0,
             "final_succeeded": run.final_succeeded or 0,
             "final_failed": run.final_failed or 0,
+            "final_skipped": run.final_skipped or 0,
             "total_tokens": run.total_tokens,
             "model_used": run.model_used,
             "error_message": run.error_message,
@@ -705,6 +698,7 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "total": run.final_total or 0,
             "succeeded": run.final_succeeded or 0,
             "failed": run.final_failed or 0,
+            "skipped": run.final_skipped or 0,
             "outputs": [
                 {
                     "id": o.id,
@@ -952,26 +946,18 @@ def _run_merge_and_final(session: Session, run_id: str) -> None:
 
     final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
     final_merge_types = [t for t in merge_types if t in final_types]
-    final_succeeded = 0
-    final_failed = 0
     if final_merge_types and merge_succeeded > 0:
-        final_summaries = run_final_output_stage(session, run_id, requested_types=final_merge_types)
-        final_succeeded = sum(
-            1 for s in final_summaries if not any("Final output failed:" in w for w in s.warnings)
-        )
-        final_failed = sum(
-            1 for s in final_summaries if any("Final output failed:" in w for w in s.warnings)
-        )
+        run_final_output_stage(session, run_id, requested_types=final_merge_types)
 
     run = session.get(AnalysisRun, run_id)
     if run:
         run.merge_succeeded = merge_succeeded
         run.merge_failed = merge_failed
-        run.final_succeeded = final_succeeded
-        run.final_failed = final_failed
         if run.extraction_succeeded == 0:
             run.status = JobStatus.FAILED
-        elif (run.extraction_failed or 0) == 0 and merge_failed == 0 and final_failed == 0:
+        elif (
+            (run.extraction_failed or 0) == 0 and merge_failed == 0 and (run.final_failed or 0) == 0
+        ):
             run.status = JobStatus.SUCCEEDED
         else:
             run.status = JobStatus.PARTIAL_SUCCESS

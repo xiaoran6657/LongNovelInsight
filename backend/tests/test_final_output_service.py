@@ -461,3 +461,60 @@ class TestRunFinalOutputStage:
             summaries = run_final_output_stage(session, rid, requested_types=["nonexistent"])
             assert len(summaries) == 1
             assert any("unknown" in w.lower() for w in summaries[0].warnings)
+
+    def test_skipped_type_generates_empty_output(self, engine):
+        """Zero-item final type: skipped count is set, empty AnalysisOutput written."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            # No atoms → merge_characters creates 0-item merge
+            merge_characters(session, rid)
+            # Run final stage with characters type requested
+            summaries = run_final_output_stage(session, rid, requested_types=["characters"])
+            assert len(summaries) == 1
+            assert summaries[0].item_count == 0
+            assert any("insufficient evidence" in w.lower() for w in summaries[0].warnings)
+
+            # Verify run counters
+            run = session.get(AnalysisRun, rid)
+            assert run.final_succeeded == 0
+            assert run.final_failed == 0
+            assert run.final_skipped == 1
+
+            # Verify empty AnalysisOutput was written
+            outputs = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "characters",
+                )
+            ).all()
+            assert len(outputs) == 1
+            content = json.loads(outputs[0].content_json)
+            assert content.get("insufficient_evidence") is True
+            assert outputs[0].confidence == 0.0
+
+    def test_succeeded_type_sets_correct_counters(self, engine):
+        """Non-empty final type: succeeded count is set, no skipped."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CHARACTER,
+                "char_x",
+                {"name": "X"},
+                cid,
+                confidence=0.9,
+            )
+            session.commit()
+            merge_characters(session, rid)
+            summaries = run_final_output_stage(session, rid, requested_types=["characters"])
+
+            assert len(summaries) == 1
+            assert summaries[0].item_count == 1
+
+            run = session.get(AnalysisRun, rid)
+            assert run.final_succeeded == 1
+            assert run.final_skipped == 0

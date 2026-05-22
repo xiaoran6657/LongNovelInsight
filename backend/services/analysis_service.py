@@ -702,6 +702,17 @@ def run_analysis_async(
     limit_chunks: int = 5,
 ) -> None:
     """Run structured analysis with bounded parallelism. Workers call LLM; main thread writes DB."""
+    try:
+        _run_analysis_async_impl(topic_id, job_id, limit_chunks)
+    finally:
+        release_topic_analysis_lock(topic_id)
+
+
+def _run_analysis_async_impl(
+    topic_id: str,
+    job_id: str,
+    limit_chunks: int,
+) -> None:
     import json as _json
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from datetime import datetime, timezone
@@ -720,7 +731,6 @@ def run_analysis_async(
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job is None:
-            release_topic_analysis_lock(topic_id)
             return
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -751,7 +761,6 @@ def run_analysis_async(
             job.finished_at = datetime.now(timezone.utc)
             session.add(job)
             session.commit()
-            release_topic_analysis_lock(topic_id)
             return
 
         delete_analysis_outputs(topic_id, session)
@@ -827,7 +836,6 @@ def run_analysis_async(
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job is None:
-            release_topic_analysis_lock(topic_id)
             return
 
         completed = 0
@@ -903,5 +911,3 @@ def run_analysis_async(
         job.metadata_json = _json.dumps(metadata, ensure_ascii=False)
         session.add(job)
         session.commit()
-
-    release_topic_analysis_lock(topic_id)

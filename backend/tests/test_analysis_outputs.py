@@ -1086,3 +1086,105 @@ def test_delete_outputs_cleans_up_artifacts(client, engine):
         assert len(artifacts) == 0
 
     client.delete(f"/api/topics/{tid}")
+
+
+# ── P1-4: Lock safety tests ──
+
+
+def test_analysis_lock_released_on_exception(client):
+    """run_analysis_async releases topic lock even when an exception occurs."""
+    import io
+    import threading
+
+    from services.analysis_service import (
+        acquire_topic_analysis_lock,
+        release_topic_analysis_lock,
+        run_analysis_async,
+    )
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "LockTest P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "LockTest Topic"})
+    tid = r.json()["id"]
+    client.put(
+        f"/api/topics/{tid}/provider-config",
+        json={"provider_id": prov["id"]},
+    )
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", io.BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    from db import engine as real_engine
+    from models.job import Job
+
+    with __import__("sqlmodel").Session(real_engine) as session:
+        job = Job(
+            topic_id=tid,
+            job_type="analysis",
+            status="pending",
+            progress_total=1,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    acquired = acquire_topic_analysis_lock(tid)
+    assert acquired
+
+    thread = threading.Thread(
+        target=run_analysis_async,
+        args=(tid, job_id, 1),
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=10)
+
+    # After thread finishes (even with failure), lock should be released
+    can_acquire = acquire_topic_analysis_lock(tid)
+    assert can_acquire, "Lock was NOT released by the worker"
+    release_topic_analysis_lock(tid)
+
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_analysis_lock_released_on_bad_job(client):
+    """run_analysis_async releases lock even when job_id is not found."""
+    import threading
+
+    from services.analysis_service import (
+        acquire_topic_analysis_lock,
+        release_topic_analysis_lock,
+        run_analysis_async,
+    )
+
+    r = client.post("/api/topics", json={"name": "BadJob Topic"})
+    tid = r.json()["id"]
+
+    acquired = acquire_topic_analysis_lock(tid)
+    assert acquired
+
+    thread = threading.Thread(
+        target=run_analysis_async,
+        args=(tid, "nonexistent-job-id", 1),
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=5)
+
+    can_acquire = acquire_topic_analysis_lock(tid)
+    assert can_acquire, "Lock should be released even on bad job"
+    release_topic_analysis_lock(tid)
+
+    client.delete(f"/api/topics/{tid}")
