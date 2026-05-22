@@ -620,12 +620,23 @@ def get_analysis_outputs(
 
 
 def delete_analysis_outputs(topic_id: str, session: Session, run_id: str | None = None) -> int:
+    import json as _json
+
+    from services.artifact_storage_service import delete_artifact as _delete_artifact
+
     stmt = select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
     if run_id:
         stmt = stmt.where(AnalysisOutput.run_id == run_id)
     outputs = session.exec(stmt).all()
     count = len(outputs)
     for o in outputs:
+        # Clean up artifact if content_json is an artifact stub
+        try:
+            stub = _json.loads(o.content_json)
+            if isinstance(stub, dict) and stub.get("_artifact"):
+                _delete_artifact(session, stub.get("owner_table", ""), stub.get("owner_id", ""))
+        except (_json.JSONDecodeError, TypeError):
+            pass
         session.delete(o)
     session.commit()
     return count

@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from db import get_session
 from models.analysis_run import AnalysisRun
@@ -166,6 +166,8 @@ def cancel_run(run_id: str, session: Session = Depends(get_session)) -> dict:
 
 @run_router.post("/{run_id}/retry-failed")
 def retry_failed_chunks(run_id: str, session: Session = Depends(get_session)) -> dict:
+    from models.local_extraction import LocalExtraction
+
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AnalysisRun not found")
@@ -173,6 +175,14 @@ def retry_failed_chunks(run_id: str, session: Session = Depends(get_session)) ->
         raise HTTPException(status_code=409, detail="Run is already active")
     if run.status not in ("partial_success", "failed"):
         raise HTTPException(status_code=409, detail="Run has no failed extractions to retry")
+
+    failed_exts = session.exec(
+        select(LocalExtraction)
+        .where(LocalExtraction.run_id == run_id)
+        .where(LocalExtraction.status == "failed")
+    ).all()
+    if not failed_exts:
+        raise HTTPException(status_code=409, detail="No failed extractions found to retry")
 
     run.status = "running"
     session.add(run)

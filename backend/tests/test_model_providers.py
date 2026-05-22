@@ -137,3 +137,47 @@ def test_update_unset_default(client):
     response = client.patch(f"/api/providers/{pid}", json={"is_default": False})
     assert response.status_code == 200
     assert response.json()["is_default"] is False
+
+
+# ── Provider Presets ──
+
+
+def test_provider_presets_detect_deepseek(client):
+    """GET /api/provider-presets/detect for DeepSeek base URL should return deepseek preset."""
+    r = client.get("/api/provider-presets/detect?base_url=https://api.deepseek.com")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["provider_key"] == "deepseek"
+
+
+def test_provider_presets_detect_unknown(client):
+    """GET /api/provider-presets/detect for unknown URL should return openai_compatible."""
+    r = client.get("/api/provider-presets/detect?base_url=https://unknown.example.com/v1")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["provider_key"] == "openai_compatible"
+
+
+def test_provider_presets_get_by_key(client):
+    """GET /api/provider-presets/deepseek should return the deepseek preset."""
+    r = client.get("/api/provider-presets/deepseek")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["provider_key"] == "deepseek"
+
+
+def test_provider_presets_get_unknown_key_404(client):
+    """GET /api/provider-presets/nonexistent should return 404."""
+    r = client.get("/api/provider-presets/nonexistent")
+    assert r.status_code == 404
+
+
+def test_provider_presets_list(client):
+    """GET /api/provider-presets should return all presets."""
+    r = client.get("/api/provider-presets")
+    assert r.status_code == 200
+    data = r.json()
+    assert "presets" in data
+    assert len(data["presets"]) > 0
+    keys = {p["provider_key"] for p in data["presets"]}
+    assert "deepseek" in keys

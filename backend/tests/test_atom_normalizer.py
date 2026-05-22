@@ -551,3 +551,188 @@ def test_chunk_index_string_coerced(client, engine):
         atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
         assert atoms[0].chunk_index == 5
     client.delete(f"/api/topics/{topic_id}")
+
+
+# ── P1-2: Field name compatibility tests ──
+
+
+def test_relation_hint_fallback(client, engine):
+    """Relation with prompt field names (character_a_hint, character_b_hint, interaction_type)."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_relations": [
+                {
+                    "character_a_hint": "lady",
+                    "character_b_hint": "knight",
+                    "interaction_type": "rivalry",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["they fought"],
+                    "confidence": 0.9,
+                }
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 1
+        assert atoms[0].stable_id.startswith("rel_")
+        assert "lady" in atoms[0].stable_id or "knight" in atoms[0].stable_id
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_causal_link_hint_fallback(client, engine):
+    """Causal link with prompt field names (cause_hint, effect_hint)."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_causal_links": [
+                {
+                    "cause_hint": "sword_drawn",
+                    "effect_hint": "battle_begins",
+                    "link_description": "sword drawn starts battle",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["drew sword"],
+                    "confidence": 0.85,
+                }
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 1
+        assert atoms[0].stable_id.startswith("caus_")
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_theme_signal_label_fallback(client, engine):
+    """Theme signal with prompt field name (signal_label)."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_theme_signals": [
+                {
+                    "signal_label": "loneliness",
+                    "signal_description": "character is alone",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["alone in the crowd"],
+                    "confidence": 0.85,
+                }
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 1
+        assert atoms[0].canonical_name == "loneliness"
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_open_question_fallback(client, engine):
+    """Open question with prompt field name (question)."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_open_questions": [
+                {
+                    "question": "Who is the shadowy figure?",
+                    "question_type": "mystery",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["a figure in the dark"],
+                    "confidence": 0.5,
+                }
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 1
+        # Title should be extracted from "question" field
+        assert atoms[0].title is not None
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_different_relations_produce_different_stable_ids(client, engine):
+    """Two different relations should not degenerate to same stable_id."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_relations": [
+                {
+                    "character_a": "刘备",
+                    "character_b": "关羽",
+                    "relation_type": "结义",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["兄弟"],
+                    "confidence": 0.9,
+                },
+                {
+                    "character_a": "关羽",
+                    "character_b": "张飞",
+                    "relation_type": "结义",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["兄弟"],
+                    "confidence": 0.9,
+                },
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 2
+        assert atoms[0].stable_id != atoms[1].stable_id
+    client.delete(f"/api/topics/{topic_id}")
+
+
+def test_different_causal_links_produce_different_stable_ids(client, engine):
+    """Two different causal links should not degenerate to same stable_id."""
+    topic_id, run_id, ext_id, chunk_id = _setup(client, engine)
+    data = json.dumps(
+        {
+            "local_causal_links": [
+                {
+                    "cause_event": "赤壁之战",
+                    "effect_event": "曹操败退",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["败退"],
+                    "confidence": 0.85,
+                },
+                {
+                    "cause_event": "官渡之战",
+                    "effect_event": "袁绍败退",
+                    "source_chunk_ids": [chunk_id],
+                    "evidence_quotes": ["袁绍败退"],
+                    "confidence": 0.85,
+                },
+            ]
+        }
+    )
+    from sqlmodel import select
+
+    with Session(engine) as session:
+        normalize_local_extraction(ext_id, run_id, topic_id, chunk_id, data, session)
+        session.commit()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == run_id)).all()
+        assert len(atoms) == 2
+        assert atoms[0].stable_id != atoms[1].stable_id
+    client.delete(f"/api/topics/{topic_id}")

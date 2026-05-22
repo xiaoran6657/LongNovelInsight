@@ -4,7 +4,9 @@ import io
 
 import pytest
 from sqlmodel import Session
+from sqlmodel import select as sql_select
 
+from models.chunk import Chunk
 from models.enums import AnalysisMode
 from services.analysis_selection_service import (
     estimate_v2_analysis_cost,
@@ -41,6 +43,10 @@ def test_chunks_meta_basic(client):
     assert data["chapter_count"] > 0
     assert "document_id" in data
     assert "first_chunk_index" in data
+    assert "first_global_chunk_index" in data
+    assert "last_global_chunk_index" in data
+    assert data["first_global_chunk_index"] == 0
+    assert data["last_global_chunk_index"] == data["chunk_count"] - 1
     client.delete(f"/api/topics/{topic_id}")
 
 
@@ -318,3 +324,39 @@ def test_no_chunks_returns_empty_list(client, engine):
         assert chunks == []
         assert info["selected"] == 0
     client.delete(f"/api/topics/{topic_id}")
+
+
+def test_range_mode_uses_global_index_not_chapter_local(client, engine):
+    """Range mode with chunk_index_start/end selects by global ordinal, not per-chapter."""
+    import io as _io
+
+    r = client.post("/api/topics", json={"name": "MultiCh Range"})
+    tid = r.json()["id"]
+    # Two chapters, each should have at least 1 chunk
+    content = "第一章 测试\n" + "内容。\n" * 50 + "\n第二章 更多\n" + "测试。\n" * 50
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", _io.BytesIO(content.encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    with Session(engine) as session:
+        all_chunks: list = session.exec(
+            sql_select(Chunk)
+            .where(Chunk.topic_id == tid)
+            .order_by(Chunk.chapter_index, Chunk.chunk_index)
+        ).all()  # noqa: E501
+        assert len(all_chunks) >= 2
+
+        # Select global indices 1..2 (second and third chunks across the whole document)
+        chunks, info = select_chunks_for_analysis(
+            session, tid, mode=AnalysisMode.RANGE, range_start=1, range_end=2
+        )
+        assert info["mode"] == "range"
+        # Selected chunks should be global indices 1 and 2
+        assert len(chunks) >= 1
+        selected_ids = {c.id for c in chunks}
+        expected_ids = {all_chunks[i].id for i in range(1, min(3, len(all_chunks)))}
+        assert selected_ids == expected_ids
+
+    client.delete(f"/api/topics/{tid}")

@@ -164,17 +164,25 @@ def _build_stable_id(
     """
     # Relation — use character pair + relation type
     if atom_type == AtomType.RELATION:
-        a = _safe_str(item.get("character_a_id") or item.get("character_a"))
-        b = _safe_str(item.get("character_b_id") or item.get("character_b"))
-        rtype = _safe_str(item.get("relation_type") or "related")
+        a = _safe_str(
+            item.get("character_a_id") or item.get("character_a") or item.get("character_a_hint")
+        )
+        b = _safe_str(
+            item.get("character_b_id") or item.get("character_b") or item.get("character_b_hint")
+        )
+        rtype = _safe_str(item.get("relation_type") or item.get("interaction_type") or "related")
         if a and b:
             base = stable_id_service.make_relation_id(a, b, rtype)
             return stable_id_service.ensure_unique_stable_id(base, existing_ids)
 
     # Causal link — use cause + effect event pair
     if atom_type == AtomType.CAUSAL_LINK:
-        cause = _safe_str(item.get("cause_event_id") or item.get("cause_event"))
-        effect = _safe_str(item.get("effect_event_id") or item.get("effect_event"))
+        cause = _safe_str(
+            item.get("cause_event_id") or item.get("cause_event") or item.get("cause_hint")
+        )
+        effect = _safe_str(
+            item.get("effect_event_id") or item.get("effect_event") or item.get("effect_hint")
+        )
         if cause and effect:
             base = stable_id_service.make_causal_link_id(cause, effect)
             return stable_id_service.ensure_unique_stable_id(base, existing_ids)
@@ -203,7 +211,16 @@ def _extract_title(atom_type: str, data: dict) -> str | None:
     val = data.get(field)
     if isinstance(val, str) and val.strip():
         return val.strip()
-    for f in ("name", "title", "theme_name", "label"):
+    for f in (
+        "name",
+        "title",
+        "theme_name",
+        "label",
+        "signal_label",
+        "question",
+        "interaction_type",
+        "link_description",
+    ):
         v = data.get(f)
         if isinstance(v, str) and v.strip():
             return v.strip()
@@ -333,7 +350,12 @@ def normalize_local_extraction(
 
             # Title & canonical name
             title = _extract_title(atom_type, item)
-            raw_name = item.get("canonical_name") or item.get("name") or item.get("theme_name")
+            raw_name = (
+                item.get("canonical_name")
+                or item.get("name")
+                or item.get("theme_name")
+                or item.get("signal_label")
+            )
             canonical_name = _safe_str(raw_name) or None
 
             # Stable ID

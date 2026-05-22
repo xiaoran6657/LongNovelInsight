@@ -36,12 +36,14 @@ def _check_chunks(topic_id: str, session: Session) -> None:
         )
 
 
-@topic_router.post("/jobs", status_code=201)
+@topic_router.post("/jobs", status_code=202)
 def create_analysis_job(
     topic_id: str,
     job_type: str = "analysis",
     session: Session = Depends(get_session),
 ) -> dict:
+    import threading
+
     _check_topic(topic_id, session)
     _check_document(topic_id, session)
     _check_chunks(topic_id, session)
@@ -53,13 +55,34 @@ def create_analysis_job(
     items = job_service.create_default_analysis_items(job.id, session)
     session.commit()
 
-    job = job_service.run_analysis_job(job.id, session)
-    items = job_service.get_job_items(job.id, session)
+    job_id = job.id
+    thread = threading.Thread(
+        target=_run_job_in_background,
+        args=(job_id,),
+        name=f"analysis-job-{job_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
 
     return {
         "job": JobRead.from_db(job).model_dump(),
         "items": [JobItemRead.model_validate(i).model_dump() for i in items],
+        "message": "Job created and started in background",
     }
+
+
+def _run_job_in_background(job_id: str) -> None:
+    from db import engine
+    from models.job import Job
+
+    try:
+        with Session(engine) as session:
+            job = session.get(Job, job_id)
+            if job is None:
+                return
+            job_service.run_analysis_job(job_id, session)
+    except Exception:
+        pass
 
 
 @topic_router.get("/jobs")

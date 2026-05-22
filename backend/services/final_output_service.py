@@ -429,6 +429,10 @@ def run_final_output_stage(
             continue
         try:
             summary = _FINAL_BUILDERS[output_type](session, run_id)
+            if summary.item_count == 0:
+                summary.warnings.append(
+                    f"No items for {output_type}; insufficient evidence for this type"
+                )
             summaries.append(summary)
             succeeded += 1
         except Exception as e:

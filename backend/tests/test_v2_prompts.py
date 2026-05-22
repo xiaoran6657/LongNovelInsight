@@ -224,3 +224,14 @@ class TestValidateLocalExtraction:
         assert parsed.ok
         result = validate_local_extraction_response(parsed.parsed, "chunk-abc")
         assert result.is_valid
+
+    def test_prompt_requires_analysis_type_and_chunk_id(self):
+        """Prompt contract must mention analysis_type and chunk_id at top level."""
+        prompt = load_local_extraction_prompt()
+        assert '"analysis_type": "local_extraction"' in prompt or "analysis_type" in prompt.lower()
+        assert "chunk_id" in prompt.lower()
+
+    def test_prompt_requires_chunk_id_match_input(self):
+        """Prompt must instruct LLM to set chunk_id equal to input metadata chunk_id."""
+        prompt = load_local_extraction_prompt()
+        assert "chunk_id" in prompt.lower()

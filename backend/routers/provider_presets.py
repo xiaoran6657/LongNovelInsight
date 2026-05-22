@@ -11,16 +11,6 @@ def list_presets() -> dict:
     return {"presets": presets}
 
 
-@router.get("/{provider_key}")
-def get_single_preset(provider_key: str) -> dict:
-    preset = get_preset(provider_key)
-    if preset is None:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail=f"Unknown provider key: {provider_key}")
-    return preset.model_dump()
-
-
 @router.get("/detect")
 def detect(base_url: str = Query(...)) -> dict:
     preset = detect_preset(base_url)
@@ -32,4 +22,14 @@ def detect(base_url: str = Query(...)) -> dict:
             "models": [],
             "default_model_name": None,
         }
+    return preset.model_dump()
+
+
+@router.get("/{provider_key}")
+def get_single_preset(provider_key: str) -> dict:
+    preset = get_preset(provider_key)
+    if preset is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"Unknown provider key: {provider_key}")
     return preset.model_dump()

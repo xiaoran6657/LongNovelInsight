@@ -990,3 +990,99 @@ def test_api_resolves_artifact_content_json(client, engine):
     assert "characters" in char_content
 
     client.delete(f"/api/topics/{tid}")
+
+
+# ── P2-2: Artifact cleanup on output delete ──
+
+
+def test_delete_outputs_cleans_up_artifacts(client, engine):
+    """DELETE /analysis/outputs should clean up artifact rows and files."""
+    import json
+    from io import BytesIO
+
+    from sqlmodel import Session
+    from sqlmodel import select as sql_select
+
+    from models.analysis_artifact import AnalysisArtifact
+    from models.analysis_output import AnalysisOutput
+    from services.artifact_storage_service import (
+        ARTIFACT_THRESHOLD_BYTES,
+        maybe_store_large_json,
+    )
+
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "ArtDel P",
+            "provider_type": "openai_compatible",
+            "base_url": "http://test",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "is_default": True,
+        },
+    )
+    prov = r.json()
+    r = client.post("/api/topics", json={"name": "ArtDel Topic"})
+    tid = r.json()["id"]
+    client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": prov["id"]})
+    client.post(
+        f"/api/topics/{tid}/documents/upload",
+        files={"file": ("n.txt", BytesIO("第一章\n内容。\n".encode()), "text/plain")},
+    )
+    client.post(f"/api/topics/{tid}/parse")
+
+    # Create a large artifact-backed output
+    large = json.dumps(
+        {
+            "characters": [{"name": "刘备", "role": "protagonist"}],
+            "extra": "x" * ARTIFACT_THRESHOLD_BYTES,
+        },
+        ensure_ascii=False,
+    )
+    with Session(engine) as session:
+        stored = maybe_store_large_json(
+            session,
+            tid,
+            None,
+            "characters",
+            "analysis_output",
+            "test-artifact-cleanup",
+            large,
+        )
+        ao = AnalysisOutput(
+            topic_id=tid,
+            run_id=None,
+            output_type="characters",
+            title="Test Characters",
+            content_json=stored,
+            source_chunk_ids="[]",
+            evidence_quotes="[]",
+            confidence=0.9,
+        )
+        session.add(ao)
+        session.commit()
+
+        # Verify artifact exists
+        artifacts = session.exec(
+            sql_select(AnalysisArtifact).where(
+                AnalysisArtifact.owner_table == "analysis_output",
+                AnalysisArtifact.owner_id == "test-artifact-cleanup",
+            )
+        ).all()
+        assert len(artifacts) == 1
+
+    # Delete the outputs
+    r = client.delete(f"/api/topics/{tid}/analysis/outputs")
+    assert r.status_code == 200
+
+    # Verify artifact row was cleaned up
+    with Session(engine) as session:
+        artifacts = session.exec(
+            sql_select(AnalysisArtifact).where(
+                AnalysisArtifact.owner_table == "analysis_output",
+                AnalysisArtifact.owner_id == "test-artifact-cleanup",
+            )
+        ).all()
+        assert len(artifacts) == 0
+
+    client.delete(f"/api/topics/{tid}")

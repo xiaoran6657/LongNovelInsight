@@ -4,6 +4,7 @@ Read the provided text excerpt (one or a few chunks) and extract local analysis 
 
 ## Shared Rules
 - Return valid JSON only. No markdown, no code fences, no extra text.
+- Include "analysis_type": "local_extraction" and "chunk_id" at the top level.
 - Write all descriptions in the requested output language (zh-CN for Chinese source text).
 - Preserve names, quotes, and evidence in the original source language.
 - Do not invent entities or facts not present in the provided text.
@@ -13,6 +14,10 @@ Read the provided text excerpt (one or a few chunks) and extract local analysis 
 ## Schema
 ```json
 {
+  "analysis_type": "local_extraction",
+  "chunk_id": "uuid — must equal the chunk_id from input metadata",
+  "chapter_index": 0,
+  "chunk_index": 0,
   "local_characters": [
     {
       "character_id_hint": "string or null — temporary hint, e.g. 'boy_at_window'",
@@ -96,3 +101,5 @@ Read the provided text excerpt (one or a few chunks) and extract local analysis 
 3. Every item must include source_chunk_ids limited to the chunks provided in this input.
 4. Do not skip items because they seem "minor". At chunk level, capture everything that could matter later.
 5. If the text is empty or contains only noise, set insufficient_evidence to true.
+6. You MUST include "analysis_type": "local_extraction" and "chunk_id" (matching the input chunk_id) at the top level of your response.
+7. Include "chapter_index" and "chunk_index" from the input metadata at the top level.

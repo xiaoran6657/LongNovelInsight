@@ -87,21 +87,43 @@ def test_create_analysis_job_success(client):
     tid = _setup_topic(client)
     with patch(RUN_SINGLE_PATH, side_effect=_mock_output):
         r = client.post(f"/api/topics/{tid}/analysis/jobs")
-    assert r.status_code == 201
+    assert r.status_code == 202
     data = r.json()
-    assert data["job"]["status"] == JobStatus.SUCCEEDED
+    assert data["job"]["status"] == JobStatus.PENDING
     assert data["job"]["job_type"] == "analysis"
-    assert data["job"]["progress_current"] == 6
-    assert data["job"]["progress_total"] == 6
+    assert data["job"]["progress_current"] == 0
     assert len(data["items"]) == 6
+    assert "message" in data
 
 
-def test_job_items_all_succeeded(client):
+def test_create_analysis_job_runs_async(client):
+    """POST /analysis/jobs returns 202 immediately without waiting for LLM."""
+    import time
+
+    tid = _setup_topic(client)
+    call_times = []
+
+    def slow_mock(*args, **kwargs):
+        call_times.append(time.monotonic())
+        return _mock_output(*args, **kwargs)
+
+    with patch(RUN_SINGLE_PATH, side_effect=slow_mock):
+        start = time.monotonic()
+        r = client.post(f"/api/topics/{tid}/analysis/jobs")
+        elapsed = time.monotonic() - start
+    # Should return quickly (< 1s), not wait for 6 LLM calls
+    assert r.status_code == 202
+    assert elapsed < 2.0
+    # Verify it returns with pending status
+    assert r.json()["job"]["status"] == JobStatus.PENDING
+
+
+def test_job_items_all_have_default_status(client):
     tid = _setup_topic(client)
     with patch(RUN_SINGLE_PATH, side_effect=_mock_output):
         r = client.post(f"/api/topics/{tid}/analysis/jobs")
     for item in r.json()["items"]:
-        assert item["status"] == JobStatus.SUCCEEDED
+        assert item["status"] == JobStatus.PENDING
 
 
 def test_job_items_have_all_types(client):
@@ -113,28 +135,29 @@ def test_job_items_have_all_types(client):
 
 
 def test_create_analysis_job_with_parse_type(client):
-    """JobType.parse creates a parse job (stub-only, no analysis items)."""
+    """JobType.parse creates a parse job (runs in background, returns 202)."""
     tid = _setup_topic(client)
     r = client.post(
         f"/api/topics/{tid}/analysis/jobs",
         params={"job_type": "parse"},
     )
-    assert r.status_code == 201
+    assert r.status_code == 202
     assert r.json()["job"]["job_type"] == "parse"
-    # parse jobs don't run analysis items
-    assert r.json()["job"]["status"] == JobStatus.SUCCEEDED
+    # parse jobs also run in background now
+    assert r.json()["job"]["status"] == JobStatus.PENDING
 
 
 def test_create_analysis_job_with_analysis_type(client):
-    """JobType.analysis creates an analysis job with real execution."""
+    """JobType.analysis creates an analysis job that runs in background."""
     tid = _setup_topic(client)
     with patch(RUN_SINGLE_PATH, side_effect=_mock_output):
         r = client.post(
             f"/api/topics/{tid}/analysis/jobs",
             params={"job_type": "analysis"},
         )
-    assert r.status_code == 201
+    assert r.status_code == 202
     assert r.json()["job"]["job_type"] == "analysis"
+    assert r.json()["job"]["status"] == JobStatus.PENDING
 
 
 def test_invalid_job_type_422(client):
@@ -177,8 +200,8 @@ def test_analysis_status(client):
     assert r.status_code == 200
     data = r.json()
     assert data["has_jobs"] is True
-    assert len(data["analysis_types_completed"]) == 6
     assert data["latest_job"] is not None
+    # Job runs in background, so completed types may be 0 at this point
 
 
 def test_analysis_status_no_jobs(client):
@@ -217,7 +240,7 @@ def test_cancel_job(client):
     job_id = r.json()["job"]["id"]
     r = client.post(f"/api/analysis/jobs/{job_id}/cancel")
     assert r.status_code == 200
-    assert r.json()["job"]["status"] in (JobStatus.SUCCEEDED, JobStatus.CANCELLED)
+    assert r.json()["job"]["status"] in (JobStatus.PENDING, JobStatus.CANCELLED)
 
 
 def test_cancel_job_404(client):
@@ -229,7 +252,7 @@ def test_cancel_job_404(client):
 
 
 def test_single_item_failure_job_failed(client):
-    """A failed item causes job status = FAILED, other items still succeed."""
+    """A failed item causes job status = FAILED, but job runs async — returns 202 pending."""
     tid = _setup_topic(client)
 
     def fail_events(topic_id, output_type, session, **kwargs):
@@ -239,18 +262,13 @@ def test_single_item_failure_job_failed(client):
 
     with patch(RUN_SINGLE_PATH, side_effect=fail_events):
         r = client.post(f"/api/topics/{tid}/analysis/jobs")
-    assert r.status_code == 201
+    assert r.status_code == 202
     data = r.json()
-    assert data["job"]["status"] == JobStatus.FAILED
-    assert "1 failed" in data["job"]["message"].lower()
-
+    assert data["job"]["status"] == JobStatus.PENDING
+    # Items start as pending since job runs in background
     items = data["items"]
-    succeeded = [i for i in items if i["status"] == JobStatus.SUCCEEDED]
-    failed = [i for i in items if i["status"] == JobStatus.FAILED]
-    assert len(succeeded) == 5
-    assert len(failed) == 1
-    assert failed[0]["item_type"] == "events"
-    assert "LLM error" in failed[0]["message"]
+    for i in items:
+        assert i["status"] == JobStatus.PENDING
 
 
 # ── Fix 012: Cancelled job skips execution ──

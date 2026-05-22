@@ -1454,7 +1454,7 @@ def test_retry_failed_endpoint_starts_background(client):
             r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
             run_id = r.json()["run"]["id"]
 
-        # Manually set run to partial_success for the endpoint to accept it
+        # Manually set run to partial_success + add a failed extraction
         from main import app
 
         for dep in app.dependency_overrides.values():
@@ -1462,11 +1462,21 @@ def test_retry_failed_endpoint_starts_background(client):
             session = next(gen)
             try:
                 from models.analysis_run import AnalysisRun
+                from models.local_extraction import LocalExtraction
 
                 run = session.get(AnalysisRun, run_id)
                 if run:
                     run.status = "partial_success"
                     session.add(run)
+                    # Create a failed extraction so the endpoint check passes
+                    ext = LocalExtraction(
+                        run_id=run_id,
+                        topic_id=topic_id,
+                        chunk_id="fake-chunk-id",
+                        status="failed",
+                        attempt_count=1,
+                    )
+                    session.add(ext)
                     session.commit()
             finally:
                 session.close()
@@ -1669,7 +1679,7 @@ def test_concurrent_retry_rejected_409(client):
         r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
         run_id = r.json()["run"]["id"]
 
-    # Set status to partial_success for first retry to pass
+    # Set status to partial_success + add a failed extraction
     from main import app
 
     for dep in app.dependency_overrides.values():
@@ -1677,11 +1687,20 @@ def test_concurrent_retry_rejected_409(client):
         session = next(gen)
         try:
             from models.analysis_run import AnalysisRun
+            from models.local_extraction import LocalExtraction
 
             run = session.get(AnalysisRun, run_id)
             if run:
                 run.status = "partial_success"
                 session.add(run)
+                ext = LocalExtraction(
+                    run_id=run_id,
+                    topic_id=topic_id,
+                    chunk_id="fake-chunk-id",
+                    status="failed",
+                    attempt_count=1,
+                )
+                session.add(ext)
                 session.commit()
         finally:
             session.close()
@@ -2041,3 +2060,57 @@ def test_resume_all_succeeded_idempotent(engine):
         atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.run_id == rid)).all()
         # No duplicate atoms from resume
         assert len(atoms) == 0 or len(atoms) >= 0  # may be 0 if no atom normalizer was triggered
+
+
+# ── P2-1: Retry-failed with no failed extractions ──
+
+
+def test_retry_failed_no_failed_extractions_409(client):
+    """Retry on a run with no failed LocalExtractions should return 409."""
+    topic_id = _setup_topic(client)
+    with patch("services.analysis_run_service._execute_run"):
+        r = client.post(f"/api/topics/{topic_id}/analysis/runs", json={"mode": "preview"})
+        run_id = r.json()["run"]["id"]
+
+    from main import app
+
+    for dep in app.dependency_overrides.values():
+        gen = dep()
+        session = next(gen)
+        try:
+            from models.analysis_run import AnalysisRun
+            from models.local_extraction import LocalExtraction
+
+            run = session.get(AnalysisRun, run_id)
+            if run:
+                run.status = "partial_success"
+                # Add a succeeded extraction but no failed ones
+                ext = LocalExtraction(
+                    run_id=run.id,
+                    topic_id=topic_id,
+                    chunk_id="fake-chunk-id",
+                    status="succeeded",
+                    attempt_count=1,
+                )
+                session.add(ext)
+                session.add(run)
+                session.commit()
+        finally:
+            session.close()
+
+    with patch("services.analysis_run_service._execute_retry"):
+        r = client.post(f"/api/analysis/runs/{run_id}/retry-failed")
+        # Should be 409 because there are no failed extractions
+        assert r.status_code == 409
+        # Verify run status was NOT changed to running
+        for dep in app.dependency_overrides.values():
+            gen2 = dep()
+            s2 = next(gen2)
+            try:
+                from models.analysis_run import AnalysisRun
+
+                run2 = s2.get(AnalysisRun, run_id)
+                assert run2.status == "partial_success"
+            finally:
+                s2.close()
+    client.delete(f"/api/topics/{topic_id}")

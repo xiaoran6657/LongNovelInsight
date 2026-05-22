@@ -69,6 +69,8 @@ def get_chunks_meta(session: Session, topic_id: str) -> dict:
         "estimated_tokens": estimated_tokens,
         "first_chunk_index": chunks[0].chunk_index,
         "last_chunk_index": chunks[-1].chunk_index,
+        "first_global_chunk_index": 0,
+        "last_global_chunk_index": len(chunks) - 1 if chunks else None,
         "chunks_by_chapter": chunks_by_chapter,
     }
 
@@ -142,12 +144,12 @@ def _select_range(
 
     if has_chunk_range:
         rs = range_start or 0
-        re = range_end if range_end is not None else max(c.chunk_index for c in chunks)
+        re = range_end if range_end is not None else len(chunks) - 1
         if rs < 0 or re < 0:
             raise ValueError("Range start/end must not be negative")
         if rs > re:
             raise ValueError("range_start must not be greater than range_end")
-        selected = [c for c in chunks if rs <= c.chunk_index <= re]
+        selected = [c for i, c in enumerate(chunks) if rs <= i <= re]
     else:
         cs = chapter_start or 0
         ce = chapter_end if chapter_end is not None else max(c.chapter_index or 0 for c in chunks)
