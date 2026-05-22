@@ -18,7 +18,7 @@ def health(session: Session = Depends(get_session)) -> dict:
 
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": "0.2.0-dev",
         "topic_count": topic_count,
         "total_disk_usage_bytes": total_disk_usage_bytes,
     }

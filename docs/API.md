@@ -16,7 +16,7 @@ Returns backend status and basic statistics.
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
+  "version": "0.2.0-dev",
   "topic_count": 3,
   "total_disk_usage_bytes": 5242880
 }
