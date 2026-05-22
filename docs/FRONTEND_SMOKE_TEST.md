@@ -1,4 +1,4 @@
-# Frontend Smoke Test — LongNovelInsight v0.1.0
+# Frontend Smoke Test — LongNovelInsight v0.2.0-dev
 
 This document describes how to manually verify the full local product workflow from a fresh start. Each step includes what to check and what to do if it fails.
 
@@ -16,7 +16,7 @@ Both must run simultaneously in separate terminals.
 
 **Page:** Dashboard (`/`)
 
-- Verify "Backend Status" shows connected with version `0.1.0`
+- Verify "Backend Status" shows connected with version `0.2.0-dev`
 - Verify topic count is displayed
 - Stop the backend — the page should show "Connection failed" without white screen
 - Restart the backend
