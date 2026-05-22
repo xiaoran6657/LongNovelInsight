@@ -1,4 +1,4 @@
-# Frontend API Contract — LongNovelInsight v0.1.0
+# Frontend API Contract — LongNovelInsight v0.2.0-dev
 
 > Auto-generated from actual backend code (routers/ + models/), not from docs/API.md alone.
 > If a discrepancy is found between this document and backend behavior, the backend code is the authority.
