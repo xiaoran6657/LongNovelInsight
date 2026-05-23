@@ -149,6 +149,7 @@ def run_analysis_job(job_id: str, session: Session) -> Job:
         session.flush()
         job.progress_current = i + 1
         session.add(job)
+        session.commit()
 
     if failed_count == 0:
         job.status = JobStatus.SUCCEEDED
