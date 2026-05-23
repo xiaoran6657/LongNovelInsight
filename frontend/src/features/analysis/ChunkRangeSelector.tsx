@@ -88,11 +88,23 @@ export default function ChunkRangeSelector({ meta, value, onChange }: Props) {
       {value.start != null && value.end != null && value.start > value.end && (
         <p className="field-error" style={{ marginTop: "0.25rem" }}>Start must be ≤ end.</p>
       )}
+      {value.start != null && value.start < 0 && (
+        <p className="field-error" style={{ marginTop: "0.25rem" }}>Start must be ≥ 0.</p>
+      )}
+      {value.end != null && value.end < 0 && (
+        <p className="field-error" style={{ marginTop: "0.25rem" }}>End must be ≥ 0.</p>
+      )}
       {meta && (
         <p className="text-dim" style={{ fontSize: "0.75rem", marginTop: "0.5rem" }}>
           Available: {mode === "chunk" ? `chunks 0–${maxChunk}` : `chapters 0–${maxChapter}`}
           {hasSelection && value.start != null && value.end != null && value.start <= value.end && (
             <> — {value.end - value.start + 1} {mode === "chunk" ? "chunks" : "chapters"} selected</>
+          )}
+          {value.start != null && value.start > (mode === "chunk" ? maxChunk : maxChapter) && (
+            <span className="field-error"> — Start out of range</span>
+          )}
+          {value.end != null && value.end > (mode === "chunk" ? maxChunk : maxChapter) && (
+            <span className="field-error"> — End out of range</span>
           )}
         </p>
       )}

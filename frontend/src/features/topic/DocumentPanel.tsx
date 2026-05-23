@@ -40,7 +40,9 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
   });
 
   if (docLoading) return <LoadingBlock text="Loading document..." />;
-  if (docError) return <ErrorBlock message={docError.message} />;
+
+  const is404 = docError != null && String(docError.message).includes("404");
+  if (docError && !is404) return <ErrorBlock message={docError.message} />;
 
   return (
     <div className="card">

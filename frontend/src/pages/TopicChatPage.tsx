@@ -9,7 +9,7 @@ import {
   deleteChatMessage,
   deleteChatSession,
 } from "../api/chat";
-import { getTopic, getEffectiveConfig, updateTopicProviderConfig } from "../api/topics";
+import { getTopic, getEffectiveConfig, getTopicProviderConfig, updateTopicProviderConfig } from "../api/topics";
 import { listProviderPresets } from "../api/providers";
 import { listChunks } from "../api/parse";
 import ProviderConfigForm from "../features/provider/ProviderConfigForm";
@@ -259,10 +259,10 @@ export default function TopicChatPage() {
     enabled: !!topicId && rightPanelOpen,
   });
 
-  // Chunks with text for source tab
+  // Chunks with text for source tab (limited to avoid rendering hundreds of KB)
   const chunksQuery = useQuery({
     queryKey: ["chunksWithText", topicId],
-    queryFn: () => listChunks(topicId!, { include_text: true }),
+    queryFn: () => listChunks(topicId!, { include_text: true, limit: 20 }),
     enabled: !!topicId && rightPanelOpen && rightTab === "source",
   });
 
@@ -287,15 +287,21 @@ export default function TopicChatPage() {
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaveError, setConfigSaveError] = useState("");
 
-  // Init edit state from effective config
+  // Init edit state from stored overrides, not effective config
+  const storedConfigQuery = useQuery({
+    queryKey: ["provider-config-chat", topicId],
+    queryFn: () => getTopicProviderConfig(topicId!),
+    enabled: !!topicId,
+  });
   const configDirtyRef = useRef(false);
   useEffect(() => {
     if (!effConfigQuery.data || configDirtyRef.current) return;
-    setEditModel(effConfigQuery.data.model_name || "");
-    setEditMaxTokens(effConfigQuery.data.max_output_tokens?.toString() || "");
-    setEditTemp(effConfigQuery.data.temperature?.toString() || "");
-    setEditThinking(effConfigQuery.data.thinking_mode || "disabled");
-  }, [effConfigQuery.data]);
+    const stored = storedConfigQuery.data?.config;
+    setEditModel(stored?.model_name_override || "");
+    setEditMaxTokens(stored?.max_output_tokens_override?.toString() || "");
+    setEditTemp(stored?.temperature_override?.toString() || "");
+    setEditThinking(stored?.thinking_mode_override || "");
+  }, [effConfigQuery.data, storedConfigQuery.data]);
 
   function markDirty() {
     if (!configDirty) { setConfigDirty(true); configDirtyRef.current = true; }

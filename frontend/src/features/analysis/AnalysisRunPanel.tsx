@@ -105,7 +105,13 @@ export default function AnalysisRunPanel({
     });
   }
 
-  const rangeInvalid = mode === "range" && (range.start == null || range.end == null || range.start > range.end);
+  const rangeInvalid =
+    mode === "range" &&
+    (range.start == null || range.end == null || range.start > range.end ||
+     range.start < 0 || range.end < 0 ||
+     (meta && (range.start > (meta.last_global_chunk_index ?? meta.last_chunk_index ?? 0) ||
+      range.end > (meta.last_global_chunk_index ?? meta.last_chunk_index ?? 0))));
+
   const est = meta ? estimateTokens(meta, mode, limitChunks, range) : null;
   const pct = runProgressPercent(run?.run);
   const terminal = isRunTerminal(run?.run.status);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAnalysisRun, deleteAnalysisOutputs, listAnalysisOutputsV2 } from "../../api/analysis";
 import type { AnalysisOutput } from "../../api/types";
@@ -42,12 +42,23 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
   });
   const isRunActive = runDetail?.run.status === "pending" || runDetail?.run.status === "running";
 
-  // Fetch outputs filtered by run if runId is set, otherwise all
+  // Refetch outputs when a selected run transitions from active to terminal
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    if (isRunActive) {
+      wasActiveRef.current = true;
+    } else if (wasActiveRef.current && runDetail) {
+      wasActiveRef.current = false;
+      qc.invalidateQueries({ queryKey: ["outputs", topicId, runId] });
+    }
+  }, [isRunActive, runDetail, qc, topicId, runId]);
+
+  // Fetch outputs filtered by run if runId is set, otherwise latest only
   const { data: outputsData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["outputs", topicId, runId],
     queryFn: () => runId
       ? listAnalysisOutputsV2(topicId, { runId })
-      : listAnalysisOutputsV2(topicId),
+      : listAnalysisOutputsV2(topicId, { latestOnly: true }),
     enabled: !!topicId,
   });
 

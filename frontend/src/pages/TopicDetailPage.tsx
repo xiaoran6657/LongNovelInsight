@@ -8,6 +8,7 @@ import {
   getTopic,
   bindProvider,
   getEffectiveConfig,
+  getTopicProviderConfig,
   updateTopicProviderConfig,
 } from "../api/topics";
 import { listProviders, listProviderPresets } from "../api/providers";
@@ -131,6 +132,12 @@ export default function TopicDetailPage() {
     enabled: !!topicId,
   });
 
+  const { data: storedConfigData } = useQuery({
+    queryKey: ["provider-config", topicId],
+    queryFn: () => getTopicProviderConfig(topicId!),
+    enabled: !!topicId,
+  });
+
   const { data: presetData } = useQuery({
     queryKey: ["provider-presets"],
     queryFn: listProviderPresets,
@@ -140,15 +147,16 @@ export default function TopicDetailPage() {
     presetData?.presets.find((pr) => pr.provider_key === effectiveConfig?.provider_key)?.models ?? [];
 
   useEffect(() => {
+    const stored = storedConfigData?.config;
     if (!effectiveConfig) return;
-    setEditModel(effectiveConfig.model_name || "");
-    setEditMaxTokens(effectiveConfig.max_output_tokens?.toString() || "");
-    setEditTemp(effectiveConfig.temperature?.toString() || "");
-    setEditThinking(effectiveConfig.thinking_mode || "disabled");
-    setEditParallel(effectiveConfig.analysis_parallelism?.toString() || "3");
+    setEditModel(stored?.model_name_override || "");
+    setEditMaxTokens(stored?.max_output_tokens_override?.toString() || "");
+    setEditTemp(stored?.temperature_override?.toString() || "");
+    setEditThinking(stored?.thinking_mode_override || "");
+    setEditParallel(stored?.analysis_parallelism_override?.toString() || "");
     setConfigDirty(false);
     setConfigSaveError("");
-  }, [effectiveConfig]);
+  }, [effectiveConfig, storedConfigData]);
 
   const saveConfigMut = useMutation({
     mutationFn: () =>
@@ -284,7 +292,7 @@ export default function TopicDetailPage() {
         limitChunks={previewLimitChunks}
         range={chunkRange}
         hasDoc={hasDoc}
-        isParsed={topic.status === "parsed"}
+        isParsed={doc?.status === "parsed"}
         boundProvider={!!boundProvider}
         effectiveConfig={effectiveConfig}
         activeRunId={activeRunId}
@@ -308,7 +316,7 @@ export default function TopicDetailPage() {
       <LegacyAnalysisPanel
         topicId={topic.id}
         hasDoc={hasDoc}
-        isParsed={topic.status === "parsed"}
+        isParsed={doc?.status === "parsed"}
         boundProvider={!!boundProvider}
       />
 

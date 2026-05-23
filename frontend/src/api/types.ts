@@ -352,6 +352,8 @@ export interface ChunksMetaResponse {
   estimated_tokens: number;
   first_chunk_index: number | null;
   last_chunk_index: number | null;
+  first_global_chunk_index: number | null;
+  last_global_chunk_index: number | null;
   chunks_by_chapter: ChunksByChapter[];
 }
 
