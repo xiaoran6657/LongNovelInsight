@@ -91,6 +91,8 @@ def run_analysis_job(job_id: str, session: Session) -> Job:
     now = _now()
     job.status = JobStatus.RUNNING
     job.started_at = now
+    session.add(job)
+    session.commit()
 
     items = get_job_items(job_id, session)
 
@@ -112,11 +114,10 @@ def run_analysis_job(job_id: str, session: Session) -> Job:
     # Analysis job: run real analysis per item
     job.message = "Analysis started"
     session.add(job)
-    session.flush()
+    session.commit()
 
     failed_count = 0
     for i, item in enumerate(items):
-        session.commit()
         session.refresh(job)
         if job.status == JobStatus.CANCELLED:
             job.message = "Job was cancelled during execution"
@@ -126,7 +127,7 @@ def run_analysis_job(job_id: str, session: Session) -> Job:
 
         item.status = JobStatus.RUNNING
         session.add(item)
-        session.flush()
+        session.commit()
 
         try:
             analysis_service.run_single_analysis_output(
