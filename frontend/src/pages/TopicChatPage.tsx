@@ -322,6 +322,7 @@ export default function TopicChatPage() {
       configDirtyRef.current = false;
       setConfigSaveError("");
       queryClient.invalidateQueries({ queryKey: ["effectiveConfig", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["provider-config-chat", topicId] });
     },
     onError: (err) => {
       setConfigSaveError((err as Error)?.message || "Save failed");

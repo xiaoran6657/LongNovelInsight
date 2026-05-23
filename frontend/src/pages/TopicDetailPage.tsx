@@ -169,6 +169,7 @@ export default function TopicDetailPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["effective-config", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["provider-config", topicId] });
       setConfigDirty(false);
       setConfigSaveError("");
     },

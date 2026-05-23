@@ -105,12 +105,16 @@ export default function AnalysisRunPanel({
     });
   }
 
+  const rangeMax =
+    range.mode === "chapter"
+      ? (meta?.chapter_count ?? 0) - 1
+      : (meta?.last_global_chunk_index ?? meta?.last_chunk_index ?? 0);
+
   const rangeInvalid =
     mode === "range" &&
     (range.start == null || range.end == null || range.start > range.end ||
      range.start < 0 || range.end < 0 ||
-     (meta && (range.start > (meta.last_global_chunk_index ?? meta.last_chunk_index ?? 0) ||
-      range.end > (meta.last_global_chunk_index ?? meta.last_chunk_index ?? 0))));
+     (meta && (range.start > rangeMax || range.end > rangeMax)));
 
   const est = meta ? estimateTokens(meta, mode, limitChunks, range) : null;
   const pct = runProgressPercent(run?.run);
