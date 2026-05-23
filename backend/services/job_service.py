@@ -116,6 +116,7 @@ def run_analysis_job(job_id: str, session: Session) -> Job:
 
     failed_count = 0
     for i, item in enumerate(items):
+        session.commit()
         session.refresh(job)
         if job.status == JobStatus.CANCELLED:
             job.message = "Job was cancelled during execution"
