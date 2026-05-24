@@ -118,15 +118,15 @@ test.describe("Topic detail – provider config override", () => {
     await input.fill("4096");
     await input.blur();
 
-    // Save
+    // Save — register the response listener before the click so we never miss it
     const saveBtn = page.getByRole("button", { name: "Save" });
     await expect(saveBtn).toBeVisible();
-    await saveBtn.click();
 
-    // Wait for the PUT to complete and refetches to settle
-    await page.waitForResponse((resp) =>
+    const putResp = page.waitForResponse((resp) =>
       resp.url().includes("/provider-config") && resp.request().method() === "PUT"
     );
+    await saveBtn.click();
+    await putResp;
     await page.waitForLoadState("networkidle");
 
     // Should still show 4096, not rolled back to stale 2048
@@ -242,13 +242,10 @@ test.describe("Topic detail – chapter range validation", () => {
       });
     });
 
+    // Register the response listener before goto so it catches any early responses
+    const chunksMetaResp = page.waitForResponse((resp) => resp.url().includes("/chunks/meta") && resp.status() === 200);
     await page.goto(`/topics/${TOPIC_ID}`);
-
-    // Log page errors for debugging
-    page.on("pageerror", (err) => console.log("[TEST_PAGE_ERROR]", err.message));
-
-    // Wait for chunks-meta to confirm all dependent queries resolved
-    await page.waitForResponse((resp) => resp.url().includes("/chunks/meta") && resp.status() === 200);
+    await chunksMetaResp;
     await page.waitForTimeout(500);
 
     // Wait for analysis panel heading
