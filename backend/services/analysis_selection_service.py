@@ -171,7 +171,7 @@ def _select_range(
         "range_end": range_end,
     }
     if not selected:
-        info["reason"] = "empty_range"
+        raise ValueError("Range matched zero chunks")
     return selected, info
 
 

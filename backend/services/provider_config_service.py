@@ -159,10 +159,10 @@ def upsert_topic_provider_config(
     if tpc is None:
         tpc = TopicProviderConfig(
             topic_id=topic_id,
-            **data.model_dump(exclude_none=True),
+            **data.model_dump(exclude_unset=True),
         )
     else:
-        update = data.model_dump(exclude_none=True)
+        update = data.model_dump(exclude_unset=True)
         for k, v in update.items():
             setattr(tpc, k, v)
         tpc.updated_at = datetime.now(timezone.utc)  # type: ignore[union-attr]

@@ -11,6 +11,7 @@ from models.job import Job
 from models.job_item import JobItem
 from models.local_extraction import LocalExtraction
 from models.topic import Topic
+from models.topic_provider_config import TopicProviderConfig
 from services import storage
 
 
@@ -77,6 +78,13 @@ def delete_topic(topic_id: str, session: Session) -> dict:
         for ji in items:
             session.delete(ji)
         session.delete(j)
+
+    # Delete topic provider config
+    tpc = session.exec(
+        select(TopicProviderConfig).where(TopicProviderConfig.topic_id == topic_id)
+    ).first()
+    if tpc:
+        session.delete(tpc)
 
     # Delete chunks -> chapters
     chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()

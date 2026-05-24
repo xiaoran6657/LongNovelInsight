@@ -11,6 +11,7 @@ from models.model_provider import (
     ModelProviderUpdate,
 )
 from models.topic import Topic
+from models.topic_provider_config import TopicProviderConfig
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -145,8 +146,11 @@ def delete_provider(provider_id: str, session: Session = Depends(get_session)) -
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    in_use = session.exec(select(Topic).where(Topic.provider_id == provider_id)).first()
-    if in_use:
+    in_use_topic = session.exec(select(Topic).where(Topic.provider_id == provider_id)).first()
+    in_use_tpc = session.exec(
+        select(TopicProviderConfig).where(TopicProviderConfig.provider_id == provider_id)
+    ).first()
+    if in_use_topic or in_use_tpc:
         raise HTTPException(status_code=409, detail="Provider is in use by one or more Topics")
 
     session.delete(provider)
