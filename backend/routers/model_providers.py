@@ -147,8 +147,12 @@ def delete_provider(provider_id: str, session: Session = Depends(get_session)) -
         raise HTTPException(status_code=404, detail="Provider not found")
 
     in_use_topic = session.exec(select(Topic).where(Topic.provider_id == provider_id)).first()
+    # Only count config rows whose topic still exists — orphan rows from old
+    # data must not block provider deletion.
     in_use_tpc = session.exec(
-        select(TopicProviderConfig).where(TopicProviderConfig.provider_id == provider_id)
+        select(TopicProviderConfig)
+        .join(Topic, TopicProviderConfig.topic_id == Topic.id)
+        .where(TopicProviderConfig.provider_id == provider_id)
     ).first()
     if in_use_topic or in_use_tpc:
         raise HTTPException(status_code=409, detail="Provider is in use by one or more Topics")

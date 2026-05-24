@@ -181,3 +181,64 @@ def test_provider_presets_list(client):
     assert len(data["presets"]) > 0
     keys = {p["provider_key"] for p in data["presets"]}
     assert "deepseek" in keys
+
+
+def test_delete_provider_in_use_by_topic_config_409(client):
+    """Deleting a provider that is referenced by a TopicProviderConfig should return 409."""
+    r = _create(client, name="ConfigInUse")
+    pid = r.json()["id"]
+    # Create topic and bind provider via topic-level config override
+    r = client.post("/api/topics", json={"name": "ConfigT"})
+    tid = r.json()["id"]
+    client.put(
+        f"/api/topics/{tid}/provider-config",
+        json={"provider_id": pid},
+    )
+    r = client.delete(f"/api/providers/{pid}")
+    assert r.status_code == 409
+    # Cleanup
+    client.delete(f"/api/topics/{tid}")
+
+
+def test_delete_provider_ignores_orphan_config(engine, client):
+    """Orphan TopicProviderConfig (topic already deleted) should not block provider deletion."""
+    from sqlmodel import Session, select
+
+    from models.topic_provider_config import TopicProviderConfig
+
+    # Create provider
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "OrphanP",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.example.com",
+            "api_key": "sk-orphan-test-key",
+            "model_name": "m",
+        },
+    )
+    pid = r.json()["id"]
+
+    # Create a TopicProviderConfig row whose topic does not exist (orphan)
+    with Session(engine) as session:
+        tpc = TopicProviderConfig(
+            topic_id="deleted-topic-id",
+            provider_id=pid,
+            model_name_override="orphan-model",
+        )
+        session.add(tpc)
+        session.commit()
+
+    # Deleting the provider should succeed because the config row is orphaned
+    r = client.delete(f"/api/providers/{pid}")
+    assert r.status_code == 200
+
+    # Verify orphan row is still there (we don't cascade — just don't block)
+    with Session(engine) as session:
+        leftover = session.exec(
+            select(TopicProviderConfig).where(TopicProviderConfig.topic_id == "deleted-topic-id")
+        ).first()
+        assert leftover is not None
+        # Clean up manually
+        session.delete(leftover)
+        session.commit()

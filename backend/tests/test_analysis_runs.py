@@ -2114,3 +2114,74 @@ def test_retry_failed_no_failed_extractions_409(client):
             finally:
                 s2.close()
     client.delete(f"/api/topics/{topic_id}")
+
+
+def test_null_clears_provider_override(client):
+    """Sending null for an override should clear it so the provider default takes effect."""
+    # Create provider with a known model name
+    r = client.post(
+        "/api/providers",
+        json={
+            "name": "NullClearP",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.example.com",
+            "api_key": "sk-clear",
+            "model_name": "provider-default-model",
+        },
+    )
+    pid = r.json()["id"]
+
+    # Create topic
+    r = client.post("/api/topics", json={"name": "NullClearT"})
+    tid = r.json()["id"]
+
+    # Set an override
+    client.put(
+        f"/api/topics/{tid}/provider-config",
+        json={
+            "provider_id": pid,
+            "model_name_override": "custom-override",
+            "max_output_tokens_override": 4096,
+        },
+    )
+    # Verify override is active
+    r = client.get(f"/api/topics/{tid}/provider-config/effective")
+    eff = r.json()
+    assert eff["model_name"] == "custom-override"
+    assert eff["max_output_tokens"] == 4096
+
+    # Clear the overrides by sending null
+    client.put(
+        f"/api/topics/{tid}/provider-config",
+        json={
+            "model_name_override": None,
+            "max_output_tokens_override": None,
+        },
+    )
+    # Verify effective config falls through to provider defaults
+    r = client.get(f"/api/topics/{tid}/provider-config/effective")
+    eff = r.json()
+    assert eff["model_name"] == "provider-default-model"
+    # max_output_tokens should fall through — provider default (0 → unset) → preset (2048)
+    assert eff["max_output_tokens"] is not None
+
+    client.delete(f"/api/topics/{tid}")
+    client.delete(f"/api/providers/{pid}")
+
+
+def test_create_run_empty_range_422(client):
+    """Range selection that matches zero chunks should return 422 synchronously."""
+    topic_id = _setup_topic(client)
+
+    # Ask for a chunk index far beyond what exists — _setup_topic creates a tiny doc
+    r = client.post(
+        f"/api/topics/{topic_id}/analysis/runs",
+        json={
+            "mode": "range",
+            "chunk_index_start": 999,
+            "chunk_index_end": 999,
+        },
+    )
+    assert r.status_code == 422
+
+    client.delete(f"/api/topics/{topic_id}")

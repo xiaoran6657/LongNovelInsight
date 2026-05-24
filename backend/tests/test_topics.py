@@ -417,3 +417,57 @@ def test_delete_topic_cascades_v2_data(engine):
             len(session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == tid)).all())
             == 0
         )
+
+
+def test_delete_topic_removes_provider_config(engine):
+    """Deleting a topic should also delete its TopicProviderConfig rows."""
+    from sqlmodel import Session, select
+
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from models.topic_provider_config import TopicProviderConfig
+    from services.topic_service import delete_topic
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="CleanupP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="CleanupT", provider_id=prov.id)
+        session.add(topic)
+        session.flush()
+        tpc = TopicProviderConfig(
+            topic_id=topic.id,
+            provider_id=prov.id,
+            model_name_override="some-model",
+        )
+        session.add(tpc)
+        session.commit()
+        tid = topic.id
+
+    # Verify config exists
+    with Session(engine) as session:
+        assert (
+            session.exec(
+                select(TopicProviderConfig).where(TopicProviderConfig.topic_id == tid)
+            ).first()
+            is not None
+        )
+
+    # Delete topic
+    with Session(engine) as session:
+        delete_topic(tid, session)
+
+    # Verify config is gone
+    with Session(engine) as session:
+        assert (
+            session.exec(
+                select(TopicProviderConfig).where(TopicProviderConfig.topic_id == tid)
+            ).first()
+            is None
+        )
