@@ -2163,7 +2163,7 @@ def test_null_clears_provider_override(client):
     eff = r.json()
     assert eff["model_name"] == "provider-default-model"
     # max_output_tokens should fall through — provider default (0 → unset) → preset (2048)
-    assert eff["max_output_tokens"] is not None
+    assert eff["max_output_tokens"] == 2048
 
     client.delete(f"/api/topics/{tid}")
     client.delete(f"/api/providers/{pid}")
