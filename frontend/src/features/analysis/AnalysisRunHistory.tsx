@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listAnalysisRuns, retryFailedAnalysisRun, resumeAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunListItem } from "../../api/types";
@@ -37,21 +37,52 @@ interface Props {
 
 export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }: Props) {
   const qc = useQueryClient();
-  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [allRuns, setAllRuns] = useState<AnalysisRunListItem[]>([]);
+  const prevTopicRef = useRef(topicId);
+
+  // Reset accumulated state when topic changes
+  if (prevTopicRef.current !== topicId) {
+    prevTopicRef.current = topicId;
+    if (page !== 0) setPage(0);
+    if (allRuns.length > 0) setAllRuns([]);
+  }
+
+  const offset = page * PAGE_SIZE;
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["analysisRuns", topicId, { limit }],
-    queryFn: () => listAnalysisRuns(topicId, { limit }),
+    queryKey: ["analysisRuns", topicId, { offset }],
+    queryFn: () => listAnalysisRuns(topicId, { limit: PAGE_SIZE, offset }),
     enabled: !!topicId,
+    placeholderData: (prev) => prev,
   });
 
-  const runs = data?.runs ?? [];
-  const total = data?.total ?? runs.length;
-  const hasMore = runs.length < total;
+  // Accumulate runs: page 0 replaces, page > 0 appends (deduplicating by id)
+  const dataRef = useRef<typeof data>(undefined);
+  useEffect(() => {
+    if (!data || data === dataRef.current) return;
+    dataRef.current = data;
+    const runs = data.runs ?? [];
+    if (offset === 0) {
+      setAllRuns(runs);
+    } else {
+      setAllRuns((prev) => {
+        const existingIds = new Set(prev.map((r) => r.id));
+        const newOnes = runs.filter((r) => !existingIds.has(r.id));
+        return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+      });
+    }
+  }, [data, offset]);
+
+  const total = data?.total ?? allRuns.length;
+  const hasMore = allRuns.length < total;
+  const isLoadingMore = isLoading && allRuns.length > 0;
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
     onSuccess: (_data, runId) => {
+      dataRef.current = undefined;
+      setPage(0);
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
       onSelectRun(runId);
@@ -61,14 +92,16 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   const resumeMut = useMutation({
     mutationFn: (runId: string) => resumeAnalysisRun(runId, true),
     onSuccess: (_data, runId) => {
+      dataRef.current = undefined;
+      setPage(0);
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
       onSelectRun(runId);
     },
   });
 
-  if (isLoading) return <LoadingBlock text="Loading run history..." />;
-  if (isError) {
+  if (isLoading && allRuns.length === 0) return <LoadingBlock text="Loading run history..." />;
+  if (isError && allRuns.length === 0) {
     const apiErr = error instanceof ApiError ? error : undefined;
     return (
       <div className="card">
@@ -82,7 +115,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
       </div>
     );
   }
-  if (runs.length === 0) {
+  if (allRuns.length === 0 && !isLoading) {
     return (
       <EmptyState
         title="No runs yet"
@@ -93,9 +126,9 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
 
   return (
     <div className="card" style={{ fontSize: "0.85rem" }}>
-      <h3>Run History ({runs.length}/{total})</h3>
+      <h3>Run History ({allRuns.length}/{total})</h3>
       <div style={{ maxHeight: 400, overflowY: "auto" }}>
-        {runs.map((r) => (
+        {allRuns.map((r) => (
           <RunRow
             key={r.id}
             run={r}
@@ -107,14 +140,16 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
             resuming={resumeMut.isPending}
           />
         ))}
+        {isLoadingMore && <LoadingBlock text="Loading more..." />}
       </div>
       {hasMore && (
         <div style={{ marginTop: "0.5rem", textAlign: "center" }}>
           <button
-            onClick={() => setLimit((prev) => prev + PAGE_SIZE)}
+            onClick={() => setPage((p) => p + 1)}
+            disabled={isLoading}
             style={{ fontSize: "0.78rem" }}
           >
-            Load more ({total - runs.length} remaining)
+            Load more ({total - allRuns.length} remaining)
           </button>
         </div>
       )}
