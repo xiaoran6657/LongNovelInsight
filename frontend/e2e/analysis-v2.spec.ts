@@ -177,10 +177,6 @@ test.describe("Analysis v2 – mode selection", () => {
     await mockParsedTopic(page);
 
     let postCount = 0;
-    const postReq = page.waitForRequest(
-      (req) => req.url().includes("/api/topics/test-topic-1/analysis/runs") && req.method() === "POST",
-      { timeout: 2000 },
-    ).then(() => { postCount++; }).catch(() => {});
 
     await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
       if (route.request().method() === "POST") {
