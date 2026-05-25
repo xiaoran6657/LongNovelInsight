@@ -457,6 +457,7 @@ export interface AnalysisRunDetail {
 
 export interface AnalysisRunListResponse {
   runs: AnalysisRunListItem[];
+  total: number;
 }
 
 export interface CreateAnalysisRunResponse {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listAnalysisRuns, retryFailedAnalysisRun, resumeAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunListItem } from "../../api/types";
@@ -27,7 +27,7 @@ function statusTone(s: string): "ok" | "warn" | "error" | "neutral" {
   }
 }
 
-const INITIAL_SHOW = 10;
+const PAGE_SIZE = 20;
 
 interface Props {
   topicId: string;
@@ -37,17 +37,17 @@ interface Props {
 
 export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }: Props) {
   const qc = useQueryClient();
-  const [showAll, setShowAll] = useState(false);
+  const [limit, setLimit] = useState(PAGE_SIZE);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["analysisRuns", topicId],
-    queryFn: () => listAnalysisRuns(topicId),
+    queryKey: ["analysisRuns", topicId, { limit }],
+    queryFn: () => listAnalysisRuns(topicId, { limit }),
     enabled: !!topicId,
   });
 
   const runs = data?.runs ?? [];
-  const visibleRuns = showAll ? runs : runs.slice(0, INITIAL_SHOW);
-  const hasMore = runs.length > INITIAL_SHOW;
+  const total = data?.total ?? 0;
+  const hasMore = runs.length < total;
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
@@ -93,9 +93,9 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
 
   return (
     <div className="card" style={{ fontSize: "0.85rem" }}>
-      <h3>Run History ({showAll ? runs.length : Math.min(INITIAL_SHOW, runs.length)}/{runs.length})</h3>
+      <h3>Run History ({runs.length}/{total})</h3>
       <div style={{ maxHeight: 400, overflowY: "auto" }}>
-        {visibleRuns.map((r) => (
+        {runs.map((r) => (
           <RunRow
             key={r.id}
             run={r}
@@ -110,8 +110,11 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
       </div>
       {hasMore && (
         <div style={{ marginTop: "0.5rem", textAlign: "center" }}>
-          <button onClick={() => setShowAll(!showAll)} style={{ fontSize: "0.78rem" }}>
-            {showAll ? "Show less" : `Show all ${runs.length} runs`}
+          <button
+            onClick={() => setLimit((prev) => prev + PAGE_SIZE)}
+            style={{ fontSize: "0.78rem" }}
+          >
+            Load more ({total - runs.length} remaining)
           </button>
         </div>
       )}
@@ -119,7 +122,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   );
 }
 
-function RunRow({
+const RunRow = memo(function RunRow({
   run, isActive, onSelect, onRetry, onResume, retrying, resuming,
 }: {
   run: AnalysisRunListItem;
@@ -177,4 +180,4 @@ function RunRow({
       </div>
     </div>
   );
-}
+});

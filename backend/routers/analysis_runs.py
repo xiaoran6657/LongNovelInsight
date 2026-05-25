@@ -118,10 +118,14 @@ def create_run(
 @topic_router.get("/runs")
 def list_runs(
     topic_id: str,
+    limit: int = 50,
+    offset: int = 0,
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
     runs = analysis_run_service.list_analysis_runs(session, topic_id)
+    total = len(runs)
+    page = runs[offset : offset + limit]
     return {
         "runs": [
             {
@@ -138,8 +142,9 @@ def list_runs(
                 "finished_at": r.finished_at.isoformat() if r.finished_at else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
-            for r in runs
-        ]
+            for r in page
+        ],
+        "total": total,
     }
 
 

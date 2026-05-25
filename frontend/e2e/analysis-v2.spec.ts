@@ -129,6 +129,15 @@ async function mockParsedTopic(page: Parameters<typeof test>[1]["page"]) {
       }),
     });
   });
+
+  // Default runs list (empty) — individual tests override with specific data
+  await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
+    if (route.request().method() === "GET") {
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runs: [], total: 0 }) });
+      return;
+    }
+    route.fallback();
+  });
 }
 
 // ── Tests ──

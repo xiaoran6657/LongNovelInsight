@@ -128,10 +128,15 @@ export function createAnalysisRun(
 }
 
 export function listAnalysisRuns(
-  topicId: string
+  topicId: string,
+  params?: { limit?: number; offset?: number },
 ): Promise<AnalysisRunListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const query = qs.toString();
   return apiRequest<AnalysisRunListResponse>(
-    `/api/topics/${topicId}/analysis/runs`
+    `/api/topics/${topicId}/analysis/runs${query ? `?${query}` : ""}`,
   );
 }
 
