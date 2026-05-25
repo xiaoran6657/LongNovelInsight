@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listAnalysisRuns, retryFailedAnalysisRun, resumeAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunListItem } from "../../api/types";
 import { ApiError } from "../../api/client";
@@ -37,72 +37,42 @@ interface Props {
 
 export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }: Props) {
   const qc = useQueryClient();
-  const [page, setPage] = useState(0);
-  const [allRuns, setAllRuns] = useState<AnalysisRunListItem[]>([]);
   const prevTopicRef = useRef(topicId);
 
-  // Reset accumulated state when topic changes
+  // Reset infinite query when topic changes
   if (prevTopicRef.current !== topicId) {
     prevTopicRef.current = topicId;
-    if (page !== 0) setPage(0);
-    if (allRuns.length > 0) setAllRuns([]);
+    // Reset will happen automatically via key change
   }
 
-  const offset = page * PAGE_SIZE;
-
-  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ["analysisRuns", topicId, { offset }],
-    queryFn: () => listAnalysisRuns(topicId, { limit: PAGE_SIZE, offset }),
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ["analysisRuns", topicId, "infinite"],
+    queryFn: ({ pageParam }) =>
+      listAnalysisRuns(topicId, { limit: PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loadedCount = allPages.reduce((sum, p) => sum + (p.runs?.length ?? 0), 0);
+      const total = lastPage.total ?? loadedCount;
+      return loadedCount < total ? loadedCount : undefined;
+    },
     enabled: !!topicId,
-    placeholderData: (prev) => prev,
   });
 
-  // Accumulate runs: page 0 replaces, page > 0 appends (deduplicating by id)
-  const dataRef = useRef<typeof data>(undefined);
-  useEffect(() => {
-    if (!data || data === dataRef.current) return;
-    dataRef.current = data;
-    const runs = data.runs ?? [];
-    if (offset === 0) {
-      setAllRuns(runs);
-    } else {
-      setAllRuns((prev) => {
-        const existingIds = new Set(prev.map((r) => r.id));
-        const newOnes = runs.filter((r) => !existingIds.has(r.id));
-        return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
-      });
-    }
-  }, [data, offset]);
-
-  // When external code invalidates analysisRuns (e.g. after creating a new run),
-  // a refetch on offset > 0 won't show the new item. Detect this and reset to
-  // page 0. Our own "Load more" clicks set pageChangeRef to skip the reset.
-  const pageChangeRef = useRef(false);
-  const handleLoadMore = () => {
-    pageChangeRef.current = true;
-    setPage((p) => p + 1);
-  };
-  const prevFetchingRef = useRef(isFetching);
-  const needsReset = !prevFetchingRef.current && isFetching && offset > 0 && !pageChangeRef.current;
-  prevFetchingRef.current = isFetching;
-  useEffect(() => {
-    if (needsReset) {
-      dataRef.current = undefined;
-      setPage(0);
-      setAllRuns([]);
-    }
-    if (!isFetching) pageChangeRef.current = false;
-  }, [needsReset, isFetching]);
-
-  const total = data?.total ?? allRuns.length;
-  const hasMore = allRuns.length < total;
-  const isLoadingMore = isFetching && allRuns.length > 0;
+  const allRuns: AnalysisRunListItem[] = data?.pages.flatMap((p) => p.runs ?? []) ?? [];
+  const total = data?.pages[data.pages.length - 1]?.total ?? allRuns.length;
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
     onSuccess: (_data, runId) => {
-      dataRef.current = undefined;
-      setPage(0);
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
       onSelectRun(runId);
@@ -112,15 +82,13 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   const resumeMut = useMutation({
     mutationFn: (runId: string) => resumeAnalysisRun(runId, true),
     onSuccess: (_data, runId) => {
-      dataRef.current = undefined;
-      setPage(0);
       qc.invalidateQueries({ queryKey: ["analysisRuns", topicId] });
       qc.invalidateQueries({ queryKey: ["analysisRun", runId] });
       onSelectRun(runId);
     },
   });
 
-  if (isLoading && allRuns.length === 0) return <LoadingBlock text="Loading run history..." />;
+  if (isLoading) return <LoadingBlock text="Loading run history..." />;
   if (isError && allRuns.length === 0) {
     const apiErr = error instanceof ApiError ? error : undefined;
     return (
@@ -135,7 +103,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
       </div>
     );
   }
-  if (allRuns.length === 0 && !isFetching) {
+  if (allRuns.length === 0) {
     return (
       <EmptyState
         title="No runs yet"
@@ -160,13 +128,13 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
             resuming={resumeMut.isPending}
           />
         ))}
-        {isLoadingMore && <LoadingBlock text="Loading more..." />}
+        {isFetchingNextPage && <LoadingBlock text="Loading more..." />}
       </div>
-      {hasMore && (
+      {hasNextPage && (
         <div style={{ marginTop: "0.5rem", textAlign: "center" }}>
           <button
-            onClick={handleLoadMore}
-            disabled={isFetching}
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
             style={{ fontSize: "0.78rem" }}
           >
             Load more ({total - allRuns.length} remaining)
