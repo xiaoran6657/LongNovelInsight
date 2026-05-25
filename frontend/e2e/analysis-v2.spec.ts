@@ -177,6 +177,11 @@ test.describe("Analysis v2 – mode selection", () => {
     await mockParsedTopic(page);
 
     let postCount = 0;
+    const postReq = page.waitForRequest(
+      (req) => req.url().includes("/api/topics/test-topic-1/analysis/runs") && req.method() === "POST",
+      { timeout: 2000 },
+    ).then(() => { postCount++; }).catch(() => {});
+
     await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
       if (route.request().method() === "POST") {
         postCount++;
@@ -222,7 +227,8 @@ test.describe("Analysis v2 – mode selection", () => {
     // Click Run — should show confirmation, NOT immediately create a run
     await page.getByRole("button", RUN_BTN).click();
 
-    // Assert no POST was sent yet (confirmation should gate the request)
+    // Wait briefly and assert no POST was sent (confirmation should gate the request)
+    await page.waitForTimeout(300);
     expect(postCount).toBe(0);
 
     // Confirmation dialog should appear
@@ -233,12 +239,17 @@ test.describe("Analysis v2 – mode selection", () => {
     // Cancel should hide confirmation without creating a run
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByText("Confirm full analysis of ALL 100 chunks?")).not.toBeVisible();
+    await page.waitForTimeout(300);
     expect(postCount).toBe(0);
 
-    // Click Run again, then confirm — this time POST should fire
+    // Click Run again, then confirm — use waitForResponse to await the POST
     await page.getByRole("button", RUN_BTN).click();
+    const confirmResp = page.waitForResponse(
+      (resp) => resp.url().includes("/api/topics/test-topic-1/analysis/runs") && resp.request().method() === "POST",
+    );
     await page.getByRole("button", { name: "Confirm full analysis of all chunks" }).click();
-    expect(postCount).toBe(1);
+    const result = await confirmResp;
+    expect(result.status()).toBe(201);
   });
 });
 
@@ -455,24 +466,25 @@ test.describe("Analysis v2 – run history", () => {
       });
     });
 
-    // Run detail
+    // Run detail — report succeeded so the status card does NOT add duplicate
+    // Retry/Resume buttons. Only the Run History row should have them.
     await page.route(apiRoute("/api/analysis/runs/run-002"), (route) => {
       route.fulfill({
         status: 200, contentType: "application/json",
         body: JSON.stringify({
           run: {
             id: "run-002", topic_id: TOPIC_ID, mode: "preview",
-            status: "partial_success", progress_current: 80, progress_total: 100,
-            extraction_total: 5, extraction_succeeded: 3, extraction_failed: 2,
-            merge_total: 6, merge_succeeded: 4, merge_failed: 2,
-            final_total: 6, final_succeeded: 4, final_failed: 2,
+            status: "succeeded", progress_current: 100, progress_total: 100,
+            extraction_total: 5, extraction_succeeded: 5, extraction_failed: 0,
+            merge_total: 6, merge_succeeded: 6, merge_failed: 0,
+            final_total: 6, final_succeeded: 6, final_failed: 0,
             total_tokens: 15000, model_used: "deepseek-chat",
             error_message: null,
             started_at: "2025-05-21T14:00:00Z", finished_at: "2025-05-21T14:05:00Z",
           },
           extractions: [],
-          merge: { total: 6, succeeded: 4, failed: 2, outputs: [], warnings: [] },
-          final: { total: 6, succeeded: 4, failed: 2, outputs: [] },
+          merge: { total: 6, succeeded: 6, failed: 0, outputs: [], warnings: [] },
+          final: { total: 6, succeeded: 6, failed: 0, outputs: [] },
         }),
       });
     });
@@ -496,15 +508,19 @@ test.describe("Analysis v2 – run history", () => {
     await page.goto(`/topics/${TOPIC_ID}`);
     await expect(page.getByRole("heading", { name: "Analysis (v2)" })).toBeVisible({ timeout: 10000 });
 
-    // Verify buttons are visible
-    await expect(page.getByRole("button", { name: "Retry Failed" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+    // Scope clicks to the Run History row to avoid ambiguity with the
+    // AnalysisRunPanel status card (which could add duplicate buttons).
+    const historyRow = page.getByRole("button", { name: /Run run-002:/ });
+
+    // Verify Retry/Resume exist within the history row
+    await expect(historyRow.getByRole("button", { name: "Retry Failed" })).toBeVisible();
+    await expect(historyRow.getByRole("button", { name: "Resume" })).toBeVisible();
 
     // Click Retry Failed and assert the correct API call
     const retryResp = page.waitForResponse(
       (resp) => resp.url().includes("/retry-failed") && resp.request().method() === "POST"
     );
-    await page.getByRole("button", { name: "Retry Failed" }).click();
+    await historyRow.getByRole("button", { name: "Retry Failed" }).click();
     const retryResult = await retryResp;
     expect(retryResult.status()).toBe(200);
 
@@ -512,7 +528,7 @@ test.describe("Analysis v2 – run history", () => {
     const resumeResp = page.waitForResponse(
       (resp) => resp.url().includes("/resume") && resp.request().method() === "POST"
     );
-    await page.getByRole("button", { name: "Resume" }).click();
+    await historyRow.getByRole("button", { name: "Resume" }).click();
     const resumeResult = await resumeResp;
     expect(resumeResult.status()).toBe(200);
   });
