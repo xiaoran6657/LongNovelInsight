@@ -66,55 +66,51 @@ def api():
 
 
 @pytest.mark.integration
-class TestV02Smoke:
-    """Full v0.2 pipeline: upload -> parse -> preview analysis -> outputs."""
+def test_v02_smoke_pipeline(api):
+    """Full v0.2 pipeline in a single test: upload -> parse -> preview analysis -> outputs."""
 
-    def test_01_health(self, api):
-        r = api.get("/api/health")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["version"] == "0.2.0-dev"
+    # --- Health ---
+    r = api.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["version"] == "0.2.0-dev"
 
-    def test_02_get_provider(self, api):
-        r = api.get("/api/providers")
-        assert r.status_code == 200
-        providers = r.json()["providers"]
-        assert len(providers) > 0, "Need at least one provider with real API key"
-        self.provider = providers[0]
+    # --- Provider ---
+    r = api.get("/api/providers")
+    assert r.status_code == 200
+    providers = r.json()["providers"]
+    assert len(providers) > 0, "Need at least one provider with real API key"
+    provider = providers[0]
 
-    def test_03_create_topic(self, api):
-        name = f"smoke-{uuid.uuid4().hex[:8]}"
+    # --- Create topic ---
+    name = f"smoke-{uuid.uuid4().hex[:8]}"
+    r = api.post("/api/topics", json={"name": name, "provider_id": provider["id"]})
+    assert r.status_code == 201, r.text
+    topic = r.json()
+    tid = topic["id"]
+
+    try:
+        # --- Upload ---
         r = api.post(
-            "/api/topics",
-            json={"name": name, "provider_id": self.provider["id"]},
-        )
-        assert r.status_code == 201, r.text
-        self.topic = r.json()
-
-    def test_04_upload_document(self, api):
-        r = api.post(
-            f"/api/topics/{self.topic['id']}/documents/upload",
+            f"/api/topics/{tid}/documents/upload",
             files={"file": ("smoke.txt", SAMPLE.encode("utf-8"), "text/plain")},
         )
         assert r.status_code in (200, 201), r.text
-        doc = r.json()
-        assert doc["status"] in ("uploaded", "parsed")
+        assert r.json()["status"] in ("uploaded", "parsed")
 
-    def test_05_parse_document(self, api):
-        r = api.post(f"/api/topics/{self.topic['id']}/parse")
+        # --- Parse ---
+        r = api.post(f"/api/topics/{tid}/parse")
         assert r.status_code == 200, r.text
-        result = r.json()
-        assert result["chunk_count"] > 0, f"No chunks: {result}"
+        assert r.json()["chunk_count"] > 0, f"No chunks: {r.json()}"
 
-    def test_06_effective_config(self, api):
-        r = api.get(f"/api/topics/{self.topic['id']}/provider-config/effective")
+        # --- Config ---
+        r = api.get(f"/api/topics/{tid}/provider-config/effective")
         assert r.status_code == 200, r.text
         eff = r.json()
         assert eff["is_ready"], f"Not ready: {eff.get('missing_fields')}"
 
-    def test_07_run_v2_preview(self, api):
+        # --- Run v2 preview ---
         r = api.post(
-            f"/api/topics/{self.topic['id']}/analysis/runs",
+            f"/api/topics/{tid}/analysis/runs",
             json={
                 "mode": "preview",
                 "limit_chunks": 1,
@@ -122,10 +118,9 @@ class TestV02Smoke:
             },
         )
         assert r.status_code == 201, r.text
-        self.run = r.json()["run"]
+        rid = r.json()["run"]["id"]
 
-    def test_08_wait_for_completion(self, api):
-        rid = self.run["id"]
+        # --- Poll for completion ---
         start = time.monotonic()
         while time.monotonic() - start < MAX_WAIT:
             r = api.get(f"/api/analysis/runs/{rid}")
@@ -134,20 +129,16 @@ class TestV02Smoke:
             state = status["run"]["status"]
             p = status["run"]
             if state in ("succeeded", "partial_success", "failed", "cancelled"):
-                self.final_status = status
                 break
             time.sleep(POLL_INTERVAL)
         else:
             raise TimeoutError(f"Run {rid} did not complete within {MAX_WAIT}s")
 
-        assert state == "succeeded", f"Run failed: {status['run'].get('error_message', '')}"
+        assert state == "succeeded", f"Run failed: {p.get('error_message', '')}"
         assert p["extraction_succeeded"] >= 1, "No extractions succeeded"
         assert p["total_tokens"] > 0, "No LLM tokens consumed"
 
-    def test_09_verify_outputs(self, api):
-        tid = self.topic["id"]
-        rid = self.run["id"]
-        # Fetch outputs via the topic-level endpoint filtered by run_id
+        # --- Verify outputs ---
         r = api.get(f"/api/topics/{tid}/analysis/outputs?run_id={rid}")
         assert r.status_code == 200, r.text
         all_outputs = r.json()["outputs"]
@@ -167,10 +158,8 @@ class TestV02Smoke:
                 f"Output {fo['output_type']} has no content ({content_len} chars)"
             )
 
-    def test_10_cleanup(self, api):
-        r = api.delete(f"/api/topics/{self.topic['id']}")
-        assert r.status_code == 200, r.text
-        assert r.json()["deleted"]
+    finally:
+        api.delete(f"/api/topics/{tid}")
 
 
 if __name__ == "__main__":
