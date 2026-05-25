@@ -176,8 +176,41 @@ test.describe("Analysis v2 – mode selection", () => {
   test("full mode shows confirmation before running", async ({ page }) => {
     await mockParsedTopic(page);
 
+    let postCount = 0;
     await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
+      if (route.request().method() === "POST") {
+        postCount++;
+        route.fulfill({
+          status: 201, contentType: "application/json",
+          body: JSON.stringify({
+            run: { id: "run-full", topic_id: TOPIC_ID, mode: "full", status: "pending", progress_total: 100 },
+            status_url: "/api/analysis/runs/run-full",
+          }),
+        });
+        return;
+      }
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runs: [] }) });
+    });
+
+    await page.route(apiRoute("/api/analysis/runs/run-full"), (route) => {
+      route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          run: {
+            id: "run-full", topic_id: TOPIC_ID, mode: "full",
+            status: "succeeded", progress_current: 100, progress_total: 100,
+            extraction_total: 100, extraction_succeeded: 100, extraction_failed: 0,
+            merge_total: 6, merge_succeeded: 6, merge_failed: 0,
+            final_total: 6, final_succeeded: 6, final_failed: 0,
+            total_tokens: 50000, model_used: "deepseek-chat",
+            error_message: null,
+            started_at: "2025-01-01T00:00:00Z", finished_at: "2025-01-01T00:05:00Z",
+          },
+          extractions: [],
+          merge: { total: 6, succeeded: 6, failed: 0, outputs: [], warnings: [] },
+          final: { total: 6, succeeded: 6, failed: 0, outputs: [] },
+        }),
+      });
     });
 
     await page.goto(`/topics/${TOPIC_ID}`);
@@ -186,17 +219,26 @@ test.describe("Analysis v2 – mode selection", () => {
     // Switch to Full
     await page.getByLabel("Full").check();
 
-    // Click Run — should show confirmation, not immediately create a run
+    // Click Run — should show confirmation, NOT immediately create a run
     await page.getByRole("button", RUN_BTN).click();
+
+    // Assert no POST was sent yet (confirmation should gate the request)
+    expect(postCount).toBe(0);
 
     // Confirmation dialog should appear
     await expect(page.getByText("Confirm full analysis of ALL 100 chunks?")).toBeVisible();
     await expect(page.getByRole("button", { name: "Confirm full analysis of all chunks" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
 
-    // Cancel should hide confirmation
+    // Cancel should hide confirmation without creating a run
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByText("Confirm full analysis of ALL 100 chunks?")).not.toBeVisible();
+    expect(postCount).toBe(0);
+
+    // Click Run again, then confirm — this time POST should fire
+    await page.getByRole("button", RUN_BTN).click();
+    await page.getByRole("button", { name: "Confirm full analysis of all chunks" }).click();
+    expect(postCount).toBe(1);
   });
 });
 
@@ -393,17 +435,11 @@ test.describe("Analysis v2 – run history", () => {
     await expect(page.getByText("failed").first()).toBeVisible();
   });
 
-  test("retry and resume buttons appear for partial_success runs in history", async ({ page }) => {
+  test("retry and resume buttons trigger correct API calls", async ({ page }) => {
     await mockParsedTopic(page);
 
+    // Runs list
     await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
-      if (route.request().method() === "POST" && route.request().url().includes("/retry-failed")) {
-        route.fulfill({
-          status: 200, contentType: "application/json",
-          body: JSON.stringify({ run: { id: "run-002", status: "running" }, message: "Retrying" }),
-        });
-        return;
-      }
       route.fulfill({
         status: 200, contentType: "application/json",
         body: JSON.stringify({
@@ -434,21 +470,51 @@ test.describe("Analysis v2 – run history", () => {
             error_message: null,
             started_at: "2025-05-21T14:00:00Z", finished_at: "2025-05-21T14:05:00Z",
           },
-          extractions: [
-            { id: "ex-1", chunk_id: "chunk-001", status: "failed", attempt_count: 3, error_message: "LLM timeout" },
-          ],
-          merge: { total: 6, succeeded: 4, failed: 2, outputs: [], warnings: ["Incomplete merge for themes"] },
+          extractions: [],
+          merge: { total: 6, succeeded: 4, failed: 2, outputs: [], warnings: [] },
           final: { total: 6, succeeded: 4, failed: 2, outputs: [] },
         }),
+      });
+    });
+
+    // Correct retry endpoint: POST /api/analysis/runs/{run_id}/retry-failed
+    await page.route(apiRoute("/api/analysis/runs/run-002/retry-failed"), (route) => {
+      route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ run: { id: "run-002", status: "running" }, message: "Retrying" }),
+      });
+    });
+
+    // Correct resume endpoint: POST /api/analysis/runs/{run_id}/resume
+    await page.route(apiRoute("/api/analysis/runs/run-002/resume"), (route) => {
+      route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ run: { id: "run-002", status: "running" }, message: "Resuming" }),
       });
     });
 
     await page.goto(`/topics/${TOPIC_ID}`);
     await expect(page.getByRole("heading", { name: "Analysis (v2)" })).toBeVisible({ timeout: 10000 });
 
-    // Run history should show the partial_success run with Retry/Resume buttons
+    // Verify buttons are visible
     await expect(page.getByRole("button", { name: "Retry Failed" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume" })).toBeVisible();
+
+    // Click Retry Failed and assert the correct API call
+    const retryResp = page.waitForResponse(
+      (resp) => resp.url().includes("/retry-failed") && resp.request().method() === "POST"
+    );
+    await page.getByRole("button", { name: "Retry Failed" }).click();
+    const retryResult = await retryResp;
+    expect(retryResult.status()).toBe(200);
+
+    // Click Resume and assert the correct API call
+    const resumeResp = page.waitForResponse(
+      (resp) => resp.url().includes("/resume") && resp.request().method() === "POST"
+    );
+    await page.getByRole("button", { name: "Resume" }).click();
+    const resumeResult = await resumeResp;
+    expect(resumeResult.status()).toBe(200);
   });
 });
 
@@ -697,7 +763,7 @@ test.describe("Analysis v2 – outputs panel", () => {
     await page.goto(`/topics/${TOPIC_ID}`);
     await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible({ timeout: 10000 });
 
-    // Should show 6 outputs
+    // Should show 6 outputs initially (one per type via groupLatest)
     await expect(page.getByText(/6 output/)).toBeVisible();
 
     // The output type filter is a <select> with output type option values.
@@ -705,8 +771,19 @@ test.describe("Analysis v2 – outputs panel", () => {
     const filterSelect = page.locator("select", { has: page.locator("option[value='characters']") });
     await filterSelect.selectOption("characters");
 
-    // After filtering, verify the filter is set to "characters" in the select
+    // Verify filter value
     await expect(filterSelect).toHaveValue("characters");
+
+    // Verify the output list actually filtered: "characters" type card visible
+    // but other types (e.g. "causality") are not visible in the output cards.
+    // Use <strong> elements inside the output cards to avoid matching option text.
+    await expect(page.locator("strong", { hasText: /^characters$/ })).toBeVisible();
+
+    // With "characters" filter, only characters-type outputs should appear.
+    // Since groupLatest produces 1 card per type and we filtered to 1 type,
+    // count should show "1 output" or at minimum, other type badges are absent.
+    const outputCards = page.locator("strong", { hasText: /^(causality|events|overview|relations|themes)$/ });
+    await expect(outputCards).toHaveCount(0);
   });
 });
 
