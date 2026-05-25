@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from models.analysis_run import AnalysisRun
 from models.enums import AnalysisMode, JobStatus
@@ -711,15 +711,21 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
     }
 
 
-def list_analysis_runs(session: Session, topic_id: str) -> list[AnalysisRun]:
-    """List all analysis runs for a topic, most recent first."""
-    return list(
+def list_analysis_runs(
+    session: Session, topic_id: str, limit: int = 50, offset: int = 0
+) -> tuple[list[AnalysisRun], int]:
+    """List analysis runs for a topic with SQL-level pagination, most recent first.
+
+    Returns (page, total_count).
+    """
+    base = select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)
+    total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    runs = list(
         session.exec(
-            select(AnalysisRun)
-            .where(AnalysisRun.topic_id == topic_id)
-            .order_by(AnalysisRun.created_at.desc())
+            base.order_by(AnalysisRun.created_at.desc()).offset(offset).limit(limit)
         ).all()
     )
+    return runs, total
 
 
 def cancel_analysis_run(session: Session, run_id: str) -> AnalysisRun | None:

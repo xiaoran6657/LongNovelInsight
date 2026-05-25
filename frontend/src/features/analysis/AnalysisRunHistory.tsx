@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listAnalysisRuns, retryFailedAnalysisRun, resumeAnalysisRun } from "../../api/analysis";
 import type { AnalysisRunListItem } from "../../api/types";
@@ -46,7 +46,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   });
 
   const runs = data?.runs ?? [];
-  const total = data?.total ?? 0;
+  const total = data?.total ?? runs.length;
   const hasMore = runs.length < total;
 
   const retryMut = useMutation({
@@ -122,7 +122,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
   );
 }
 
-const RunRow = memo(function RunRow({
+function RunRow({
   run, isActive, onSelect, onRetry, onResume, retrying, resuming,
 }: {
   run: AnalysisRunListItem;
@@ -180,4 +180,4 @@ const RunRow = memo(function RunRow({
       </div>
     </div>
   );
-});
+}

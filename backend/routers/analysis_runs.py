@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
@@ -118,14 +118,14 @@ def create_run(
 @topic_router.get("/runs")
 def list_runs(
     topic_id: str,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
-    runs = analysis_run_service.list_analysis_runs(session, topic_id)
-    total = len(runs)
-    page = runs[offset : offset + limit]
+    page, total = analysis_run_service.list_analysis_runs(
+        session, topic_id, limit=limit, offset=offset
+    )
     return {
         "runs": [
             {
