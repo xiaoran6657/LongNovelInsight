@@ -50,7 +50,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
 
   const offset = page * PAGE_SIZE;
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["analysisRuns", topicId, { offset }],
     queryFn: () => listAnalysisRuns(topicId, { limit: PAGE_SIZE, offset }),
     enabled: !!topicId,
@@ -74,9 +74,29 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
     }
   }, [data, offset]);
 
+  // When external code invalidates analysisRuns (e.g. after creating a new run),
+  // a refetch on offset > 0 won't show the new item. Detect this and reset to
+  // page 0. Our own "Load more" clicks set pageChangeRef to skip the reset.
+  const pageChangeRef = useRef(false);
+  const handleLoadMore = () => {
+    pageChangeRef.current = true;
+    setPage((p) => p + 1);
+  };
+  const prevFetchingRef = useRef(isFetching);
+  const needsReset = !prevFetchingRef.current && isFetching && offset > 0 && !pageChangeRef.current;
+  prevFetchingRef.current = isFetching;
+  useEffect(() => {
+    if (needsReset) {
+      dataRef.current = undefined;
+      setPage(0);
+      setAllRuns([]);
+    }
+    if (!isFetching) pageChangeRef.current = false;
+  }, [needsReset, isFetching]);
+
   const total = data?.total ?? allRuns.length;
   const hasMore = allRuns.length < total;
-  const isLoadingMore = isLoading && allRuns.length > 0;
+  const isLoadingMore = isFetching && allRuns.length > 0;
 
   const retryMut = useMutation({
     mutationFn: (runId: string) => retryFailedAnalysisRun(runId),
@@ -115,7 +135,7 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
       </div>
     );
   }
-  if (allRuns.length === 0 && !isLoading) {
+  if (allRuns.length === 0 && !isFetching) {
     return (
       <EmptyState
         title="No runs yet"
@@ -145,8 +165,8 @@ export default function AnalysisRunHistory({ topicId, activeRunId, onSelectRun }
       {hasMore && (
         <div style={{ marginTop: "0.5rem", textAlign: "center" }}>
           <button
-            onClick={() => setPage((p) => p + 1)}
-            disabled={isLoading}
+            onClick={handleLoadMore}
+            disabled={isFetching}
             style={{ fontSize: "0.78rem" }}
           >
             Load more ({total - allRuns.length} remaining)
