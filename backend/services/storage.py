@@ -29,6 +29,14 @@ def get_original_txt_path(topic_id: str) -> Path:
     return get_source_dir(topic_id) / "original.txt"
 
 
+def get_source_file_path(topic_id: str, stored_filename: str) -> Path:
+    """Return the path to the stored source file for a given filename.
+
+    Prefer this over get_original_txt_path for format-aware code paths.
+    """
+    return get_source_dir(topic_id) / stored_filename
+
+
 def ensure_topic_dirs(topic_id: str) -> Path:
     source_dir = get_source_dir(topic_id)
     source_dir.mkdir(parents=True, exist_ok=True)

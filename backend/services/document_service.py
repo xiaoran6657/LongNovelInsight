@@ -1,3 +1,7 @@
+import io
+import json
+import zipfile
+
 from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
@@ -25,6 +29,26 @@ ENCODINGS = [
     "utf-16-le",
     "utf-16-be",
 ]
+
+
+def _validate_epub_container(content: bytes, filename: str) -> None:
+    """Validate that content is a well-formed EPUB container.
+
+    Checks: valid zip, contains META-INF/container.xml.
+    Does NOT parse OPF or extract text (that's Step 3).
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            if "META-INF/container.xml" not in zf.namelist():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{filename}' is not a valid EPUB: missing META-INF/container.xml",
+                )
+    except zipfile.BadZipFile:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{filename}' is not a valid EPUB (not a zip file)",
+        )
 
 
 def _detect_encoding(content: bytes) -> tuple[str, str]:
@@ -98,9 +122,19 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    if not file.filename or not file.filename.lower().endswith(".txt"):
-        raise HTTPException(status_code=400, detail="Only .txt files are supported")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
 
+    fn_lower = file.filename.lower()
+    if fn_lower.endswith(".txt"):
+        return _upload_txt(topic_id, file, session, topic)
+    elif fn_lower.endswith(".epub"):
+        return _upload_epub(topic_id, file, session, topic)
+    else:
+        raise HTTPException(status_code=400, detail="Only .txt and .epub files are supported")
+
+
+def _upload_txt(topic_id: str, file: UploadFile, session: Session, topic) -> DocumentRead:
     existing = _get_doc_by_topic(topic_id, session)
     if existing is not None:
         raise HTTPException(status_code=409, detail="Topic already has a document")
@@ -130,11 +164,63 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
     doc = Document(
         topic_id=topic_id,
         original_filename=file.filename,
+        stored_filename="original.txt",
+        file_type="txt",
         file_size_bytes=len(content),
         char_count=len(text),
         content_type=file.content_type,
         encoding=encoding,
         storage_path=rel_path,
+        metadata_json=None,
+    )
+    session.add(doc)
+
+    topic.storage_bytes = len(content)
+    session.add(topic)
+
+    session.commit()
+    session.refresh(doc)
+    return DocumentRead.model_validate(doc)
+
+
+def _upload_epub(topic_id: str, file: UploadFile, session: Session, topic) -> DocumentRead:
+    existing = _get_doc_by_topic(topic_id, session)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Topic already has a document")
+
+    content = file.file.read(config.UPLOAD_MAX_BYTES + 1)
+    if len(content) > config.UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum size of {config.UPLOAD_MAX_BYTES} bytes",
+        )
+
+    _validate_epub_container(content, file.filename or "unknown.epub")
+
+    source_dir = storage.ensure_topic_dirs(topic_id)
+    dest_path = source_dir / "original.epub"
+    dest_path.write_bytes(content)
+
+    try:
+        rel_path = str(dest_path.resolve().relative_to(config.DATA_DIR.resolve()))
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Failed to compute storage path")
+
+    metadata_json = json.dumps(
+        {"source_format": "epub", "parsing_warnings": []}, ensure_ascii=False
+    )
+
+    doc = Document(
+        topic_id=topic_id,
+        original_filename=file.filename,
+        stored_filename="original.epub",
+        file_type="epub",
+        file_size_bytes=len(content),
+        char_count=0,  # set after parse
+        content_type=file.content_type or "application/epub+zip",
+        encoding="epub",
+        storage_path=rel_path,
+        metadata_json=metadata_json,
     )
     session.add(doc)
 
