@@ -407,6 +407,20 @@ class TestXHTMLInlineTagPreservation:
         # Inline span should not inject newlines
         assert "is\na" not in text
 
+    def test_cjk_inline_tag_no_injected_spaces(self, tmp_path):
+        """Chinese inline tags must not get injected spaces between characters."""
+        epub_path = _make_epub(
+            tmp_path,
+            [("ch01.xhtml", "<h1>标题</h1><p>这是<span>重要</span>句子。</p>")],
+        )
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "book.epub")
+        text = doc.chapters[0].text
+        assert "这是重要句子。" in text
+        assert "这是 重要 句子。" not in text
+
     def test_multiple_paragraphs_still_separated(self, tmp_path):
         """P tags should still be separated by newlines."""
         epub_path = _make_epub(

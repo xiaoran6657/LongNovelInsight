@@ -293,9 +293,18 @@ def _join_inline_pieces(pieces: list[str]) -> str:
 
 
 def _needs_space_between(prev: str, curr: str) -> bool:
+    """Return True if a space is needed between two inline text pieces.
+
+    Only inserts a space between Latin-script word characters (ASCII
+    alphanumerics). CJK, punctuation, and other scripts are already
+    self-delimiting and should not get injected spaces.
+    """
     if not prev or not curr:
         return False
-    return prev[-1].isalnum() and curr[0].isalnum()
+    last = prev[-1]
+    first = curr[0]
+    # Only space-separate ASCII alphanumeric word boundaries
+    return last.isascii() and last.isalnum() and first.isascii() and first.isalnum()
 
 
 def _extract_block_text(element: Tag) -> str:
