@@ -7,13 +7,15 @@ No network access. No JS execution. No CSS rendering. No DB writes.
 """
 
 import logging
+import posixpath
 import re
 import zipfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from services.source_document import SourceChapter, SourceDocument
 
@@ -27,6 +29,32 @@ NSMAP = {
     "xhtml": "http://www.w3.org/1999/xhtml",
 }
 
+# Block-level HTML elements that should produce paragraph breaks
+BLOCK_TAGS = {
+    "p",
+    "div",
+    "section",
+    "article",
+    "aside",
+    "blockquote",
+    "pre",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "dd",
+    "dt",
+    "figcaption",
+    "figure",
+    "hr",
+    "br",
+    "table",
+    "tr",
+}
+
 
 def _ns(tag: str, prefix: str = "opf") -> str:
     """Return a namespace-qualified tag for ElementTree."""
@@ -38,33 +66,36 @@ def parse_epub(
 ) -> SourceDocument:
     """Parse an EPUB file from disk into a SourceDocument.
 
-    Args:
-        source_path: Path to the .epub file on disk.
-        topic_id: Topic UUID.
-        document_id: Document UUID.
-        original_filename: Original uploaded filename.
-
     Returns:
         SourceDocument with metadata and chapters.
 
     Raises:
-        ValueError: If the EPUB structure is invalid (missing container, OPF, or spine).
+        ValueError: If the EPUB structure is invalid (container, OPF, spine),
+                    malformed XML, or not a valid zip.
     """
-    metadata: dict[str, Any] = {"source_format": "epub"}
     warnings: list[str] = []
     chapters: list[SourceChapter] = []
 
     if not source_path.exists():
         raise ValueError(f"EPUB file not found: {source_path}")
 
-    with zipfile.ZipFile(source_path, "r") as zf:
+    try:
+        zf = zipfile.ZipFile(source_path, "r")
+    except zipfile.BadZipFile:
+        raise ValueError("Invalid EPUB: file is not a valid zip archive")
+
+    with zf:
         namelist = zf.namelist()
 
         # 1. Parse container.xml to find OPF path
         if "META-INF/container.xml" not in namelist:
             raise ValueError("Invalid EPUB: missing META-INF/container.xml")
 
-        container_root = ET.fromstring(zf.read("META-INF/container.xml"))
+        try:
+            container_root = ET.fromstring(zf.read("META-INF/container.xml"))
+        except ET.ParseError as e:
+            raise ValueError(f"Invalid EPUB: malformed container.xml: {e}")
+
         opf_path = _find_opf_path(container_root)
         if opf_path is None:
             raise ValueError("Invalid EPUB: no rootfile entry in container.xml")
@@ -72,8 +103,12 @@ def parse_epub(
             raise ValueError(f"Invalid EPUB: OPF file not found: {opf_path}")
 
         # 2. Parse OPF for metadata, manifest, spine
-        opf_root = ET.fromstring(zf.read(opf_path))
-        opf_dir = Path(opf_path).parent
+        try:
+            opf_root = ET.fromstring(zf.read(opf_path))
+        except ET.ParseError as e:
+            raise ValueError(f"Invalid EPUB: malformed OPF: {e}")
+
+        opf_dir = posixpath.dirname(opf_path)
 
         metadata = _parse_opf_metadata(opf_root, warnings)
         spine_hrefs, manifest_map = _parse_opf_spine(opf_root)
@@ -82,9 +117,13 @@ def parse_epub(
 
         # 3. Read spine items in order, extract text from XHTML
         for idx, href in enumerate(spine_hrefs):
-            full_path = str(opf_dir / href) if opf_dir != Path(".") else href
+            # Resolve OPF-relative URL to archive-internal path.
+            # href is a URL path (always /), may contain ../, %xx encoding, or
+            # subdirectories. Use posixpath for archive-internal resolution.
+            decoded = unquote(href)
+            full_path = posixpath.normpath(posixpath.join(opf_dir, decoded))
             if full_path not in namelist:
-                warnings.append(f"Spine item not found: {full_path}")
+                warnings.append(f"Spine item not found: {full_path} (href={href})")
                 continue
 
             content_bytes = zf.read(full_path)
@@ -109,6 +148,8 @@ def parse_epub(
                 )
             )
 
+    # Build metadata: OPF metadata + source_format + warnings
+    metadata["source_format"] = "epub"
     metadata["parsing_warnings"] = warnings
 
     return SourceDocument(
@@ -165,7 +206,6 @@ def _parse_opf_metadata(opf_root: ET.Element, warnings: list[str]) -> dict[str, 
     if identifier:
         meta["identifier"] = identifier
 
-    # Collect multiple creators
     creators = [el.text.strip() for el in opf_root.findall(f".//{_ns('creator')}") if el.text]
     if len(creators) > 1:
         meta["creators"] = creators
@@ -203,11 +243,77 @@ def _parse_opf_spine(opf_root: ET.Element) -> tuple[list[str], dict[str, dict[st
 # ── XHTML text extraction ──
 
 
+def _has_block_descendant(tag: Tag) -> bool:
+    """Return True if `tag` directly or indirectly contains a block-level element."""
+    for child in tag.descendants:
+        if isinstance(child, Tag) and child.name in BLOCK_TAGS:
+            return True
+    return False
+
+
+def _collect_inline_pieces(element: Tag) -> list[str]:
+    """Walk an element tree, collecting text pieces from inline nodes.
+
+    Each piece is a stripped text segment. The caller is responsible for
+    joining them with appropriate spacing (word-boundary-aware).
+    """
+    pieces: list[str] = []
+    for child in element.children:
+        if isinstance(child, NavigableString):
+            text = child.strip()
+            if text:
+                pieces.append(text)
+        elif isinstance(child, Tag):
+            if child.name in BLOCK_TAGS:
+                # Block inside inline context — treat as paragraph break
+                inner = _extract_block_text(child)
+                if inner:
+                    pieces.append("\n" + inner + "\n")
+            else:
+                pieces.extend(_collect_inline_pieces(child))
+    return pieces
+
+
+def _join_inline_pieces(pieces: list[str]) -> str:
+    """Join inline text pieces with word-boundary-aware spacing.
+
+    Inserts a space between two pieces only when the first ends with a
+    word character and the second starts with one. Otherwise joins
+    directly (handling punctuation like '.', ',', ')' after inline tags).
+    """
+    result: list[str] = []
+    for piece in pieces:
+        if piece.startswith("\n") or piece.endswith("\n"):
+            result.append(piece)
+        elif result and _needs_space_between(result[-1], piece):
+            result.append(" " + piece)
+        else:
+            result.append(piece)
+    return "".join(result)
+
+
+def _needs_space_between(prev: str, curr: str) -> bool:
+    if not prev or not curr:
+        return False
+    return prev[-1].isalnum() and curr[0].isalnum()
+
+
+def _extract_block_text(element: Tag) -> str:
+    """Extract text from a block-level element.
+
+    Inline tags (em, span, a, strong, etc.) are preserved as contiguous text
+    with word-boundary-aware spacing. Nested block tags get newline separators.
+    """
+    pieces = _collect_inline_pieces(element)
+    return _join_inline_pieces(pieces).strip()
+
+
 def _xhtml_to_text(content: bytes) -> str:
     """Extract plain text from XHTML content using beautifulsoup4.
 
-    Removes script, style, nav, and other non-content elements.
-    Preserves paragraph breaks.
+    - Removes script, style, nav, head and other non-content elements.
+    - Block elements (p, div, h1-h6, etc.) are separated by newlines.
+    - Inline elements (em, span, a, etc.) are kept as contiguous text.
     """
     soup = BeautifulSoup(content, "html.parser")
 
@@ -215,25 +321,62 @@ def _xhtml_to_text(content: bytes) -> str:
     for tag in soup.find_all(["script", "style", "nav", "head", "meta", "link"]):
         tag.decompose()
 
-    # Get text with separator for block elements
-    text = soup.get_text(separator="\n", strip=True)
+    body = soup.find("body")
+    if body is None:
+        # No body — extract from root, treating top-level block tags as paragraphs
+        root = soup.find("html") or soup
+        blocks: list[str] = []
+        for child in root.children:
+            if isinstance(child, Tag) and child.name in BLOCK_TAGS:
+                blocks.append(_extract_block_text(child))
+            elif isinstance(child, NavigableString):
+                text = child.strip()
+                if text:
+                    blocks.append(text)
+        text = "\n\n".join(b for b in blocks if b)
+        return text
 
-    # Normalize whitespace: collapse 3+ newlines → 2, strip trailing spaces per line
+    # Extract text from body, preserving block structure
+    blocks: list[str] = []
+    for child in body.children:
+        if isinstance(child, Tag) and child.name in BLOCK_TAGS:
+            blocks.append(_extract_block_text(child))
+        elif isinstance(child, NavigableString):
+            text = child.strip()
+            if text:
+                blocks.append(text)
+
+    text = "\n\n".join(b for b in blocks if b)
+
+    # Normalize whitespace: collapse 3+ newlines → 2
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     return text
 
 
+# ── Chapter title derivation ──
+
+
+def _zip_resolve_path(opf_dir: str, href: str) -> str:
+    """Resolve an OPF-relative href to an archive-internal path.
+
+    Uses POSIX semantics (always forward-slash) since ZIP internal paths
+    always use `/` regardless of host OS.
+    """
+    decoded = unquote(href)
+    return posixpath.normpath(posixpath.join(opf_dir, decoded))
+
+
 def _derive_chapter_title(
     zf: zipfile.ZipFile,
-    opf_dir: Path,
+    opf_dir: str,
     href: str,
     namelist: list[str],
     index: int,
 ) -> str:
     """Derive a chapter title from the XHTML heading or fall back to index."""
-    full = str(opf_dir / href) if opf_dir != Path(".") else href
+    full = _zip_resolve_path(opf_dir, href)
     if full not in namelist:
         return f"Chapter {index + 1}"
 

@@ -309,3 +309,153 @@ class TestDerivedChapterTitles:
 
         doc = parse_epub(epub_path, "t1", "d1", "book.epub")
         assert doc.chapters[0].title == "Chapter 1"
+
+
+# ── P1 regression tests ──
+
+
+class TestOPFRelativePathResolution:
+    """P1 fix: manifest href must resolve as OPF-relative POSIX URL."""
+
+    def test_parent_dir_href(self, tmp_path):
+        """OPF in OEBPS/content.opf, href='../Text/ch01.xhtml' → Text/ch01.xhtml."""
+        epub_path = tmp_path / "parent.epub"
+        # Container must reference the actual OPF path
+        container = (
+            '<?xml version="1.0"?>'
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            "<rootfiles>"
+            '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+            "</rootfiles>"
+            "</container>"
+        )
+        with zipfile.ZipFile(epub_path, "w") as zf:
+            zf.writestr("mimetype", "application/epub+zip")
+            zf.writestr("META-INF/container.xml", container)
+            opf = OPF_WRAPPER.format(
+                title="T",
+                creator="A",
+                language="en",
+                publisher="P",
+                identifier="id",
+                manifest_items='<item id="ch0" href="../Text/ch01.xhtml" media-type="application/xhtml+xml"/>',
+                spine_items='<itemref idref="ch0"/>',
+            )
+            zf.writestr("OEBPS/content.opf", opf)
+            zf.writestr(
+                "Text/ch01.xhtml", "<html><body><h1>Found</h1><p>It works.</p></body></html>"
+            )
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "parent.epub")
+        assert len(doc.chapters) == 1
+        assert "It works" in doc.chapters[0].text
+
+    def test_subdir_href(self, tmp_path):
+        """OPF at root, href='Text/ch01.xhtml' in subdirectory."""
+        epub_path = tmp_path / "subdir.epub"
+        with zipfile.ZipFile(epub_path, "w") as zf:
+            zf.writestr("mimetype", "application/epub+zip")
+            zf.writestr("META-INF/container.xml", CONTAINER_XML)
+            opf = OPF_WRAPPER.format(
+                title="T",
+                creator="A",
+                language="en",
+                publisher="P",
+                identifier="id",
+                manifest_items='<item id="ch0" href="Text/ch01.xhtml" media-type="application/xhtml+xml"/>',
+                spine_items='<itemref idref="ch0"/>',
+            )
+            zf.writestr("content.opf", opf)
+            zf.writestr("Text/ch01.xhtml", "<html><body><p>Subdir content.</p></body></html>")
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "subdir.epub")
+        assert len(doc.chapters) == 1
+        assert "Subdir content" in doc.chapters[0].text
+
+
+class TestXHTMLInlineTagPreservation:
+    """P1 fix: inline tags must not break text into extra newlines."""
+
+    def test_em_tag_does_not_break_line(self, tmp_path):
+        epub_path = _make_epub(
+            tmp_path, [("ch01.xhtml", "<h1>Title</h1><p>Hello <em>world</em>.</p>")]
+        )
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "book.epub")
+        text = doc.chapters[0].text
+        assert "Hello world." in text
+        # Must not have standalone "world" on its own line from inline tag
+        assert "Hello\nworld" not in text
+
+    def test_span_tag_does_not_break_line(self, tmp_path):
+        epub_path = _make_epub(
+            tmp_path,
+            [("ch01.xhtml", "<h1>Title</h1><p>This is <span>a test</span> sentence.</p>")],
+        )
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "book.epub")
+        text = doc.chapters[0].text
+        assert "a test" in text
+        # Inline span should not inject newlines
+        assert "is\na" not in text
+
+    def test_multiple_paragraphs_still_separated(self, tmp_path):
+        """P tags should still be separated by newlines."""
+        epub_path = _make_epub(
+            tmp_path, [("ch01.xhtml", "<h1>Title</h1><p>First para.</p><p>Second para.</p>")]
+        )
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "book.epub")
+        text = doc.chapters[0].text
+        assert "First para." in text
+        assert "Second para." in text
+
+
+class TestMalformedXMLHandling:
+    """P2 fix: malformed container.xml / OPF must raise ValueError, not ParseError."""
+
+    def test_malformed_container_raises_value_error(self, tmp_path):
+        epub_path = tmp_path / "badctr.epub"
+        with zipfile.ZipFile(epub_path, "w") as zf:
+            zf.writestr("mimetype", "application/epub+zip")
+            zf.writestr("META-INF/container.xml", b"<not><<valid xml>>")
+
+        from services.epub_parser_service import parse_epub
+
+        with pytest.raises(ValueError, match="Invalid EPUB"):
+            parse_epub(epub_path, "t1", "d1", "bad.epub")
+
+    def test_malformed_opf_raises_value_error(self, tmp_path):
+        epub_path = tmp_path / "badopf.epub"
+        with zipfile.ZipFile(epub_path, "w") as zf:
+            zf.writestr("mimetype", "application/epub+zip")
+            zf.writestr("META-INF/container.xml", CONTAINER_XML)
+            zf.writestr("content.opf", b"<package><<oops>>")
+
+        from services.epub_parser_service import parse_epub
+
+        with pytest.raises(ValueError, match="Invalid EPUB"):
+            parse_epub(epub_path, "t1", "d1", "bad.epub")
+
+
+class TestMetadataSourceFormat:
+    """P2 fix: source_format must survive in metadata output."""
+
+    def test_source_format_present(self, tmp_path):
+        epub_path = _make_epub(tmp_path)
+
+        from services.epub_parser_service import parse_epub
+
+        doc = parse_epub(epub_path, "t1", "d1", "book.epub")
+        assert doc.metadata["source_format"] == "epub"
+        assert "parsing_warnings" in doc.metadata
