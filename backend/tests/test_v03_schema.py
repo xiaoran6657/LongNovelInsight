@@ -186,6 +186,8 @@ class TestMigrationAddsColumnsToExistingDB:
         with engine.connect() as conn:
             for table, col in drops:
                 conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {col}"))
+            # Drop retrieval_trace so the migration test proves it creates from scratch
+            conn.execute(text("DROP TABLE IF EXISTS retrieval_trace"))
             conn.commit()
 
         # Insert a minimal row into each table to verify data survives migration
