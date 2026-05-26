@@ -1,6 +1,6 @@
 # Backend v0.3 Step 0 — Audit Report
 
-> **Date:** 2026-05-26 | **Status:** Read-only. No code changes.
+> **Date:** 2026-05-26 | **Status:** Read-only audit. This report is a versioned planning artifact — unlike the original Step 0 prompt which said "不写代码、不改文档、不提交", we intentionally commit it so the plan is traceable to the codebase state at the time of audit.
 
 ---
 
@@ -23,6 +23,19 @@ file_type: str = "txt"
 `file_type` is a free `str` field (not an enum), so adding `"epub"` requires no schema migration — just update the upload validation and the parse path. The field's default of `"txt"` means existing rows are fine.
 
 **Gap:** `metadata_json` field is missing entirely. Must be added via `ALTER TABLE`.
+
+### 2.1.1 Document.encoding and stored_filename — Non-Nullable Fields
+
+**File:** `backend/models/document.py:16-17`
+
+```python
+encoding: str = "utf-8"      # non-nullable str
+stored_filename: str = "original.txt"  # non-nullable, default "original.txt"
+```
+
+`DocumentRead.encoding` is also `str` (line 32) — the API response schema mirrors the model. EPUB cannot set `encoding=null` without changing both model and read schema to `str | None`, which would also affect existing TXT endpoints.
+
+**Decision (confirmed for Step 1/2):** Use fixed `encoding="epub"` for EPUB documents rather than making the field nullable. This avoids a schema migration on `encoding` and keeps the API response shape stable. EPUB upload must also set `stored_filename="original.epub"` (currently hardcoded to `"original.txt"` on line 122 of `document_service.py`). The `get_original_txt_path()` helper in `storage.py` should be generalized to `get_source_file_path(topic_id)` that reads `stored_filename` from the Document row.
 
 ### 2.2 Upload Endpoint — TXT Only, No EPUB Path
 
@@ -113,15 +126,22 @@ Evidence is a flat `string[]` extracted from the LLM's JSON response. The fronte
 
 **Gap:** None for the model itself. The retrieval service needs a new method to query atoms by `stable_id`/`canonical_name` and return associated chunks.
 
-### 2.9 Document Deletion Cascade — Clean Hook Point
+### 2.9 Deletion / Re-parse Cleanup — Three Paths, All Need FTS + Trace Hooks
 
-**File:** `backend/services/document_service.py:47-93`
+FTS5 virtual tables and RetrievalTrace rows have **no FK cascade** — they must be cleaned up explicitly. There are three independent paths that delete or replace chunks/analyses:
 
-`_delete_document_derived_data()` already cascades through: Chat → Artifacts → AnalysisOutputs → ExtractedAtoms → LocalExtractions → AnalysisRuns → Jobs → Chunks → Chapters.
+| Path | File:Line | What it deletes |
+|------|-----------|-----------------|
+| A — Delete document | `document_service.py:161-182` → `_delete_document_derived_data()` (line 47) | Chunks, Chapters, Analyses, Atoms, Extractions, Runs, Jobs |
+| B — Delete topic | `topic_service.py:38-67` | Same as A, plus Document, Chat, Topic itself |
+| C — Re-parse | `parser_service.py:113-117` | `DELETE FROM chunk WHERE topic_id = ?` + `DELETE FROM chapter WHERE topic_id = ?` |
 
-**Gap:** Two additions needed:
-1. After deleting chunks (line 88-90), also delete FTS rows: `DELETE FROM chunk_fts WHERE topic_id = ?`
-2. After deleting analyses (line 62-64), delete RetrievalTrace rows: `DELETE FROM retrieval_trace WHERE topic_id = ?`
+All three paths must include FTS and RetrievalTrace cleanup:
+
+- **After deleting chunks (paths A, B, C):** `DELETE FROM chunk_fts WHERE topic_id = ?`
+- **After deleting analyses/atoms (paths A, B):** `DELETE FROM retrieval_trace WHERE topic_id = ?`
+- **After re-parse (path C):** Rebuild FTS for the topic (Step 5's `rebuild_topic_chunk_fts`). Do NOT delete retrieval traces on re-parse — old traces are still valid for completed runs.
+- **Tests must cover:** delete document → FTS empty, delete topic → FTS + trace empty, re-parse → old FTS rows gone and new ones present.
 
 ### 2.10 Test Infrastructure — Ready for v0.3
 
@@ -158,7 +178,7 @@ Steps 1–12 as planned in `agent/NEXT_ACTIONS.md` are confirmed executable. Spe
 | Step | Note |
 |------|------|
 | 1 (Schema) | `ALTER TABLE` pattern from `db.py:24-83` is the template. 4 nullable columns + 1 new model + 1 FTS virtual table. |
-| 2 (Upload) | Branch on extension: `.txt` → existing flow, `.epub` → zip validation → save. `get_original_txt_path` → `get_source_file_path` returning `source_dir / original.{txt,epub}`. |
+| 2 (Upload) | Branch on extension: `.txt` → existing flow, `.epub` → zip validation → save. Set `encoding="epub"` (not null — avoids schema change), `stored_filename="original.epub"`. Generalize `get_original_txt_path` → `get_source_file_path`. |
 | 3 (EPUB Parser) | `zipfile` + `xml.etree.ElementTree` for container/OPF. `beautifulsoup4` for XHTML→text. No DB writes. |
 | 4 (Parse) | TXT adapter wraps existing `_detect_chapters` + `_split_into_chunks`. EPUB adapter calls Step 3 parser. Unified `SourceDocument → Chapter/Chunk` path with locator fields. |
 | 5 (FTS) | `CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(...)`. Rebuild on parse complete. Delete on document delete. |
@@ -182,3 +202,5 @@ Steps 1–12 as planned in `agent/NEXT_ACTIONS.md` are confirmed executable. Spe
 | Old SQLite databases without FTS5 support | Low | FTS5 has been in SQLite since 3.9.0 (2015); macOS/Windows/Linux all ship with it |
 | `evidence_json` format mismatch between old/new frontend | Low | Field is already `str|None` with JSON content; frontend `normalizeEvidence()` handles both shapes |
 | Parse failure with malformed EPUB (invalid zip, missing OPF) | Medium | Validate zip + container.xml at upload time (Step 2); parse-time errors are caught and surfaced as warnings |
+| Orphan FTS rows after topic delete or re-parse | Medium | Three cleanup paths (doc delete, topic delete, re-parse) must all clear/rebuild FTS; tests cover each |
+| `Document.encoding` schema migration needed if EPUB uses null | Avoided | Use fixed `encoding="epub"` string, keeping the field non-nullable — no migration needed |
