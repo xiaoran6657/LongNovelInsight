@@ -15,6 +15,9 @@ class Chapter(SQLModel, table=True):
     start_char: int
     end_char: int
     char_count: int = 0
+    source_href: str | None = None
+    nav_order: int | None = None
+    metadata_json: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -27,6 +30,9 @@ class ChapterRead(SQLModel):
     start_char: int
     end_char: int
     char_count: int
+    source_href: str | None
+    nav_order: int | None
+    metadata_json: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

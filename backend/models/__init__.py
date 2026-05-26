@@ -28,6 +28,7 @@ from .model_provider import ModelProvider as ModelProvider
 from .model_provider import ModelProviderCreate as ModelProviderCreate
 from .model_provider import ModelProviderRead as ModelProviderRead
 from .model_provider import ModelProviderUpdate as ModelProviderUpdate
+from .retrieval_trace import RetrievalTrace as RetrievalTrace
 from .topic import Topic as Topic
 from .topic import TopicCreate as TopicCreate
 from .topic import TopicRead as TopicRead

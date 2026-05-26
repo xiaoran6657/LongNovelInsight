@@ -75,9 +75,50 @@ def _migrate_analysis_artifact() -> None:
     )
 
 
+def _migrate_v03_source_locator_columns() -> None:
+    """Add v0.3 source locator and metadata columns (nullable)."""
+    migrations = [
+        ("document", "metadata_json", "TEXT"),
+        ("chapter", "source_href", "TEXT"),
+        ("chapter", "nav_order", "INTEGER"),
+        ("chapter", "metadata_json", "TEXT"),
+        ("chunk", "source_locator_json", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in migrations:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+                )
+            except Exception:
+                pass  # column already exists
+        conn.commit()
+
+
+def _migrate_retrieval_trace() -> None:
+    """Create retrieval_trace table if it doesn't exist."""
+    from models.retrieval_trace import RetrievalTrace
+
+    SQLModel.metadata.create_all(
+        engine,
+        tables=[RetrievalTrace.__table__],  # type: ignore[arg-type]
+    )
+
+
+def _migrate_chunk_fts() -> None:
+    """Ensure the FTS5 virtual table exists (idempotent)."""
+    from services.fts_service import ensure_chunk_fts_table
+
+    with Session(engine) as session:
+        ensure_chunk_fts_table(session)
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
     _migrate_analysis_output_run_id()
     _migrate_analysis_run_final_columns()
     _migrate_analysis_artifact()
+    _migrate_v03_source_locator_columns()
+    _migrate_retrieval_trace()
+    _migrate_chunk_fts()

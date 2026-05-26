@@ -17,6 +17,7 @@ class Document(SQLModel, table=True):
     file_size_bytes: int = 0
     char_count: int = 0
     storage_path: str = ""
+    metadata_json: str | None = None
     status: str = "uploaded"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -33,6 +34,7 @@ class DocumentRead(SQLModel):
     file_size_bytes: int
     char_count: int
     storage_path: str
+    metadata_json: str | None
     status: str
     created_at: datetime
     updated_at: datetime

@@ -18,6 +18,7 @@ class Chunk(SQLModel, table=True):
     end_char: int
     char_count: int = 0
     estimated_tokens: int = 0
+    source_locator_json: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -33,6 +34,7 @@ class ChunkRead(SQLModel):
     end_char: int
     char_count: int
     estimated_tokens: int
+    source_locator_json: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

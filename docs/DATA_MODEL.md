@@ -1,8 +1,8 @@
-# LongNovelInsight v0.1.0 — Data Model
+# LongNovelInsight v0.3.0-dev — Data Model
 
-All models are SQLModel classes backed by SQLite. In v0.1.0, all data including chunk text and analysis JSON is stored in SQLite for simplicity.
+All models are SQLModel classes backed by SQLite. v0.2 added hybrid storage for large analysis artifacts; v0.3 adds source locator fields, retrieval tracing, and FTS5 full-text search.
 
-> **Storage note:** v0.1 stores chunk text and analysis JSON in SQLite columns (`Chunk.text`, `AnalysisOutput.content_json`). Future versions may migrate large text to `data/chunks/*.txt` and `data/analyses/*.json`.
+> **Storage note:** v0.2 added disk-based artifact storage for large analysis JSON (>64KB). v0.3 adds FTS5 virtual tables (not managed by SQLModel) and source locator metadata.
 
 ## Entity-Relationship Summary
 
@@ -17,6 +17,9 @@ Topic          1──*  ChatSession
 ChatSession    1──*  ChatMessage
 Topic          1──*  Job
 Job            1──*  JobItem
+Topic          1──*  RetrievalTrace
+ChatSession    1──*  RetrievalTrace  (optional, nullable)
+Chunk          -──-  chunk_fts        (FTS5 virtual table, no FK)
 ```
 
 ## Enums (backend/models/enums.py)
@@ -95,13 +98,14 @@ Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
 | `id` | UUID (PK) | Unique document ID (independent of topic_id) |
 | `topic_id` | FK → topic (unique) | Owning topic (one-to-one in v0.1.0) |
 | `original_filename` | str | Original uploaded filename |
-| `stored_filename` | str | Always `original.txt` |
-| `file_type` | str | Always `txt` in v0.1.0 |
+| `stored_filename` | str | `original.txt` or `original.epub` |
+| `file_type` | str | `txt` or `epub` |
 | `content_type` | str | optional | MIME type from upload |
-| `encoding` | str | Source encoding used for decoding |
+| `encoding` | str | Source encoding; `"epub"` for EPUB documents |
 | `file_size_bytes` | int | Original uploaded file size |
 | `char_count` | int | Character count after decoding |
 | `storage_path` | str | Relative path within `data/` |
+| `metadata_json` | str | optional | v0.3: EPUB metadata (title, creator, language, etc.) |
 | `status` | str | DocumentStatus enum value |
 | `created_at` | datetime | Upload timestamp |
 | `updated_at` | datetime | Last update timestamp |
@@ -118,6 +122,9 @@ Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
 | `start_char` | int | Character offset where chapter starts |
 | `end_char` | int | Character offset where chapter ends |
 | `char_count` | int | Character count |
+| `source_href` | str | optional | v0.3: EPUB XHTML href or `txt://original` |
+| `nav_order` | int | optional | v0.3: EPUB spine/toc order |
+| `metadata_json` | str | optional | v0.3: Chapter-level metadata |
 | `created_at` | datetime | Creation timestamp |
 
 ### Chunk (`chunk`)
@@ -135,7 +142,37 @@ Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
 | `end_char` | int | Character offset within document |
 | `char_count` | int | Character count |
 | `estimated_tokens` | int | Estimated token count (chars / 1.5 for Chinese) |
+| `source_locator_json` | str | optional | v0.3: Source locator (href, chapter index, offsets) |
 | `created_at` | datetime | Creation timestamp |
+
+### RetrievalTrace (`retrieval_trace`)
+
+v0.3: Stores retrieval debug records for search/chat/retrieve calls.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique trace ID |
+| `topic_id` | FK → topic | Owning topic |
+| `session_id` | FK → chat_session | optional | Chat session if from chat |
+| `message_id` | FK → chat_message | optional | Message if from chat |
+| `query` | str | Original query string |
+| `method` | str | Retrieval method: `fts`, `keyword_fallback`, `structured`, `hybrid`, etc. |
+| `results_json` | str | JSON array of ranked candidates (chunk IDs, scores, snippets) |
+| `created_at` | datetime | Timestamp |
+
+### chunk_fts (FTS5 Virtual Table)
+
+v0.3: SQLite FTS5 virtual table for full-text search over chunk text/titles. Not a SQLModel table — created via raw SQL `CREATE VIRTUAL TABLE`.
+
+| Column | Content |
+| ------ | ------- |
+| `chunk_id` | UNINDEXED |
+| `topic_id` | UNINDEXED |
+| `document_id` | UNINDEXED |
+| `chapter_index` | UNINDEXED |
+| `chunk_index` | UNINDEXED |
+| `title` | Indexed content |
+| `text` | Indexed content |
 
 ### AnalysisOutput (`analysis_output`)
 
