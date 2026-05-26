@@ -177,14 +177,19 @@ Bind (or re-bind) a provider to a Topic.
 
 ### `POST /api/topics/{topic_id}/documents/upload`
 
-Upload a `.txt` file to a topic. Uses `multipart/form-data`.
-Accepts UTF-8, UTF-8-SIG, GBK, GB18030, GB2312, UTF-16 encodings.
+Upload a `.txt` or `.epub` file to a topic. Uses `multipart/form-data`.
+
+**TXT files:** Accepts UTF-8, UTF-8-SIG, GBK, GB18030, GB2312, UTF-16 encodings.
 The file is normalized and saved as UTF-8 on the server.
 `encoding` in the response indicates the actual source encoding used for decoding.
 
-**Request:** File field `file` (`.txt` only, max 200 MB; limit configurable in `backend/config.py`).
+**EPUB files:** Validates the file is a valid zip container with `META-INF/container.xml`.
+Does NOT parse chapters or extract text — the file is saved as-is for later parsing
+(v0.3 Step 3+). `encoding` is set to `"epub"`, `char_count` is `0` (set after parse).
 
-**Response 201:**
+**Request:** File field `file` (`.txt` or `.epub`, max 200 MB; limit configurable in `backend/config.py`).
+
+**TXT Response 201:**
 ```json
 {
   "id": "uuid",
@@ -197,12 +202,42 @@ The file is normalized and saved as UTF-8 on the server.
   "file_size_bytes": 1048576,
   "char_count": 500000,
   "storage_path": "topics/{topic_id}/source/original.txt",
+  "metadata_json": null,
   "status": "uploaded",
   "created_at": "...",
   "updated_at": "..."
 }
 ```
-**Errors:** `404` topic not found, `400` not a `.txt` file, `400` unsupported encoding (UTF-8 only), `409` topic already has a document, `413` file exceeds size limit, `422` empty or whitespace-only file.
+
+**EPUB Response 201:**
+```json
+{
+  "id": "uuid",
+  "topic_id": "uuid",
+  "original_filename": "novel.epub",
+  "stored_filename": "original.epub",
+  "file_type": "epub",
+  "content_type": "application/epub+zip",
+  "encoding": "epub",
+  "file_size_bytes": 524288,
+  "char_count": 0,
+  "storage_path": "topics/{topic_id}/source/original.epub",
+  "metadata_json": "{\"source_format\":\"epub\",\"parsing_warnings\":[]}",
+  "status": "uploaded",
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+**Errors:**
+- `404` topic not found
+- `400` not a `.txt` or `.epub` file
+- `400` unsupported TXT encoding
+- `400` EPUB is not a valid zip file
+- `400` EPUB missing `META-INF/container.xml`
+- `409` topic already has a document
+- `413` file exceeds size limit
+- `422` TXT file empty or whitespace-only
 
 ### `GET /api/topics/{topic_id}/documents/current`
 

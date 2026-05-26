@@ -225,10 +225,13 @@ Errors: `404`.
 
 **`POST /api/topics/{topic_id}/documents/upload`** (201)
 
-Request: `multipart/form-data` with field `file` (`.txt` only, max 200MB).
-Accepts: UTF-8, UTF-8-SIG, GB18030, GBK, GB2312, UTF-16. All normalized to UTF-8.
+Request: `multipart/form-data` with field `file` (`.txt` or `.epub`, max 200MB).
 
-Response `201`:
+**TXT:** Accepts UTF-8, UTF-8-SIG, GB18030, GBK, GB2312, UTF-16. All normalized to UTF-8.
+**EPUB:** Validates zip container + `META-INF/container.xml`. Does NOT parse chapters.
+`char_count = 0` for EPUB until parsed. `encoding = "epub"` for EPUB files.
+
+TXT Response `201`:
 ```json
 {
   "id": "uuid",
@@ -241,12 +244,33 @@ Response `201`:
   "file_size_bytes": 1048576,
   "char_count": 500000,
   "storage_path": "topics/{topic_id}/source/original.txt",
+  "metadata_json": null,
   "status": "uploaded",
   "created_at": "...",
   "updated_at": "..."
 }
 ```
-Errors: `404` topic not found, `400` not .txt, `400` unsupported encoding, `409` already has document, `413` file too large, `422` empty/whitespace-only file.
+
+EPUB Response `201`:
+```json
+{
+  "id": "uuid",
+  "topic_id": "uuid",
+  "original_filename": "novel.epub",
+  "stored_filename": "original.epub",
+  "file_type": "epub",
+  "content_type": "application/epub+zip",
+  "encoding": "epub",
+  "file_size_bytes": 524288,
+  "char_count": 0,
+  "storage_path": "topics/{topic_id}/source/original.epub",
+  "metadata_json": "{\"source_format\":\"epub\",\"parsing_warnings\":[]}",
+  "status": "uploaded",
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+Errors: `404` topic not found, `400` not .txt/.epub, `400` unsupported TXT encoding, `400` EPUB invalid zip / missing container.xml, `409` already has document, `413` file too large, `422` empty/whitespace-only TXT file.
 
 **`GET /api/topics/{topic_id}/documents/current`**
 
