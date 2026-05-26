@@ -133,15 +133,15 @@ FTS5 virtual tables and RetrievalTrace rows have **no FK cascade** — they must
 | Path | File:Line | What it deletes |
 |------|-----------|-----------------|
 | A — Delete document | `document_service.py:161-182` → `_delete_document_derived_data()` (line 47) | Chunks, Chapters, Analyses, Atoms, Extractions, Runs, Jobs |
-| B — Delete topic | `topic_service.py:38-67` | Same as A, plus Document, Chat, Topic itself |
+| B — Delete topic | `topic_service.py:38-110` | Same as A, plus Document, Chat, Topic itself |
 | C — Re-parse | `parser_service.py:113-117` | `DELETE FROM chunk WHERE topic_id = ?` + `DELETE FROM chapter WHERE topic_id = ?` |
 
 All three paths must include FTS and RetrievalTrace cleanup:
 
 - **After deleting chunks (paths A, B, C):** `DELETE FROM chunk_fts WHERE topic_id = ?`
 - **After deleting analyses/atoms (paths A, B):** `DELETE FROM retrieval_trace WHERE topic_id = ?`
-- **After re-parse (path C):** Rebuild FTS for the topic (Step 5's `rebuild_topic_chunk_fts`). Do NOT delete retrieval traces on re-parse — old traces are still valid for completed runs.
-- **Tests must cover:** delete document → FTS empty, delete topic → FTS + trace empty, re-parse → old FTS rows gone and new ones present.
+- **After re-parse (path C):** Rebuild FTS for the topic (Step 5's `rebuild_topic_chunk_fts`). **Also** delete RetrievalTrace rows for the topic — old traces contain `chunk_id` references to rows that path C has just deleted, so they cannot be resolved by the debug UI. This is the simple strategy for v0.3.0; a more complex alternative (adding `source_generation`/`snapshot` fields to preserve historical traces) is deferred to v0.3.x.
+- **Tests must cover:** delete document → FTS + trace empty; delete topic → FTS + trace empty; re-parse → old FTS rows gone, new FTS rows present, old traces deleted.
 
 ### 2.10 Test Infrastructure — Ready for v0.3
 
