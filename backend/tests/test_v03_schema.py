@@ -24,14 +24,10 @@ class TestDocumentChapterChunkNewColumns:
 
     def test_new_columns_are_nullable(self, engine):
         inspector = inspect(engine)
-        chunk_cols = {
-            c["name"]: c["nullable"] for c in inspector.get_columns("chunk")
-        }
+        chunk_cols = {c["name"]: c["nullable"] for c in inspector.get_columns("chunk")}
         assert chunk_cols["source_locator_json"] is True
 
-        chapter_cols = {
-            c["name"]: c["nullable"] for c in inspector.get_columns("chapter")
-        }
+        chapter_cols = {c["name"]: c["nullable"] for c in inspector.get_columns("chapter")}
         assert chapter_cols["source_href"] is True
         assert chapter_cols["nav_order"] is True
         assert chapter_cols["metadata_json"] is True
@@ -109,6 +105,7 @@ class TestFTSVirtualTable:
         engine = create_engine(f"sqlite:///{db_path}")
         # Need models imported so SQLModel knows about tables
         import models  # noqa: F401
+
         SQLModel.metadata.create_all(engine)
 
         from services.fts_service import ensure_chunk_fts_table
@@ -127,6 +124,7 @@ class TestFTSVirtualTable:
         db_path = tmp_path / "fts_idem.sqlite"
         engine = create_engine(f"sqlite:///{db_path}")
         import models  # noqa: F401
+
         SQLModel.metadata.create_all(engine)
 
         from services.fts_service import ensure_chunk_fts_table
@@ -140,6 +138,7 @@ class TestFTSVirtualTable:
         db_path = tmp_path / "fts_cols.sqlite"
         engine = create_engine(f"sqlite:///{db_path}")
         import models  # noqa: F401
+
         SQLModel.metadata.create_all(engine)
 
         from services.fts_service import ensure_chunk_fts_table
@@ -158,14 +157,134 @@ class TestFTSVirtualTable:
 
 
 class TestMigrationAddsColumnsToExistingDB:
-    def test_alter_table_migration_does_not_fail_on_fresh_db(self, tmp_path):
-        """The migration functions should be safe to call on a fresh DB."""
-        db_path = tmp_path / "migrate_test.sqlite"
+    def _setup_old_schema_db(self, tmp_path):
+        """Create a temporary DB with the OLD schema (no v0.3 columns),
+        patch db.engine to point to it, insert a row of test data,
+        and return the engine + the tmp db_path.
+
+        All _migrate_* calls must happen AFTER this setup so they
+        operate on the tmp engine, not the real global DB.
+        """
+        db_path = tmp_path / "old_schema.sqlite"
         engine = create_engine(f"sqlite:///{db_path}")
+
+        # Create tables via SQLModel — this gives us all registered tables
+        # WITH the new v0.3 columns. To simulate an old DB, we then drop
+        # the v0.3 columns with ALTER TABLE DROP COLUMN (SQLite 3.35+, 2021).
         import models  # noqa: F401
+
         SQLModel.metadata.create_all(engine)
 
-        # Simulate init_db by calling the migrations explicitly
+        # Remove v0.3 columns to simulate pre-v0.3 schema
+        drops = [
+            ("document", "metadata_json"),
+            ("chapter", "source_href"),
+            ("chapter", "nav_order"),
+            ("chapter", "metadata_json"),
+            ("chunk", "source_locator_json"),
+        ]
+        with engine.connect() as conn:
+            for table, col in drops:
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {col}"))
+            conn.commit()
+
+        # Insert a minimal row into each table to verify data survives migration
+        from uuid import uuid4
+
+        topic_id = str(uuid4())
+        doc_id = str(uuid4())
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO topic (id, name, storage_bytes, status, created_at, updated_at) "
+                    "VALUES (:id, 'test', 0, 'created', '2025-01-01', '2025-01-01')"
+                ),
+                {"id": topic_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO document (id, topic_id, original_filename, stored_filename, "
+                    "file_type, encoding, file_size_bytes, char_count, storage_path, status, "
+                    "created_at, updated_at) "
+                    "VALUES (:id, :tid, 'test.txt', 'original.txt', 'txt', 'utf-8', 1000, 500, "
+                    "'', 'uploaded', '2025-01-01', '2025-01-01')"
+                ),
+                {"id": doc_id, "tid": topic_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO chapter (id, topic_id, document_id, chapter_index, title, "
+                    "start_char, end_char, char_count, created_at) "
+                    "VALUES (:id, :tid, :did, 0, 'Ch1', 0, 100, 100, '2025-01-01')"
+                ),
+                {"id": str(uuid4()), "tid": topic_id, "did": doc_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO chunk (id, topic_id, document_id, chunk_index, text, "
+                    "start_char, end_char, char_count, estimated_tokens, created_at) "
+                    "VALUES (:id, :tid, :did, 0, 'hello', 0, 5, 5, 3, '2025-01-01')"
+                ),
+                {"id": str(uuid4()), "tid": topic_id, "did": doc_id},
+            )
+            conn.commit()
+
+        # Patch db.engine so all _migrate_* functions operate on the tmp engine
+        import db as db_mod
+
+        self._orig_engine = db_mod.engine
+        db_mod.engine = engine
+        self._test_engine = engine
+
+        return topic_id, doc_id
+
+    def teardown_method(self):
+        """Restore the original db.engine after each test."""
+        import db as db_mod
+
+        if hasattr(self, "_orig_engine"):
+            db_mod.engine = self._orig_engine
+
+    def test_migration_adds_missing_columns(self, tmp_path):
+        topic_id, doc_id = self._setup_old_schema_db(tmp_path)
+
+        from db import _migrate_v03_source_locator_columns
+
+        _migrate_v03_source_locator_columns()
+
+        inspector = inspect(self._test_engine)
+        doc_cols = {c["name"] for c in inspector.get_columns("document")}
+        chapter_cols = {c["name"] for c in inspector.get_columns("chapter")}
+        chunk_cols = {c["name"] for c in inspector.get_columns("chunk")}
+
+        assert "metadata_json" in doc_cols
+        assert "source_href" in chapter_cols
+        assert "nav_order" in chapter_cols
+        assert "metadata_json" in chapter_cols
+        assert "source_locator_json" in chunk_cols
+
+    def test_migration_preserves_old_data(self, tmp_path):
+        topic_id, doc_id = self._setup_old_schema_db(tmp_path)
+
+        from db import _migrate_v03_source_locator_columns
+
+        _migrate_v03_source_locator_columns()
+
+        with self._test_engine.connect() as conn:
+            # Document row should still exist with original data
+            doc = conn.execute(
+                text("SELECT * FROM document WHERE id = :id"), {"id": doc_id}
+            ).fetchone()
+            assert doc is not None
+            # New column should be NULL for existing row
+            # (row is a tuple; find metadata_json by column name)
+            col_names = conn.execute(text("PRAGMA table_info(document)")).fetchall()
+            meta_idx = next(i for i, r in enumerate(col_names) if r[1] == "metadata_json")
+            assert doc[meta_idx] is None  # old row gets NULL default
+
+    def test_retrieval_trace_and_fts_on_patched_engine(self, tmp_path):
+        self._setup_old_schema_db(tmp_path)
+
         from db import (
             _migrate_chunk_fts,
             _migrate_retrieval_trace,
@@ -173,18 +292,26 @@ class TestMigrationAddsColumnsToExistingDB:
         )
 
         _migrate_v03_source_locator_columns()
-        # patch engine to our tmp engine
-        import db as db_mod
+        _migrate_retrieval_trace()
+        _migrate_chunk_fts()
 
-        orig_engine = db_mod.engine
-        db_mod.engine = engine
-        try:
-            _migrate_retrieval_trace()
-            _migrate_chunk_fts()
-        finally:
-            db_mod.engine = orig_engine
+        inspector = inspect(self._test_engine)
+        assert "retrieval_trace" in inspector.get_table_names()
+        assert "chunk_fts" in inspector.get_table_names()
 
-        # Columns should exist
-        inspector = inspect(engine)
-        doc_cols = {c["name"] for c in inspector.get_columns("document")}
-        assert "metadata_json" in doc_cols
+    def test_migration_idempotent(self, tmp_path):
+        self._setup_old_schema_db(tmp_path)
+
+        from db import (
+            _migrate_chunk_fts,
+            _migrate_retrieval_trace,
+            _migrate_v03_source_locator_columns,
+        )
+
+        # Run twice — must not raise
+        _migrate_v03_source_locator_columns()
+        _migrate_retrieval_trace()
+        _migrate_chunk_fts()
+        _migrate_v03_source_locator_columns()
+        _migrate_retrieval_trace()
+        _migrate_chunk_fts()

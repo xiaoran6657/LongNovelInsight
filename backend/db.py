@@ -87,9 +87,7 @@ def _migrate_v03_source_locator_columns() -> None:
     with engine.connect() as conn:
         for table, col, col_type in migrations:
             try:
-                conn.execute(
-                    text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-                )
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
             except Exception:
                 pass  # column already exists
         conn.commit()
