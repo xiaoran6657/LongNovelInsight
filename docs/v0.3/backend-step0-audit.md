@@ -181,7 +181,7 @@ Steps 1–12 as planned in `agent/NEXT_ACTIONS.md` are confirmed executable. Spe
 | 2 (Upload) | Branch on extension: `.txt` → existing flow, `.epub` → zip validation → save. Set `encoding="epub"` (not null — avoids schema change), `stored_filename="original.epub"`. Generalize `get_original_txt_path` → `get_source_file_path`. |
 | 3 (EPUB Parser) | `zipfile` + `xml.etree.ElementTree` for container/OPF. `beautifulsoup4` for XHTML→text. No DB writes. |
 | 4 (Parse) | TXT adapter wraps existing `_detect_chapters` + `_split_into_chunks`. EPUB adapter calls Step 3 parser. Unified `SourceDocument → Chapter/Chunk` path with locator fields. |
-| 5 (FTS) | `CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(...)`. Rebuild on parse complete. Delete on document delete. |
+| 5 (FTS) | `CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(...)`. Rebuild on parse complete. Cleanup on document delete, topic delete, and re-parse. |
 | 6 (Search API) | Three endpoints: metadata, search, locator. Pydantic schemas. Query validation. |
 | 7 (Retrieval) | Candidate unification: FTS + keyword fallback + AnalysisOutput + ExtractedAtom. Score normalization. Dedup by chunk_id. |
 | 8 (Chat) | Replace `build_evidence_context()` → new hybrid retrieval. `evidence_json` accepts structured objects. Backward compat via `normalizeEvidence()` on frontend or normalizer in `_sanitize_evidence`. |
