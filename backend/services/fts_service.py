@@ -271,6 +271,8 @@ def search_chunks_keyword_fallback(
 
     Strips punctuation from the query (same as FTS path), then constructs
     LIKE '%token%' conditions joined with OR for multi-token queries.
+    CJK tokens are also split into individual characters for overlap
+    matching (e.g. "刘备曹操" → "刘备曹操" OR each individual char).
     Returns same shape as search_chunks_fts().
     """
     if not query or not query.strip():
@@ -280,19 +282,43 @@ def search_chunks_keyword_fallback(
     if not tokens:
         return []
 
-    # Build OR of LIKE conditions: (text LIKE '%t1%' OR text LIKE '%t2%')
-    conditions = " OR ".join(["c.text LIKE :p" + str(i) for i in range(len(tokens))])
-    params: dict = {"topic_id": topic_id, "limit": limit}
-    for i, t in enumerate(tokens):
-        params["p" + str(i)] = f"%{t}%"
+    # Expand CJK-only tokens into individual characters for overlap matching
+    expanded: list[str] = []
+    for t in tokens:
+        expanded.append(t)
+        # If the token is all CJK and longer than 1 char, also search per-character
+        if len(t) > 1 and all(_CJK_RE.match(ch) for ch in t):
+            expanded.extend(list(t))
 
+    # Escape LIKE wildcards in all tokens
+    def _escape_like(s: str) -> str:
+        return s.replace("%", "\\%").replace("_", "\\_")
+
+    # Build OR of LIKE conditions, deduplicating tokens
+    seen: set[str] = set()
+    conditions: list[str] = []
+    params: dict = {"topic_id": topic_id, "limit": limit}
+    param_idx = 0
+    for t in expanded:
+        escaped = _escape_like(t)
+        if escaped in seen:
+            continue
+        seen.add(escaped)
+        conditions.append(f"c.text LIKE :p{param_idx} ESCAPE '\\'")
+        params[f"p{param_idx}"] = f"%{escaped}%"
+        param_idx += 1
+
+    if not conditions:
+        return []
+
+    where = " OR ".join(conditions)
     sql = text(
         "SELECT c.id, c.topic_id, c.chapter_index, c.chunk_index, "
         "CASE WHEN ch.title IS NULL THEN '' ELSE ch.title END AS title, "
         "c.text "
         "FROM chunk c "
         "LEFT JOIN chapter ch ON ch.id = c.chapter_id "
-        f"WHERE c.topic_id = :topic_id AND ({conditions}) "
+        f"WHERE c.topic_id = :topic_id AND ({where}) "
         "LIMIT :limit"
     ).bindparams(**params)
 

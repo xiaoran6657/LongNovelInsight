@@ -769,6 +769,118 @@ class TestCJKPunctuationFallback:
             assert len(results) >= 1
 
 
+class TestLIKEWildcardEscape:
+    def test_underscore_in_query(self, tmp_path):
+        """Query '_' should not match every chunk via LIKE wildcard."""
+        db_path = tmp_path / "like_underscore.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_keyword_fallback,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            for i, text in enumerate(["alpha", "beta", "gamma"]):
+                c = Chunk(
+                    topic_id=tid,
+                    document_id=did,
+                    chunk_index=i,
+                    chapter_index=0,
+                    text=text,
+                    start_char=0,
+                    end_char=len(text),
+                    char_count=len(text),
+                )
+                session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            # Query with underscore should match only chunks literally containing '_'
+            results = search_chunks_keyword_fallback(tid, "_", session)
+            # None of our test chunks contain literal underscore
+            assert len(results) == 0
+
+    def test_percent_in_query(self, tmp_path):
+        """Query '%' should not match every chunk via LIKE wildcard."""
+        db_path = tmp_path / "like_percent.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_keyword_fallback,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="hello world",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_keyword_fallback(tid, "%", session)
+            assert len(results) == 0
+
+
+class TestCJKCharOverlap:
+    def test_unsegmented_cjk_query(self, tmp_path):
+        """Query '刘备曹操' (no spaces) should find '刘备和曹操相遇' via char overlap."""
+        db_path = tmp_path / "cjk_overlap.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="刘备和曹操相遇于赤壁。",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "刘备曹操", session)
+            assert len(results) >= 1
+
+
 class TestScorePrecision:
     def test_score_has_two_decimal_places(self, tmp_path):
         db_path = tmp_path / "score_prec.sqlite"
