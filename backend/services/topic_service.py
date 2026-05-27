@@ -94,6 +94,11 @@ def delete_topic(topic_id: str, session: Session) -> dict:
     for ch in chapters:
         session.delete(ch)
 
+    # FTS cleanup (virtual table, no FK cascade)
+    from services.fts_service import delete_topic_chunk_fts
+
+    delete_topic_chunk_fts(topic_id, session)
+
     # Delete document
     doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
     if doc:

@@ -287,6 +287,13 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
 
     result = _persist_parse(topic_id, doc, source, session)
 
+    # Rebuild FTS index after parse (idempotent — old rows already cleared by
+    # _persist_parse deleting chunks; this inserts fresh rows).
+    from services.fts_service import rebuild_topic_chunk_fts
+
+    fts_count = rebuild_topic_chunk_fts(topic_id, session)
+    result["fts_rows"] = fts_count
+
     # Warn if re-parse orphans existing analysis outputs
     if force and has_outputs:
         has_analysis = (

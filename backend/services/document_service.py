@@ -116,6 +116,11 @@ def _delete_document_derived_data(topic_id: str, session: Session) -> None:
     for ch in chapters:
         session.delete(ch)
 
+    # FTS cleanup (virtual table, no FK cascade)
+    from services.fts_service import delete_topic_chunk_fts
+
+    delete_topic_chunk_fts(topic_id, session)
+
 
 def upload_document(topic_id: str, file: UploadFile, session: Session) -> DocumentRead:
     topic = session.get(Topic, topic_id)
