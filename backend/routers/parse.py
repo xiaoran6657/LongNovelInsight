@@ -34,11 +34,15 @@ def parse(
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
-    _check_document(topic_id, session)
+    doc = _check_document(topic_id, session)
 
-    txt_path = storage.get_original_txt_path(topic_id)
-    if not txt_path.exists():
-        raise HTTPException(status_code=409, detail="Original text file not found on disk")
+    # Validate source file exists (format-aware path)
+    source_path = storage.get_source_file_path(topic_id, doc.stored_filename)
+    if not source_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Source file not found on disk: {doc.stored_filename}",
+        )
 
     try:
         result = parser_service.parse_novel(topic_id, session, force=force)
