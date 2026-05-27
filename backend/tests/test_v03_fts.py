@@ -489,6 +489,176 @@ class TestUnifiedSearch:
             assert len(chunk_ids) == len(set(chunk_ids))  # no duplicates
 
 
+class TestPunctuationInQuery:
+    def test_question_mark_in_query(self, tmp_path):
+        """Query 'who? quick' should find 'Who is quick?' via token extraction."""
+        db_path = tmp_path / "punct_qmark.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="Who is quick? The quick fox is here.",
+                start_char=0,
+                end_char=35,
+                char_count=35,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "who? quick", session)
+            assert len(results) >= 1
+
+    def test_hyphen_in_query(self, tmp_path):
+        """Query 'quick-fox' should find 'quick fox' via token extraction."""
+        db_path = tmp_path / "punct_hyphen.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="The quick brown fox.",
+                start_char=0,
+                end_char=20,
+                char_count=20,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "quick-fox", session)
+            assert len(results) >= 1
+
+
+class TestExplicitOR:
+    def test_or_matches_across_different_chunks(self, tmp_path):
+        """Query 'quick dog' with OR should match chunks containing either word."""
+        db_path = tmp_path / "or_chunks.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_fts,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c1 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="The quick brown fox.",
+                start_char=0,
+                end_char=20,
+                char_count=20,
+            )
+            c2 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=1,
+                chapter_index=0,
+                text="The lazy dog sleeps.",
+                start_char=21,
+                end_char=41,
+                char_count=20,
+            )
+            session.add_all([c1, c2])
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_fts(tid, "quick dog", session)
+            # Should match both chunks via OR (at least 2)
+            assert len(results) >= 2
+
+    def test_and_would_fail_but_or_passes(self, tmp_path):
+        """quick is in chunk 0, dog is in chunk 1; AND would return 0, OR returns both."""
+        db_path = tmp_path / "or_vs_and.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_fts,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c1 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="quick",
+                start_char=0,
+                end_char=5,
+                char_count=5,
+            )
+            c2 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=1,
+                chapter_index=0,
+                text="dog",
+                start_char=6,
+                end_char=9,
+                char_count=3,
+            )
+            session.add_all([c1, c2])
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            # OR query
+            results = search_chunks_fts(tid, "quick dog", session)
+            assert len(results) == 2  # both chunks returned
+
+            # Single-word queries still work
+            assert len(search_chunks_fts(tid, "quick", session)) == 1
+            assert len(search_chunks_fts(tid, "dog", session)) == 1
+
+
 class TestScorePrecision:
     def test_score_has_two_decimal_places(self, tmp_path):
         db_path = tmp_path / "score_prec.sqlite"

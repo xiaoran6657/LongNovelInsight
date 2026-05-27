@@ -116,17 +116,29 @@ def _is_cjk_query(query: str) -> bool:
     return bool(_CJK_RE.search(query))
 
 
-def _fts_query_string(user_query: str) -> str:
-    """Build a safe FTS5 query string from user input.
+def _fts_safe_tokens(user_query: str) -> list[str]:
+    """Extract alphanumeric tokens safe for FTS5.
 
-    Splits into tokens and joins with spaces so FTS5 does OR-based term
-    matching (not exact phrase). Special FTS5 characters are stripped.
+    Strips all characters that have special meaning in FTS5 or could
+    trigger syntax errors (?, :, -, punctuation, etc.).
     """
-    cleaned = user_query.replace('"', "").replace("*", "").replace("(", "").replace(")", "")
-    tokens = [t for t in cleaned.split() if t]
+    # Replace non-alphanumeric/non-space characters with space
+    cleaned = re.sub(r"[^\w\s]", " ", user_query)
+    return [t for t in cleaned.split() if t]
+
+
+def _fts_query_string(user_query: str) -> str:
+    """Build a safe FTS5 query string with explicit OR between tokens.
+
+    Each token becomes a separate term; OR ensures any match is returned,
+    not requiring all tokens to be present (which is FTS5's implicit AND).
+    """
+    tokens = _fts_safe_tokens(user_query)
     if not tokens:
         return ""
-    return " ".join(tokens)
+    if len(tokens) == 1:
+        return tokens[0]
+    return " OR ".join(tokens)
 
 
 def search_chunks_fts(
