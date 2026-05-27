@@ -250,3 +250,79 @@ class TestEPUBParse:
         # but the field should be absent when empty
         if "warnings" in data:
             assert isinstance(data["warnings"], list)
+
+
+# ── P1 regression tests ──
+
+
+class TestTXTGlobalOffsets:
+    def test_second_chapter_starts_at_global_offset(self, client):
+        """Chapter.start_char is a global offset for TXT."""
+        topic_id = _create_topic(client)
+        # Chapter 1: "Chapter 1\n\nAAA.\n" → ~15 chars
+        # Chapter 2 starts at global offset > 0
+        _upload_txt(
+            client,
+            topic_id,
+            "Chapter 1\n\nAAA.\n\nChapter 2\n\nBBB.\n",
+        )
+        client.post(f"/api/topics/{topic_id}/parse")
+
+        resp = client.get(f"/api/topics/{topic_id}/chapters")
+        chapters = resp.json()["chapters"]
+        assert len(chapters) == 2
+        # Chapter 1 starts at 0
+        assert chapters[0]["start_char"] == 0
+        # Chapter 2 starts somewhere after Chapter 1
+        assert chapters[1]["start_char"] > 10  # global offset, not 0
+
+    def test_txt_chunks_have_global_offsets(self, client):
+        """Chunk.start_char/end_char are global for TXT, chapter-local in locator."""
+        topic_id = _create_topic(client)
+        _upload_txt(client, topic_id, "Chapter 1\n\nAAA.\n\nChapter 2\n\nBBB.\n")
+        client.post(f"/api/topics/{topic_id}/parse")
+
+        resp = client.get(f"/api/topics/{topic_id}/chunks?include_text=false&limit=10")
+        chunks = resp.json()["chunks"]
+        # A chunk in Chapter 2 should have global start > Chapter 1's end
+        ch2_chunks = [c for c in chunks if c["chapter_index"] == 1]
+        if ch2_chunks:
+            assert ch2_chunks[0]["start_char"] > 10  # not 0
+
+
+class TestCharCountAccuracy:
+    def test_char_count_equals_source_text_length(self, client):
+        """Document.char_count must equal total text length, not multiplied by chunks."""
+        text = "Chapter 1\n\n" + ("X" * 5000) + "\n\nChapter 2\n\nHello.\n"
+        # Chapter 1 with 5000+ chars will be split into 2 chunks (threshold is 5000)
+        topic_id = _create_topic(client)
+        _upload_txt(client, topic_id, text)
+        client.post(f"/api/topics/{topic_id}/parse")
+
+        resp = client.get(f"/api/topics/{topic_id}/documents/current")
+        doc = resp.json()
+        # char_count should equal the full text length, not doubled
+        assert doc["char_count"] == len(text)
+
+    def test_char_count_with_multiple_chapters(self, client):
+        """Each chapter counted once."""
+        text = "Chapter 1\n\nAAA.\n\nChapter 2\n\nBBB.\n\nChapter 3\n\nCCC.\n"
+        topic_id = _create_topic(client)
+        _upload_txt(client, topic_id, text)
+        resp = client.post(f"/api/topics/{topic_id}/parse")
+        assert resp.json()["char_count"] == len(text)
+
+
+class TestHasOutputs:
+    def test_has_outputs_false_without_analysis(self, client):
+        """already_parsed should report has_outputs=False when only parsed, no analysis."""
+        topic_id = _create_topic(client)
+        _upload_txt(client, topic_id, "Chapter 1\n\nContent.\n")
+        client.post(f"/api/topics/{topic_id}/parse")
+
+        # Second parse without force
+        resp = client.post(f"/api/topics/{topic_id}/parse")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["already_parsed"] is True
+        assert data["has_outputs"] is False

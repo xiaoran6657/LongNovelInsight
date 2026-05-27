@@ -16,6 +16,10 @@ class SourceChapter:
     source_href: str | None = None
     nav_order: int | None = None
     metadata: dict[str, str | None] | None = None
+    # Global character offsets in the source document. TXT sets these;
+    # EPUB sets 0 (no single global text — locator_json carries chapter-local offsets).
+    global_start_char: int = 0
+    global_end_char: int = 0
 
 
 @dataclass

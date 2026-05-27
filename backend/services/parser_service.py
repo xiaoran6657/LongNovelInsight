@@ -12,6 +12,7 @@ import re
 
 from sqlmodel import Session, delete, select
 
+from models.analysis_output import AnalysisOutput
 from models.chapter import Chapter
 from models.chunk import Chunk
 from models.document import Document
@@ -60,6 +61,8 @@ def _txt_to_source_document(topic_id: str, doc: Document) -> SourceDocument:
                 chapter_index=ch_info["index"],
                 source_href="txt://original",
                 nav_order=ch_info["index"],
+                global_start_char=ch_info["start_char"],
+                global_end_char=ch_info["end_char"],
             )
         )
 
@@ -137,17 +140,24 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
     chapter_models: list[Chapter] = []
     all_chunks: list[Chunk] = []
 
+    use_global = source.file_type == "txt"
+
     for ch in source.chapters:
         ch_text = ch.text
         ch_char_count = len(ch_text)
+        total_chars += ch_char_count  # once per chapter, outside chunk loop
+
+        # Chapter offsets: global for TXT, chapter-local for EPUB
+        ch_start = ch.global_start_char if use_global else 0
+        ch_end = ch.global_end_char if use_global else ch_char_count
 
         chapter = Chapter(
             topic_id=topic_id,
             document_id=doc.id,
             chapter_index=ch.chapter_index,
             title=ch.title,
-            start_char=0,  # per-chapter offsets reset; global offsets in chunk locators
-            end_char=ch_char_count,
+            start_char=ch_start,
+            end_char=ch_end,
             char_count=ch_char_count,
             source_href=ch.source_href,
             nav_order=ch.nav_order if ch.nav_order is not None else ch.chapter_index,
@@ -161,6 +171,8 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
         chunk_spans = _split_into_chunks(ch_text, 0, ch_char_count)
         for ci, (cs, ce) in enumerate(chunk_spans):
             chunk_text = _normalize_text(ch_text[cs:ce])
+            chunk_start = ch_start + cs if use_global else cs
+            chunk_end = ch_start + ce if use_global else ce
             locator = {
                 "source_type": source.file_type,
                 "href": ch.source_href,
@@ -170,6 +182,9 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
                 "start_char": cs,
                 "end_char": ce,
             }
+            if use_global:
+                locator["global_start_char"] = chunk_start
+                locator["global_end_char"] = chunk_end
             chunk = Chunk(
                 topic_id=topic_id,
                 document_id=doc.id,
@@ -177,15 +192,14 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
                 chunk_index=ci,
                 chapter_index=ch.chapter_index,
                 text=chunk_text,
-                start_char=cs,
-                end_char=ce,
+                start_char=chunk_start,
+                end_char=chunk_end,
                 char_count=ce - cs,
                 estimated_tokens=_estimate_tokens(ce - cs),
                 source_locator_json=json.dumps(locator, ensure_ascii=False),
             )
             session.add(chunk)
             all_chunks.append(chunk)
-            total_chars += ch_char_count
 
     # Update document
     doc.char_count = total_chars
@@ -248,7 +262,7 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
     existing_chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).first()
     has_outputs = (
         session.exec(
-            select(Chunk).where(Chunk.topic_id == topic_id).limit(1)  # dummy, just check outputs
+            select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
         ).first()
         is not None
     )
@@ -275,8 +289,6 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
 
     # Warn if re-parse orphans existing analysis outputs
     if force and has_outputs:
-        from models.analysis_output import AnalysisOutput
-
         has_analysis = (
             session.exec(
                 select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
