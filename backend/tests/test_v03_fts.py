@@ -659,6 +659,116 @@ class TestExplicitOR:
             assert len(search_chunks_fts(tid, "dog", session)) == 1
 
 
+class TestFTSReservedWords:
+    def test_or_keyword_in_query(self, tmp_path):
+        """Query 'hello OR' should find chunk containing 'hello', not crash."""
+        db_path = tmp_path / "reserved_or.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="hello world",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "hello OR", session)
+            assert len(results) >= 1
+            assert any("hello" in r["snippet"].lower() for r in results)
+
+    def test_and_not_keywords_in_query(self, tmp_path):
+        """Query 'to be AND not' should find matching chunks."""
+        db_path = tmp_path / "reserved_and.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="to be or not to be",
+                start_char=0,
+                end_char=18,
+                char_count=18,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "to be AND not", session)
+            assert len(results) >= 1
+
+
+class TestCJKPunctuationFallback:
+    def test_cjk_with_punctuation(self, tmp_path):
+        """Query '刘备？曹操' should find '刘备和曹操相遇' via cleaned fallback."""
+        db_path = tmp_path / "cjk_punct.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="刘备和曹操相遇于赤壁。",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "刘备？曹操", session)
+            assert len(results) >= 1
+
+
 class TestScorePrecision:
     def test_score_has_two_decimal_places(self, tmp_path):
         db_path = tmp_path / "score_prec.sqlite"

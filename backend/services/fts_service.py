@@ -130,15 +130,18 @@ def _fts_safe_tokens(user_query: str) -> list[str]:
 def _fts_query_string(user_query: str) -> str:
     """Build a safe FTS5 query string with explicit OR between tokens.
 
-    Each token becomes a separate term; OR ensures any match is returned,
-    not requiring all tokens to be present (which is FTS5's implicit AND).
+    Each token is double-quoted so FTS5 treats it as a literal phrase term,
+    never as an operator (OR, AND, NOT). OR between tokens ensures any-match
+    semantics rather than FTS5's implicit AND.
     """
     tokens = _fts_safe_tokens(user_query)
     if not tokens:
         return ""
-    if len(tokens) == 1:
-        return tokens[0]
-    return " OR ".join(tokens)
+    # Quote each token individually to prevent FTS reserved-word collisions
+    quoted = [f'"{t}"' for t in tokens]
+    if len(quoted) == 1:
+        return quoted[0]
+    return " OR ".join(quoted)
 
 
 def search_chunks_fts(
@@ -266,22 +269,35 @@ def search_chunks_keyword_fallback(
 ) -> list[dict]:
     """Fallback search using SQL LIKE for CJK or when FTS returns no results.
 
-    Uses LIKE '%keyword%' substring matching on chunk text.
+    Strips punctuation from the query (same as FTS path), then constructs
+    LIKE '%token%' conditions joined with OR for multi-token queries.
     Returns same shape as search_chunks_fts().
     """
     if not query or not query.strip():
         return []
 
-    pattern = f"%{query.strip()}%"
+    tokens = _fts_safe_tokens(query)
+    if not tokens:
+        return []
+
+    # Build OR of LIKE conditions: (text LIKE '%t1%' OR text LIKE '%t2%')
+    conditions = " OR ".join(["c.text LIKE :p" + str(i) for i in range(len(tokens))])
+    params: dict = {"topic_id": topic_id, "limit": limit}
+    for i, t in enumerate(tokens):
+        params["p" + str(i)] = f"%{t}%"
+
     sql = text(
         "SELECT c.id, c.topic_id, c.chapter_index, c.chunk_index, "
         "CASE WHEN ch.title IS NULL THEN '' ELSE ch.title END AS title, "
         "c.text "
         "FROM chunk c "
         "LEFT JOIN chapter ch ON ch.id = c.chapter_id "
-        "WHERE c.topic_id = :topic_id AND c.text LIKE :pattern "
+        f"WHERE c.topic_id = :topic_id AND ({conditions}) "
         "LIMIT :limit"
-    ).bindparams(topic_id=topic_id, pattern=pattern, limit=limit)
+    ).bindparams(**params)
+
+    # Build a display query from the cleaned tokens for snippet extraction
+    display_query = " ".join(tokens)
 
     result = session.exec(sql)
     rows = result.fetchall()
@@ -292,8 +308,8 @@ def search_chunks_keyword_fallback(
             "chapter_index": row[2],
             "chunk_index": row[3],
             "title": row[4] or "",
-            "snippet": _make_excerpt(row[5] or "", query),
-            "score": 0.0,  # LIKE has no scoring — matches are binary
+            "snippet": _make_excerpt(row[5] or "", display_query),
+            "score": 0.0,
             "method": "keyword_fallback",
         }
         for row in rows
