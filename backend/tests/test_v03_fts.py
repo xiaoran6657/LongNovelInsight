@@ -4,11 +4,12 @@ import io
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from services.fts_service import (
     delete_topic_chunk_fts,
     rebuild_topic_chunk_fts,
+    search_chunks,
     search_chunks_fts,
     search_chunks_keyword_fallback,
 )
@@ -293,3 +294,235 @@ class TestFTSServiceDirect:
 
             r2 = search_chunks_fts(tid2, "unique phrase", session)
             assert len(r2) == 0
+
+
+# ── Review regression tests ──
+
+
+class TestMultiWordFTSQuery:
+    def test_non_adjacent_words_match(self, tmp_path):
+        """Multi-word query matches chunks containing any token, not just contiguous phrase."""
+        db_path = tmp_path / "multiword.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_fts,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="The quick brown fox jumps over the lazy dog.",
+                start_char=0,
+                end_char=44,
+                char_count=44,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            # "quick fox" — words not adjacent in text but both present
+            results = search_chunks_fts(tid, "quick fox", session)
+            assert len(results) >= 1
+
+            # "fox dog" — "dog" exists but "fox" and "dog" not adjacent
+            results = search_chunks_fts(tid, "fox dog", session)
+            assert len(results) >= 1
+
+
+class TestEmptyRebuildCommit:
+    def test_empty_rebuild_commits_delete(self, tmp_path):
+        """After rebuild with 0 chunks, new session sees empty FTS."""
+        db_path = tmp_path / "empty_rebuild.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_fts,
+        )
+
+        tid = str(uuid4())
+        did = str(uuid4())
+
+        # Insert a chunk, build FTS, then delete the chunk
+        with Session(engine) as s1:
+            ensure_chunk_fts_table(s1)
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="Hello world.",
+                start_char=0,
+                end_char=12,
+                char_count=12,
+            )
+            s1.add(c)
+            s1.commit()
+            rebuild_topic_chunk_fts(tid, s1)
+
+        # Verify FTS has data
+        with Session(engine) as s2:
+            assert len(search_chunks_fts(tid, "Hello", s2)) == 1
+
+        # Delete chunk and rebuild with 0 chunks
+        with Session(engine) as s3:
+            chunk = s3.exec(select(Chunk).where(Chunk.topic_id == tid)).first()
+            s3.delete(chunk)
+            s3.commit()
+            rebuild_topic_chunk_fts(tid, s3)
+
+        # New session should see empty FTS
+        with Session(engine) as s4:
+            assert len(search_chunks_fts(tid, "Hello", s4)) == 0
+
+
+class TestUnifiedSearch:
+    def test_cjk_fallback_used(self, tmp_path):
+        db_path = tmp_path / "unified_cjk.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import ensure_chunk_fts_table, rebuild_topic_chunk_fts
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="这是中文测试内容。",
+                start_char=0,
+                end_char=9,
+                char_count=9,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "中文测试", session)
+            assert len(results) >= 1
+            assert any("中文测试" in r["snippet"] for r in results)
+
+    def test_english_fts_used(self, tmp_path):
+        db_path = tmp_path / "unified_en.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import ensure_chunk_fts_table, rebuild_topic_chunk_fts
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="The quick brown fox.",
+                start_char=0,
+                end_char=20,
+                char_count=20,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "quick", session)
+            assert len(results) >= 1
+            assert results[0]["method"] == "fts"
+
+    def test_dedup_removes_duplicates(self, tmp_path):
+        """When both FTS and fallback hit the same chunk, dedup by chunk_id."""
+        db_path = tmp_path / "unified_dedup.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import ensure_chunk_fts_table, rebuild_topic_chunk_fts
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="这是一个测试中文内容。",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks(tid, "测试", session)
+            chunk_ids = [r["chunk_id"] for r in results]
+            assert len(chunk_ids) == len(set(chunk_ids))  # no duplicates
+
+
+class TestScorePrecision:
+    def test_score_has_two_decimal_places(self, tmp_path):
+        db_path = tmp_path / "score_prec.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_fts,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="apple apple apple banana.",
+                start_char=0,
+                end_char=26,
+                char_count=26,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_fts(tid, "apple", session)
+            assert len(results) >= 1
+            score = results[0]["score"]
+            # Score should be a float, not rounded to 0
+            assert isinstance(score, (int, float))

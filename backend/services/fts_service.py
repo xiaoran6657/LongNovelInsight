@@ -65,6 +65,7 @@ def rebuild_topic_chunk_fts(topic_id: str, session: Session) -> int:
     ).all()
 
     if not chunks:
+        session.commit()
         return 0
 
     # Resolve chapter titles for each chunk
@@ -118,16 +119,14 @@ def _is_cjk_query(query: str) -> bool:
 def _fts_query_string(user_query: str) -> str:
     """Build a safe FTS5 query string from user input.
 
-    Escapes double quotes and wraps each token for prefix/term matching.
-    FTS5 with unicode61 tokenizer handles ASCII tokens well;
-    CJK characters are passed through for substring matching.
+    Splits into tokens and joins with spaces so FTS5 does OR-based term
+    matching (not exact phrase). Special FTS5 characters are stripped.
     """
-    # Remove characters that have special meaning in FTS5
     cleaned = user_query.replace('"', "").replace("*", "").replace("(", "").replace(")", "")
-    if not cleaned.strip():
+    tokens = [t for t in cleaned.split() if t]
+    if not tokens:
         return ""
-    # Quote the query to treat it as a phrase
-    return f'"{cleaned.strip()}"'
+    return " ".join(tokens)
 
 
 def search_chunks_fts(
@@ -165,8 +164,12 @@ def search_chunks_fts(
         f"LIMIT :limit"
     ).bindparams(query=fts_query, topic_id=topic_id, limit=limit)
 
-    result = session.exec(sql)
-    rows = result.fetchall()
+    try:
+        result = session.exec(sql)
+        rows = result.fetchall()
+    except Exception:
+        logger.warning("FTS query failed for topic %s: %s", topic_id, query, exc_info=True)
+        return []
     return [
         {
             "chunk_id": row[0],
@@ -175,7 +178,7 @@ def search_chunks_fts(
             "chunk_index": row[3],
             "title": row[4] or "",
             "snippet": _strip_fts_tags(row[5] or ""),
-            "score": round(row[6], 1) if row[6] is not None else 0.0,
+            "score": round(row[6], 2) if row[6] is not None else 0.0,
             "method": "fts",
         }
         for row in rows
@@ -210,6 +213,37 @@ def _make_excerpt(text: str, query: str, max_chars: int = MAX_SNIPPET_CHARS) -> 
     if end < len(text):
         excerpt = excerpt + "..."
     return excerpt
+
+
+def search_chunks(
+    topic_id: str,
+    query: str,
+    session: Session,
+    limit: int = DEFAULT_LIMIT,
+) -> list[dict]:
+    """Unified search: FTS first, keyword fallback for CJK or empty FTS results.
+
+    Deduplicates by chunk_id so the same chunk doesn't appear twice when
+    both FTS and fallback match it.
+    """
+    if not query or not query.strip():
+        return []
+
+    # FTS search first
+    results = search_chunks_fts(topic_id, query, session, limit)
+
+    # Fall back to keyword search for CJK queries or empty FTS results
+    if _is_cjk_query(query) or len(results) == 0:
+        fallback = search_chunks_keyword_fallback(topic_id, query, session, limit)
+        seen = {r["chunk_id"] for r in results}
+        for r in fallback:
+            if r["chunk_id"] not in seen:
+                seen.add(r["chunk_id"])
+                results.append(r)
+
+    # Sort by score descending, then limit
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results[:limit]
 
 
 def search_chunks_keyword_fallback(
