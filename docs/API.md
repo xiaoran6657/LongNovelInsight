@@ -797,6 +797,93 @@ Delete a message. If it's a user message, the following assistant reply is also 
 
 ---
 
+## Entities & Similar Scenes (v0.3)
+
+### `GET /api/topics/{topic_id}/entities/{entity_id}/evidence`
+
+Find all evidence for an entity by its atom `id`, `stable_id`, or `canonical_name`. Returns matching atoms, their source chunks (with locators, <=300 char excerpts), and related AnalysisOutputs that share source chunks. All results capped by `limit`.
+
+**Query params:** `limit` (int, default 20, 1-50).
+
+**Response 200:**
+```json
+{
+  "entity_id": "char_liubei",
+  "canonical_name": "刘备",
+  "atoms": [
+    {
+      "id": "uuid",
+      "atom_type": "character",
+      "stable_id": "char_liubei",
+      "canonical_name": "刘备",
+      "title": "刘玄德",
+      "summary": null,
+      "confidence": 0.95,
+      "evidence_quotes": ["刘备出场。"],
+      "chapter_index": 0,
+      "chunk_index": 0
+    }
+  ],
+  "chunks": [
+    {
+      "id": "uuid",
+      "chapter_index": 0,
+      "chunk_index": 0,
+      "excerpt": "刘备和关羽在桃园结义...",
+      "locator": {"source_type": "txt", "href": "txt://original", "chunk_index": 0}
+    }
+  ],
+  "outputs": [
+    {
+      "id": "uuid",
+      "output_type": "characters",
+      "title": "刘备分析",
+      "excerpt": "刘备是主角..."
+    }
+  ]
+}
+```
+Chunks from other topics are excluded. Entity not found returns 200 with empty arrays.
+
+**Errors:** `404` topic not found.
+
+---
+
+### `GET /api/topics/{topic_id}/similar-scenes`
+
+Find scenes similar to a seed chunk or a free-text query using lexical + structured retrieval (no embeddings).
+
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `chunk_id` | str | null | Seed chunk ID (builds query from chunk text + associated atom names) |
+| `query` | str | null | Free-text search query (1-500 chars) |
+| `limit` | int | 10 | Max results (1-30) |
+
+At least one of `chunk_id` or `query` is required. When both given, `chunk_id` takes priority. The seed chunk is excluded from results in `chunk_id` mode.
+
+**Response 200:**
+```json
+{
+  "results": [
+    {
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 3,
+      "title": "第二章",
+      "snippet": "曹操率军南下，欲取江南...",
+      "score": 0.85,
+      "locator": {"source_type": "txt", "href": "txt://original", "chunk_index": 3}
+    }
+  ]
+}
+```
+
+**Errors:** `404` topic/chunk not found, `422` missing both params/empty query.
+
+---
+
 ## Analysis Jobs (internal / dev)
 
 > The analysis jobs API tracks task execution. In v0.1.0, jobs run synchronously with real LLM calls (for `analysis` type) or as stubs (for `parse` type). This is an internal API; the frontend should prefer `POST /api/topics/{id}/analysis/run` for analysis.

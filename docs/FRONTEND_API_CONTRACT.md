@@ -957,6 +957,42 @@ Errors: `404` message not found.
 
 ---
 
+### 3.8b Entities & Similar Scenes (v0.3)
+
+**`GET /api/topics/{topic_id}/entities/{entity_id}/evidence?limit=20`**
+
+Find all evidence for an entity by atom `id`, `stable_id`, or `canonical_name`. Returns matching atoms, source chunks (<=300 char excerpts with locators), and related AnalysisOutputs sharing source chunks. All arrays capped by `limit` (1-50, default 20). Entity not found returns 200 with empty arrays; cross-topic chunks are excluded.
+
+Response `200`:
+```json
+{
+  "entity_id": "char_liubei",
+  "canonical_name": "刘备",
+  "atoms": [{"id":"uuid","atom_type":"character","stable_id":"char_liubei","canonical_name":"刘备","title":"刘玄德","summary":null,"confidence":0.95,"evidence_quotes":["刘备出场。"],"chapter_index":0,"chunk_index":0}],
+  "chunks": [{"id":"uuid","chapter_index":0,"chunk_index":0,"excerpt":"刘备和关羽在桃园结义...","locator":{"source_type":"txt",...}}],
+  "outputs": [{"id":"uuid","output_type":"characters","title":"刘备分析","excerpt":"刘备是主角..."}]
+}
+```
+Errors: `404` topic not found.
+
+---
+
+**`GET /api/topics/{topic_id}/similar-scenes?chunk_id=...&query=...&limit=10`**
+
+Lexical + structured similarity (no embeddings). At least one of `chunk_id` or `query` required. `chunk_id` mode builds query seed from chunk text + associated atom names and excludes the seed chunk from results. `limit` 1-30, default 10.
+
+Response `200`:
+```json
+{
+  "results": [
+    {"chunk_id":"uuid","chapter_index":1,"chunk_index":3,"title":"第二章","snippet":"曹操率军南下...","score":0.85,"locator":{...}}
+  ]
+}
+```
+Errors: `404` topic/chunk not found, `422` missing both params/empty query.
+
+---
+
 ### 3.9 Provider Presets
 
 **`GET /api/provider-presets`**

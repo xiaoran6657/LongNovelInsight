@@ -110,11 +110,15 @@ def get_entity_evidence(
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    # Match atoms by stable_id or canonical_name that contains entity_id
+    # Match atoms by id, stable_id, or canonical_name
     atoms = session.exec(
         select(ExtractedAtom)
         .where(ExtractedAtom.topic_id == topic_id)
-        .where((ExtractedAtom.stable_id == entity_id) | (ExtractedAtom.canonical_name == entity_id))
+        .where(
+            (ExtractedAtom.id == entity_id)
+            | (ExtractedAtom.stable_id == entity_id)
+            | (ExtractedAtom.canonical_name == entity_id)
+        )
         .order_by(ExtractedAtom.confidence.desc())
         .limit(limit)
     ).all()
@@ -125,7 +129,8 @@ def get_entity_evidence(
             select(ExtractedAtom)
             .where(ExtractedAtom.topic_id == topic_id)
             .where(
-                ExtractedAtom.stable_id.contains(entity_id)  # type: ignore[arg-type]
+                ExtractedAtom.id.contains(entity_id)  # type: ignore[arg-type]
+                | ExtractedAtom.stable_id.contains(entity_id)  # type: ignore[arg-type]
                 | ExtractedAtom.canonical_name.contains(entity_id)  # type: ignore[arg-type]
             )
             .order_by(ExtractedAtom.confidence.desc())
@@ -157,11 +162,11 @@ def get_entity_evidence(
             )
         )
 
-    # Load source chunks
+    # Load source chunks (same-topic only, capped by limit)
     chunk_items: list[ChunkItem] = []
     for cid in chunk_ids:
         chunk = session.get(Chunk, cid)
-        if chunk is None:
+        if chunk is None or chunk.topic_id != topic_id:
             continue
         chunk_items.append(
             ChunkItem(
@@ -172,6 +177,7 @@ def get_entity_evidence(
                 locator=_load_chunk_locator(chunk.id, session),
             )
         )
+    chunk_items = chunk_items[:limit]
 
     # Find analysis outputs whose source_chunk_ids overlap
     all_outputs = session.exec(

@@ -311,6 +311,140 @@ class TestEntityEvidence:
         data = resp.json()
         assert len(data["atoms"]) <= 2
 
+    def test_lookup_by_atom_id(self, client):
+        """Entity lookup should work with the atom's actual id."""
+        topic_id = _create_topic(client)
+        _upload_and_parse(client, topic_id, "第一章\n\n刘备出场。\n")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from sqlmodel import select as sql_select
+
+        from models.chunk import Chunk
+
+        chunks = session.exec(sql_select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).all()
+        chunk = chunks[0]
+
+        run_id = _create_minimal_run(session, topic_id)
+        atom_ids = _create_atoms(
+            session,
+            topic_id,
+            run_id,
+            [
+                {
+                    "atom_type": "character",
+                    "stable_id": "char_liubei",
+                    "canonical_name": "刘备",
+                    "source_chunk_ids": [chunk.id],
+                    "evidence_quotes": ["刘备出场。"],
+                    "confidence": 0.9,
+                }
+            ],
+        )
+
+        # Lookup using the atom's UUID id
+        resp = client.get(f"/api/topics/{topic_id}/entities/{atom_ids[0]}/evidence")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["atoms"]) >= 1
+        assert data["atoms"][0]["id"] == atom_ids[0]
+
+    def test_cross_topic_chunks_not_leaked(self, client):
+        """Chunks from other topics must not appear in entity evidence."""
+        topic_a = _create_topic(client, "Topic A")
+        _upload_and_parse(client, topic_a, "第一章\n\nTopic A content.\n")
+
+        topic_b = _create_topic(client, "Topic B")
+        _upload_and_parse(client, topic_b, "第一章\n\nTopic B content.\n")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from sqlmodel import select as sql_select
+
+        from models.chunk import Chunk
+
+        chunks_a = session.exec(sql_select(Chunk).where(Chunk.topic_id == topic_a).limit(1)).all()
+        chunks_b = session.exec(sql_select(Chunk).where(Chunk.topic_id == topic_b).limit(1)).all()
+        assert chunks_a and chunks_b
+
+        run_id = _create_minimal_run(session, topic_a)
+        _create_atoms(
+            session,
+            topic_a,
+            run_id,
+            [
+                {
+                    "atom_type": "character",
+                    "stable_id": "char_test",
+                    "canonical_name": "Test",
+                    "source_chunk_ids": [chunks_b[0].id, chunks_a[0].id],
+                    "evidence_quotes": ["test"],
+                    "confidence": 0.9,
+                }
+            ],
+        )
+
+        resp = client.get(f"/api/topics/{topic_a}/entities/char_test/evidence")
+        assert resp.status_code == 200
+        data = resp.json()
+        chunk_ids = {c["id"] for c in data["chunks"]}
+        assert chunks_b[0].id not in chunk_ids, "Cross-topic chunk must not leak"
+        assert chunks_a[0].id in chunk_ids
+
+    def test_chunks_capped_by_limit(self, client):
+        """Chunks should not exceed the limit, even if atoms reference many."""
+        topic_id = _create_topic(client)
+        _upload_and_parse(
+            client,
+            topic_id,
+            "第一章\n\nA.\n第二章\n\nB.\n第三章\n\nC.\n第四章\n\nD.\n第五章\n\nE.\n",
+        )
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from sqlmodel import select as sql_select
+
+        from models.chunk import Chunk
+
+        chunks = session.exec(
+            sql_select(Chunk).where(Chunk.topic_id == topic_id).order_by(Chunk.chunk_index).limit(5)
+        ).all()
+        assert len(chunks) >= 3
+
+        run_id = _create_minimal_run(session, topic_id)
+        _create_atoms(
+            session,
+            topic_id,
+            run_id,
+            [
+                {
+                    "atom_type": "character",
+                    "stable_id": "char_multi",
+                    "canonical_name": "Multi",
+                    "source_chunk_ids": [c.id for c in chunks],
+                    "evidence_quotes": [],
+                    "confidence": 0.9,
+                }
+            ],
+        )
+
+        resp = client.get(f"/api/topics/{topic_id}/entities/char_multi/evidence?limit=2")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["chunks"]) <= 2, f"Expected chunks <= 2, got {len(data['chunks'])}"
+
 
 # ── Similar Scenes ──
 
