@@ -486,59 +486,27 @@ Request:
 |-------|------|---------|-------------|
 | `query` | str | (required) | 1-500 chars, must not be whitespace-only |
 | `top_k` | int | `8` | Max candidates to return (1-50) |
-| `methods` | list[str] | `["fts", "keyword_fallback", "structured", "analysis_output"]` | Candidate generators |
+| `methods` | list[str] | `["fts", "keyword_fallback", "structured", "analysis_output"]` | Candidate generators + optional `semantic_rerank` |
 | `persist_trace` | bool | `false` | Save a RetrievalTrace and return its ID |
 
-Valid methods: `fts`, `keyword_fallback`, `structured`, `analysis_output`.
+Valid methods: `fts`, `keyword_fallback`, `structured`, `analysis_output`, `semantic_rerank` (optional post-processing, disabled by default). `semantic_rerank` must be combined with at least one retrieval method; when disabled the response includes a `warning` and results are unchanged.
 
 Response `200`:
 ```json
 {
   "query": "曹操 赤壁",
-  "results": [
-    {
-      "source_type": "chunk",
-      "source_id": "uuid",
-      "chunk_id": "uuid",
-      "chapter_index": 1,
-      "chunk_index": 5,
-      "title": "第二章",
-      "snippet": "曹操率军南下...",
-      "score": 1.0,
-      "method": "fts",
-      "matched_terms": ["曹操"],
-      "source_locator": {"source_type": "txt", "href": "txt://original"}
-    },
-    {
-      "source_type": "atom",
-      "source_id": "uuid",
-      "chunk_id": "uuid",
-      "chapter_index": 1,
-      "chunk_index": 1,
-      "title": "曹操",
-      "snippet": "曹操 | 曹孟德",
-      "score": 0.6,
-      "method": "structured",
-      "matched_terms": ["曹操"],
-      "source_locator": {"source_type": "txt", "href": "txt://original"}
-    }
-  ],
-  "trace_id": "uuid-or-null"
+  "results": [...],
+  "trace_id": "uuid-or-null",
+  "warning": null
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
-| `source_id` | str | ID of the matching source |
-| `chunk_id` | str or null | Source chunk when available |
-| `score` | float | Normalized [0, 1]; 1.0 is top result |
-| `method` | str | May be combined (e.g. `fts+keyword_fallback`) when a chunk matched multiple methods |
-| `matched_terms` | list[str] | Query tokens found in the matched text |
-| `source_locator` | dict or null | Parsed chunk locator when a chunk is linked; null otherwise |
 | `trace_id` | str or null | RetrievalTrace ID when `persist_trace: true`; `null` otherwise |
+| `warning` | str or null | Warning when `semantic_rerank` is requested but disabled; `null` normally |
 
-Errors: `404` topic not found, `422` (empty query, query >500 chars, top_k <1 or >50, boolean top_k, invalid/empty methods).
+Errors: `404` topic not found, `422` (empty query, query >500 chars, top_k <1 or >50, boolean top_k, invalid/empty methods, semantic_rerank alone).
 
 ---
 
