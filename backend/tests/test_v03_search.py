@@ -145,14 +145,27 @@ class TestSearchAPI:
         _upload_txt(client, topic_id, "Chapter 1\n\nThe quick brown fox.\n")
         _parse(client, topic_id)
 
-        # Only keyword_fallback — English query won't match via FTS tokenizer for single word
+        # Only keyword_fallback — calls fallback primitive directly
         resp = client.post(
             f"/api/topics/{topic_id}/search",
             json={"query": "quick", "methods": ["keyword_fallback"]},
         )
         assert resp.status_code == 200
-        for r in resp.json()["results"]:
+        results = resp.json()["results"]
+        assert len(results) >= 1
+        for r in results:
             assert r["method"] == "keyword_fallback"
+
+        # Only fts — calls FTS primitive directly
+        resp = client.post(
+            f"/api/topics/{topic_id}/search",
+            json={"query": "quick", "methods": ["fts"]},
+        )
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert len(results) >= 1
+        for r in results:
+            assert r["method"] == "fts"
 
     def test_empty_query_422(self, client):
         topic_id = _create_topic(client)
@@ -197,6 +210,14 @@ class TestSearchAPI:
         resp = client.post(
             f"/api/topics/{topic_id}/search",
             json={"query": "hello", "methods": ["invalid"]},
+        )
+        assert resp.status_code == 422
+
+    def test_mixed_type_methods_422(self, client):
+        topic_id = _create_topic(client)
+        resp = client.post(
+            f"/api/topics/{topic_id}/search",
+            json={"query": "hello", "methods": ["bad", 123]},
         )
         assert resp.status_code == 422
 
