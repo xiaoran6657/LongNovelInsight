@@ -377,7 +377,7 @@ def test_chat_history_included_in_llm_messages(client):
         with patch(CHAT_PATCH_PATH, side_effect=capture_chat):
             c.post(
                 f"/api/chat/sessions/{session_id}/messages",
-                json={"content": "他做了什么？"},
+                json={"content": "刘备"},
             )
 
         # Expect at least system + previous user + previous assistant + current user
@@ -541,9 +541,9 @@ def test_legacy_evidence_still_readable(client):
         assert parsed == ["evidence string 1", "evidence string 2"]
 
 
-def test_empty_retrieval_uncertainty_flag(client):
-    """When retrieval finds nothing, answer should indicate uncertainty,
-    and a RetrievalTrace should still be created for debugging."""
+def test_empty_retrieval_returns_conservative_answer(client):
+    """When retrieval finds nothing, service returns a conservative no-evidence
+    answer (skipping the LLM entirely) and still creates a RetrievalTrace."""
     with client as c:
         topic_id = _setup_chat(c)
 
@@ -553,24 +553,17 @@ def test_empty_retrieval_uncertainty_flag(client):
         )
         session_id = resp.json()["id"]
 
-        from services.llm_client import LLMResponse
-
-        def empty_search_response(*args, **kwargs):
-            return LLMResponse(
-                content='{"answer":"不确定","evidence":[],"uncertainty":"No evidence found"}',
-                model="test",
-                usage={},
-            )
-
-        with patch(CHAT_PATCH_PATH, side_effect=empty_search_response):
-            resp = c.post(
-                f"/api/chat/sessions/{session_id}/messages",
-                json={"content": "xyznotfound12345"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["role"] == "assistant"
-            assert data["content"] == "不确定"
+        # No LLM mock needed — the service short-circuits before calling LLM
+        resp = c.post(
+            f"/api/chat/sessions/{session_id}/messages",
+            json={"content": "xyznotfound12345"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["role"] == "assistant"
+        assert "no evidence" in data["content"].lower()
+        assert "no evidence" in data["uncertainty"].lower()
+        assert data["evidence_json"] is None
 
         # Empty retrieval must still create a trace
         from sqlmodel import select as sql_select
@@ -592,8 +585,9 @@ def test_empty_retrieval_uncertainty_flag(client):
 
 
 def test_guard_against_hallucination_when_no_evidence(client):
-    """When retrieval is empty, a confident LLM answer with no uncertainty
-    must be flagged by the service layer."""
+    """When retrieval is empty, the service short-circuits before LLM call.
+    No fabricated answer reaches the user. Answer and uncertainty are both
+    set to conservative no-evidence messages."""
     with client as c:
         topic_id = _setup_chat(c)
 
@@ -603,25 +597,98 @@ def test_guard_against_hallucination_when_no_evidence(client):
         )
         session_id = resp.json()["id"]
 
-        from services.llm_client import LLMResponse
+        # LLM is never called when retrieval is empty, so no mock needed.
+        resp = c.post(
+            f"/api/chat/sessions/{session_id}/messages",
+            json={"content": "xyznotfound_hallucination_test"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["role"] == "assistant"
+        assert data["content"] == "No evidence was found in the novel to answer this question."
+        assert data["uncertainty"] == "No evidence found in the novel text"
+        assert data["evidence_json"] is None
 
-        def hallucinating_llm(*args, **kwargs):
-            return LLMResponse(
-                content='{"answer":"刘备是三国时期蜀汉的开国皇帝，以仁德著称。","evidence":["刘备建立蜀汉。"],"uncertainty":null}',
-                model="test",
-                usage={},
-            )
 
-        with patch(CHAT_PATCH_PATH, side_effect=hallucinating_llm):
+def test_trace_persisted_on_llm_error(client):
+    """RetrievalTrace must be saved even when the LLM call fails."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "LLM Error Trace"},
+        )
+        session_id = resp.json()["id"]
+
+        from services.llm_client import LLMClientError
+
+        def failing_llm(*args, **kwargs):
+            raise LLMClientError("Connection refused")
+
+        with patch(CHAT_PATCH_PATH, side_effect=failing_llm):
             resp = c.post(
                 f"/api/chat/sessions/{session_id}/messages",
-                json={"content": "xyznotfound_chat_hallucination_test"},
+                json={"content": "刘备是谁？"},
             )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["role"] == "assistant"
-            # Uncertainty must be forced when no evidence exists
-            assert data["uncertainty"] is not None, (
-                "Service must force uncertainty when retrieval is empty"
+            assert data["uncertainty"] == "LLM error"
+
+        from sqlmodel import select as sql_select
+
+        from db import get_session
+        from main import app
+        from models.retrieval_trace import RetrievalTrace
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+        traces = session.exec(
+            sql_select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+        ).all()
+        assert len(traces) >= 1
+        trace = traces[-1]
+        assert trace.session_id == session_id
+        assert len(trace.results_json) > 0
+
+
+def test_trace_persisted_on_invalid_json(client):
+    """RetrievalTrace must be saved even when the LLM returns invalid JSON."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Bad JSON Trace"},
+        )
+        session_id = resp.json()["id"]
+
+        from services.llm_client import LLMResponse
+
+        def bad_json(*args, **kwargs):
+            return LLMResponse(content="not valid json {{{", model="test", usage={})
+
+        with patch(CHAT_PATCH_PATH, side_effect=bad_json):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "刘备是谁？"},
             )
-            assert "no evidence" in data["uncertainty"].lower()
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "valid JSON" in data["uncertainty"]
+
+        from sqlmodel import select as sql_select
+
+        from db import get_session
+        from main import app
+        from models.retrieval_trace import RetrievalTrace
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+        traces = session.exec(
+            sql_select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+        ).all()
+        assert len(traces) >= 1
+        trace = traces[-1]
+        assert trace.session_id == session_id
+        assert len(trace.results_json) > 0

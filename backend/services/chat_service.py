@@ -254,6 +254,34 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         )
     evidence_text = "\n\n".join(evidence_parts) if evidence_parts else "(no evidence found)"
 
+    # Persist RetrievalTrace for every retrieval attempt, before the LLM call,
+    # so error paths (LLM failure, invalid JSON) still have a trace.
+    save_retrieval_trace(
+        topic_id=topic.id,
+        query=trimmed,
+        results=list(candidates),
+        session=session,
+        session_id=session_id,
+        message_id=user_msg.id,
+        method="hybrid",
+    )
+
+    # When no evidence was found, skip the LLM call entirely and return
+    # a conservative answer. This prevents the LLM from fabricating
+    # confident-sounding content with no grounding.
+    if not candidates:
+        assistant_msg = ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content="No evidence was found in the novel to answer this question.",
+            evidence_json=None,
+            uncertainty="No evidence found in the novel text",
+        )
+        session.add(assistant_msg)
+        session.commit()
+        session.refresh(assistant_msg)
+        return assistant_msg
+
     # Build recent history for multi-turn context
     history_messages = _build_recent_history_messages(session_id, session)
 
@@ -321,20 +349,15 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     answer = _sanitize_answer(parsed, response.content)
     uncertainty = _sanitize_uncertainty(parsed)
 
-    # When no evidence was found, guard against LLM hallucination:
-    # if the LLM returned a confident answer with no uncertainty flag,
-    # force an explicit uncertainty note so the frontend can warn the user.
-    if not candidates and not uncertainty:
-        uncertainty = "No evidence found in the novel text; answer may be unreliable"
+    # At this point candidates is always non-empty (empty case returns early above).
 
-    # Build structured evidence from retrieval candidates
     structured_evidence = _build_structured_evidence(candidates)
 
     assistant_msg = ChatMessage(
         session_id=session_id,
         role="assistant",
         content=answer,
-        evidence_json=json.dumps(structured_evidence, ensure_ascii=False) if candidates else None,
+        evidence_json=json.dumps(structured_evidence, ensure_ascii=False),
         uncertainty=uncertainty,
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
@@ -344,17 +367,5 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     session.add(assistant_msg)
     session.commit()
     session.refresh(assistant_msg)
-
-    # Always persist a RetrievalTrace — empty retrieval is the most
-    # important case to debug (query, index, fallback issues).
-    save_retrieval_trace(
-        topic_id=topic.id,
-        query=trimmed,
-        results=candidates if candidates else [],
-        session=session,
-        session_id=session_id,
-        message_id=user_msg.id,
-        method="hybrid",
-    )
 
     return assistant_msg
