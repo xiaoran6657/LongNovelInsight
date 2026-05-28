@@ -131,31 +131,36 @@ def _get_chunk_locator(chunk_id: str | None, session: Session) -> dict | None:
 
 
 def _resolve_output_chunk(
-    source_chunk_ids: str, session: Session
+    source_chunk_ids: str, topic_id: str, session: Session
 ) -> tuple[str | None, int | None, int | None, dict | None]:
-    """Parse an AnalysisOutput's source_chunk_ids JSON and resolve the first valid chunk.
+    """Parse an AnalysisOutput's source_chunk_ids JSON and resolve the first chunk
+    that belongs to topic_id.
 
-    Returns (chunk_id, chapter_index, chunk_index, source_locator) or (None, None, None, None).
-    Gracefully handles missing, empty, or invalid JSON.
+    Returns (chunk_id, chapter_index, chunk_index, source_locator) or
+    (None, None, None, None) when no valid same-topic chunk is found.
+    Gracefully handles missing, empty, invalid JSON, and cross-topic IDs.
     """
     try:
         ids = json.loads(source_chunk_ids)
     except (json.JSONDecodeError, TypeError):
         return None, None, None, None
-    if not isinstance(ids, list) or not ids:
+    if not isinstance(ids, list):
         return None, None, None, None
-    chunk_id = ids[0]
-    if not isinstance(chunk_id, str):
-        return None, None, None, None
-    chunk = session.get(Chunk, chunk_id)
-    if chunk is None:
-        return None, None, None, None
-    return (
-        chunk.id,
-        chunk.chapter_index,
-        chunk.chunk_index,
-        _get_chunk_locator(chunk.id, session),
-    )
+    for cid in ids:
+        if not isinstance(cid, str):
+            continue
+        chunk = session.get(Chunk, cid)
+        if chunk is None:
+            continue
+        if chunk.topic_id != topic_id:
+            continue
+        return (
+            chunk.id,
+            chunk.chapter_index,
+            chunk.chunk_index,
+            _get_chunk_locator(chunk.id, session),
+        )
+    return None, None, None, None
 
 
 # ── Candidate generators (unified dict shape) ──
@@ -239,7 +244,7 @@ def _search_analysis_output_candidates(
             excerpt = _make_excerpt(resolved, query)
             combined_text = resolved + " " + o.title
             chunk_id, chapter_index, chunk_index, locator = _resolve_output_chunk(
-                o.source_chunk_ids, session
+                o.source_chunk_ids, topic_id, session
             )
             candidates.append(
                 {

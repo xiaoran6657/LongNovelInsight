@@ -428,6 +428,61 @@ class TestAnalysisOutputRetrieval:
         ]
         assert len(output_results) == 0
 
+    def test_cross_topic_chunk_not_leaked(self, client):
+        """An output whose source_chunk_ids point to another topic must not leak
+        chunk_id, chapter_index, chunk_index, or locator into /retrieve."""
+        topic_a = _create_topic(client, "Topic A")
+        _upload_and_parse(client, topic_a, "Chapter 1\n\nThis is topic A content.\n")
+
+        topic_b = _create_topic(client, "Topic B")
+        _upload_and_parse(client, topic_b, "Chapter 1\n\nThis is topic B content.\n")
+
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from sqlmodel import select as sql_select
+
+        from models.analysis_output import AnalysisOutput
+        from models.chunk import Chunk
+
+        # Resolve actual chunk IDs for both topics
+        chunks_a = session.exec(sql_select(Chunk).where(Chunk.topic_id == topic_a).limit(1)).all()
+        chunks_b = session.exec(sql_select(Chunk).where(Chunk.topic_id == topic_b).limit(1)).all()
+        assert chunks_a
+        assert chunks_b
+
+        # Create an AnalysisOutput in topic A whose source_chunk_ids
+        # point first to topic B's chunk, then to topic A's chunk.
+        output = AnalysisOutput(
+            topic_id=topic_a,
+            output_type="characters",
+            title="Cross-Topic Test",
+            content_json=json.dumps({"name": "Test"}),
+            source_chunk_ids=json.dumps([chunks_b[0].id, chunks_a[0].id]),
+            evidence_quotes=json.dumps(["Test evidence."]),
+            confidence=0.9,
+        )
+        session.add(output)
+        session.commit()
+
+        resp = client.post(
+            f"/api/topics/{topic_a}/retrieve",
+            json={"query": "Test", "methods": ["analysis_output"], "top_k": 5},
+        )
+        assert resp.status_code == 200
+        output_results = [
+            r for r in resp.json()["results"] if r["source_type"] == "analysis_output"
+        ]
+        assert len(output_results) >= 1
+        r = output_results[0]
+        # Must resolve to topic A's chunk (the second element), not topic B's
+        assert r["chunk_id"] == chunks_a[0].id, (
+            f"Expected topic A chunk {chunks_a[0].id}, got {r.get('chunk_id')}"
+        )
+
 
 # ── Dedup & normalization ──
 
