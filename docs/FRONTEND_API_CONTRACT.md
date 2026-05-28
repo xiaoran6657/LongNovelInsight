@@ -462,11 +462,87 @@ Response `200`:
 ```
 `trace_id` is always null in v0.3 (reserved for future retrieval trace).
 
-Errors: `404` topic not found, `422` (empty query, query >500 chars, limit <1 or >100, invalid/empty methods).
+Errors: `404` topic not found, `422` (empty query, query >500 chars, limit <1 or >100, invalid/empty methods, boolean limit).
 
 ---
 
-### 3.5d Chunk Locator (v0.3)
+### 3.5d Retrieve (v0.3)
+
+**`POST /api/topics/{topic_id}/retrieve`**
+
+Hybrid retrieval across chunks (FTS + keyword fallback), analysis outputs, and extracted atoms. Returns ranked, deduplicated, score-normalized evidence candidates. Optionally persists a `RetrievalTrace` for debug inspection.
+
+Request:
+```json
+{
+  "query": "曹操 赤壁",
+  "top_k": 8,
+  "methods": ["fts", "keyword_fallback", "structured", "analysis_output"],
+  "persist_trace": false
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | str | (required) | 1-500 chars, must not be whitespace-only |
+| `top_k` | int | `8` | Max candidates to return (1-50) |
+| `methods` | list[str] | `["fts", "keyword_fallback", "structured", "analysis_output"]` | Candidate generators |
+| `persist_trace` | bool | `false` | Save a RetrievalTrace and return its ID |
+
+Valid methods: `fts`, `keyword_fallback`, `structured`, `analysis_output`.
+
+Response `200`:
+```json
+{
+  "query": "曹操 赤壁",
+  "results": [
+    {
+      "source_type": "chunk",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 5,
+      "title": "第二章",
+      "snippet": "曹操率军南下...",
+      "score": 1.0,
+      "method": "fts",
+      "matched_terms": ["曹操"],
+      "source_locator": {"source_type": "txt", "href": "txt://original"}
+    },
+    {
+      "source_type": "atom",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 1,
+      "title": "曹操",
+      "snippet": "曹操 | 曹孟德",
+      "score": 0.6,
+      "method": "structured",
+      "matched_terms": ["曹操"],
+      "source_locator": {"source_type": "txt", "href": "txt://original"}
+    }
+  ],
+  "trace_id": "uuid-or-null"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
+| `source_id` | str | ID of the matching source |
+| `chunk_id` | str or null | Source chunk when available |
+| `score` | float | Normalized [0, 1]; 1.0 is top result |
+| `method` | str | May be combined (e.g. `fts+keyword_fallback`) when a chunk matched multiple methods |
+| `matched_terms` | list[str] | Query tokens found in the matched text |
+| `source_locator` | dict or null | Parsed chunk locator when a chunk is linked; null otherwise |
+| `trace_id` | str or null | RetrievalTrace ID when `persist_trace: true`; `null` otherwise |
+
+Errors: `404` topic not found, `422` (empty query, query >500 chars, top_k <1 or >50, boolean top_k, invalid/empty methods).
+
+---
+
+### 3.5e Chunk Locator (v0.3)
 
 **`GET /api/topics/{topic_id}/chunks/{chunk_id}/locator`**
 

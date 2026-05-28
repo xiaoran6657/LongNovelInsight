@@ -555,7 +555,102 @@ Search chunks via FTS5 full-text index with keyword fallback for CJK queries.
 ```
 `trace_id` is reserved for future retrieval trace support (always `null` in v0.3).
 
-**Errors:** `404` topic not found, `422` query empty/too long/limit out of range/invalid methods.
+**Errors:** `404` topic not found, `422` query empty/too long/limit out of range/invalid methods/boolean limit.
+
+---
+
+### `POST /api/topics/{topic_id}/retrieve`
+
+Hybrid retrieval across chunks (FTS + keyword fallback), analysis outputs, and extracted atoms. Returns ranked, deduplicated, score-normalized candidates with source locators. Optionally persists a retrieval trace for debugging.
+
+**Request:**
+```json
+{
+  "query": "曹操 赤壁",
+  "top_k": 8,
+  "methods": ["fts", "keyword_fallback", "structured", "analysis_output"],
+  "persist_trace": false
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | str | (required) | Search query (1-500 chars) |
+| `top_k` | int | `8` | Max results (1-50) |
+| `methods` | list[str] | `["fts", "keyword_fallback", "structured", "analysis_output"]` | Candidate generators to use |
+| `persist_trace` | bool | `false` | Save a RetrievalTrace and return its ID |
+
+Valid methods:
+- `fts` — SQLite FTS5 full-text search over chunk text/title
+- `keyword_fallback` — LIKE-based substring search (CJK fallback)
+- `structured` — ExtractedAtom search by canonical name, aliases, evidence quotes
+- `analysis_output` — AnalysisOutput search by title, content, evidence quotes
+
+**Response 200:**
+```json
+{
+  "query": "曹操 赤壁",
+  "results": [
+    {
+      "source_type": "chunk",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 5,
+      "title": "第二章",
+      "snippet": "曹操率军南下，欲取江南...",
+      "score": 1.0,
+      "method": "fts",
+      "matched_terms": ["曹操"],
+      "source_locator": {"source_type": "txt", "href": "txt://original", "chunk_index": 5}
+    },
+    {
+      "source_type": "analysis_output",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 3,
+      "title": "曹操",
+      "snippet": "曹操是三国时期的重要人物...",
+      "score": 0.8,
+      "method": "analysis_output",
+      "matched_terms": ["曹操"],
+      "source_locator": {"source_type": "txt", "href": "txt://original", "chunk_index": 3}
+    },
+    {
+      "source_type": "atom",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "chapter_index": 1,
+      "chunk_index": 1,
+      "title": "曹操",
+      "snippet": "曹操 | 曹孟德 | 曹操在许昌",
+      "score": 0.6,
+      "method": "structured",
+      "matched_terms": ["曹操"],
+      "source_locator": {"source_type": "txt", "href": "txt://original", "chunk_index": 1}
+    }
+  ],
+  "trace_id": "uuid-or-null"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
+| `source_id` | str | ID of the matching source (chunk/output/atom) |
+| `chunk_id` | str or null | Source chunk ID when available; null for outputs/atoms with no linked chunk |
+| `chapter_index` | int or null | Chapter index when available |
+| `chunk_index` | int or null | Chunk index when available |
+| `title` | str | Display title |
+| `snippet` | str | Text excerpt centered on match |
+| `score` | float | Relevance score normalized to [0, 1] |
+| `method` | str | Method that produced the hit; may be combined (`fts+keyword_fallback`) |
+| `matched_terms` | list[str] | Query tokens found in the matched text |
+| `source_locator` | dict or null | Parsed `source_locator_json` when a source chunk is linked |
+| `trace_id` | str or null | RetrievalTrace ID when `persist_trace: true`; `null` otherwise |
+
+**Errors:** `404` topic not found, `422` query empty/too long/top_k out of range/invalid methods/empty methods/boolean top_k.
 
 ---
 

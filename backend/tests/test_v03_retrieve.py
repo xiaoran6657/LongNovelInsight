@@ -49,7 +49,9 @@ class TestRetrieveAPI:
     def test_basic_retrieve_returns_candidates(self, client):
         """Retrieve should return ranked candidates with required fields."""
         topic_id = _create_topic(client)
-        _upload_and_parse(client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n")
+        _upload_and_parse(
+            client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n"
+        )
 
         resp = client.post(
             f"/api/topics/{topic_id}/retrieve",
@@ -197,6 +199,15 @@ class TestRetrieveAPI:
         resp = client.post(
             f"/api/topics/{topic_id}/retrieve",
             json={"query": "hello", "top_k": 51},
+        )
+        assert resp.status_code == 422
+
+    def test_top_k_bool_422(self, client):
+        """top_k=True should be rejected (same class of bug as search limit)."""
+        topic_id = _create_topic(client)
+        resp = client.post(
+            f"/api/topics/{topic_id}/retrieve",
+            json={"query": "hello", "top_k": True},
         )
         assert resp.status_code == 422
 
@@ -353,7 +364,7 @@ class TestStructuredRetrieval:
 
 class TestAnalysisOutputRetrieval:
     def test_output_search(self, client):
-        """Retrieve should find analysis outputs by content."""
+        """Retrieve should find analysis outputs by content and resolve chunk metadata."""
         topic_id = _create_topic(client)
         _upload_and_parse(client, topic_id, "Chapter 1\n\n曹操率军南下，欲取江南。\n")
 
@@ -363,14 +374,24 @@ class TestAnalysisOutputRetrieval:
         session_gen = app.dependency_overrides.get(get_session, get_session)
         session = next(session_gen())
 
+        # Resolve a real chunk to wire into source_chunk_ids
+        from sqlmodel import select
+
         from models.analysis_output import AnalysisOutput
+        from models.chunk import Chunk
+
+        chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).all()
+        assert chunks
+        chunk = chunks[0]
 
         output = AnalysisOutput(
             topic_id=topic_id,
             output_type="characters",
             title="曹操",
-            content_json=json.dumps({"name": "曹操", "role": "奸雄", "description": "曹操是三国时期的重要人物"}),
-            source_chunk_ids="[]",
+            content_json=json.dumps(
+                {"name": "曹操", "role": "奸雄", "description": "曹操是三国时期的重要人物"}
+            ),
+            source_chunk_ids=json.dumps([chunk.id]),
             evidence_quotes=json.dumps(["曹操率军南下"]),
             confidence=0.9,
         )
@@ -385,7 +406,12 @@ class TestAnalysisOutputRetrieval:
         results = resp.json()["results"]
         output_results = [r for r in results if r["source_type"] == "analysis_output"]
         assert len(output_results) >= 1
+        best = output_results[0]
         assert any("曹操" in r["title"] for r in output_results)
+        # Chunk metadata should be resolved from source_chunk_ids
+        assert best["chunk_id"] == chunk.id
+        assert best["chapter_index"] == chunk.chapter_index
+        assert best["chunk_index"] == chunk.chunk_index
 
     def test_output_search_no_match(self, client):
         """analysis_output method should return empty when no outputs match."""
@@ -397,7 +423,9 @@ class TestAnalysisOutputRetrieval:
             json={"query": "xyznonexistent", "methods": ["analysis_output"], "top_k": 5},
         )
         assert resp.status_code == 200
-        output_results = [r for r in resp.json()["results"] if r["source_type"] == "analysis_output"]
+        output_results = [
+            r for r in resp.json()["results"] if r["source_type"] == "analysis_output"
+        ]
         assert len(output_results) == 0
 
 
@@ -408,7 +436,9 @@ class TestDedupAndNormalization:
     def test_no_duplicate_chunks(self, client):
         """Same chunk should not appear multiple times even if matched by multiple methods."""
         topic_id = _create_topic(client)
-        _upload_and_parse(client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n")
+        _upload_and_parse(
+            client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n"
+        )
 
         # Use both fts and keyword_fallback — same chunk may match both
         resp = client.post(
@@ -424,7 +454,9 @@ class TestDedupAndNormalization:
     def test_scores_normalized(self, client):
         """Scores should be normalized to [0, 1] range when multiple results exist."""
         topic_id = _create_topic(client)
-        _upload_and_parse(client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n")
+        _upload_and_parse(
+            client, topic_id, "Chapter 1\n\nThe quick brown fox jumps over the lazy dog.\n"
+        )
 
         resp = client.post(
             f"/api/topics/{topic_id}/retrieve",
@@ -501,7 +533,9 @@ class TestHybridMultiMethod:
         """FTS + keyword should not duplicate the same chunk."""
         topic_id = _create_topic(client)
         # Create enough text to have CJK content so both FTS and keyword fire
-        _upload_and_parse(client, topic_id, "第一章\n\n刘备与关羽张飞在桃园结义。三人誓言同生共死。\n")
+        _upload_and_parse(
+            client, topic_id, "第一章\n\n刘备与关羽张飞在桃园结义。三人誓言同生共死。\n"
+        )
 
         resp = client.post(
             f"/api/topics/{topic_id}/retrieve",

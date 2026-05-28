@@ -39,6 +39,13 @@ class RetrieveRequest(BaseModel):
             raise ValueError("query must not be empty or whitespace-only")
         return v
 
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def top_k_must_be_int(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("top_k must be an integer, not a boolean")
+        return v
+
 
 class CandidateResult(BaseModel):
     source_type: str

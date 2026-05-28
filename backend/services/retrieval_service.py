@@ -130,6 +130,34 @@ def _get_chunk_locator(chunk_id: str | None, session: Session) -> dict | None:
         return None
 
 
+def _resolve_output_chunk(
+    source_chunk_ids: str, session: Session
+) -> tuple[str | None, int | None, int | None, dict | None]:
+    """Parse an AnalysisOutput's source_chunk_ids JSON and resolve the first valid chunk.
+
+    Returns (chunk_id, chapter_index, chunk_index, source_locator) or (None, None, None, None).
+    Gracefully handles missing, empty, or invalid JSON.
+    """
+    try:
+        ids = json.loads(source_chunk_ids)
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None, None
+    if not isinstance(ids, list) or not ids:
+        return None, None, None, None
+    chunk_id = ids[0]
+    if not isinstance(chunk_id, str):
+        return None, None, None, None
+    chunk = session.get(Chunk, chunk_id)
+    if chunk is None:
+        return None, None, None, None
+    return (
+        chunk.id,
+        chunk.chapter_index,
+        chunk.chunk_index,
+        _get_chunk_locator(chunk.id, session),
+    )
+
+
 # ── Candidate generators (unified dict shape) ──
 
 
@@ -186,9 +214,7 @@ def _search_analysis_output_candidates(
     if not _has_content(query):
         return []
 
-    outputs = session.exec(
-        select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
-    ).all()
+    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
 
     candidates = []
     for o in outputs:
@@ -212,19 +238,22 @@ def _search_analysis_output_candidates(
         if score > 0:
             excerpt = _make_excerpt(resolved, query)
             combined_text = resolved + " " + o.title
+            chunk_id, chapter_index, chunk_index, locator = _resolve_output_chunk(
+                o.source_chunk_ids, session
+            )
             candidates.append(
                 {
                     "source_type": "analysis_output",
                     "source_id": o.id,
-                    "chunk_id": None,
-                    "chapter_index": None,
-                    "chunk_index": None,
+                    "chunk_id": chunk_id,
+                    "chapter_index": chapter_index,
+                    "chunk_index": chunk_index,
                     "title": o.title,
                     "snippet": excerpt,
                     "score": score,
                     "method": "analysis_output",
                     "matched_terms": _extract_matched_terms(combined_text, query),
-                    "source_locator": None,
+                    "source_locator": locator,
                 }
             )
 
@@ -232,16 +261,12 @@ def _search_analysis_output_candidates(
     return candidates[:limit]
 
 
-def _search_atoms_structured(
-    topic_id: str, query: str, session: Session, limit: int
-) -> list[dict]:
+def _search_atoms_structured(topic_id: str, query: str, session: Session, limit: int) -> list[dict]:
     """Search ExtractedAtom by canonical_name, aliases, evidence_quotes."""
     if not _has_content(query):
         return []
 
-    atoms = session.exec(
-        select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)
-    ).all()
+    atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
 
     candidates = []
     for atom in atoms:
@@ -401,9 +426,7 @@ def hybrid_retrieve(
     all_candidates: list[dict] = []
 
     if "fts" in methods:
-        all_candidates.extend(
-            _search_chunks_fts_candidates(topic_id, query, session, top_k * 2)
-        )
+        all_candidates.extend(_search_chunks_fts_candidates(topic_id, query, session, top_k * 2))
 
     if "keyword_fallback" in methods:
         all_candidates.extend(
@@ -411,14 +434,10 @@ def hybrid_retrieve(
         )
 
     if "analysis_output" in methods:
-        all_candidates.extend(
-            _search_analysis_output_candidates(topic_id, query, session, top_k)
-        )
+        all_candidates.extend(_search_analysis_output_candidates(topic_id, query, session, top_k))
 
     if "structured" in methods:
-        all_candidates.extend(
-            _search_atoms_structured(topic_id, query, session, top_k)
-        )
+        all_candidates.extend(_search_atoms_structured(topic_id, query, session, top_k))
 
     all_candidates = _dedup_by_chunk_id(all_candidates)
     all_candidates = _normalize_scores(all_candidates)

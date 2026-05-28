@@ -721,9 +721,7 @@ def list_analysis_runs(
     base = select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)
     total = session.exec(select(func.count()).select_from(base.subquery())).one()
     runs = list(
-        session.exec(
-            base.order_by(AnalysisRun.created_at.desc()).offset(offset).limit(limit)
-        ).all()
+        session.exec(base.order_by(AnalysisRun.created_at.desc()).offset(offset).limit(limit)).all()
     )
     return runs, total
 
