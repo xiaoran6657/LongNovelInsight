@@ -458,6 +458,37 @@ def test_structured_evidence_format(client):
             assert "score" in item
             # score should be float (not int)
             assert isinstance(item["score"], (int, float))
+            assert 0.0 <= item["score"] <= 1.0, f"Score {item['score']} out of [0,1] range"
+
+
+def test_legacy_fallback_scores_normalized(client):
+    """When hybrid returns nothing but legacy fallback finds results,
+    scores must be normalized to [0,1] for evidence_json consistency."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Legacy Score Test"},
+        )
+        session_id = resp.json()["id"]
+
+        # "刘备的性格特点是什么" -> hybrid is strict, no FTS/keyword match
+        # Legacy fuzzy scoring should find "刘备" char overlap and score it
+        with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "刘备的性格特点是什么？"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            evidence = data["evidence_json"]
+            assert isinstance(evidence, list)
+            assert len(evidence) >= 1
+            for item in evidence:
+                assert 0.0 <= item["score"] <= 1.0, (
+                    f"Legacy score {item['score']} out of [0,1] range"
+                )
 
 
 def test_retrieval_trace_created_for_chat(client):

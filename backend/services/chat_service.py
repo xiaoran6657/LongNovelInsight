@@ -244,6 +244,17 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
             )
         candidates.sort(key=lambda x: x["score"], reverse=True)
         candidates = candidates[:DEFAULT_TOP_K]
+        # Normalize legacy raw scores to [0, 1] so chat evidence_json
+        # is consistent with hybrid retrieval score semantics.
+        if candidates:
+            scores = [c["score"] for c in candidates]
+            min_s, max_s = min(scores), max(scores)
+            if max_s != min_s:
+                for c in candidates:
+                    c["score"] = round((c["score"] - min_s) / (max_s - min_s), 4)
+            elif max_s > 0:
+                for c in candidates:
+                    c["score"] = 1.0
 
     # Build evidence text for LLM from unified candidates
     evidence_parts = []
