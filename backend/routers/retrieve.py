@@ -6,6 +6,7 @@ from sqlmodel import Session
 
 from db import get_session
 from models.topic import Topic
+from services.embedding_service import semantic_rerank
 from services.retrieval_service import (
     VALID_RETRIEVE_METHODS,
     hybrid_retrieve,
@@ -65,6 +66,7 @@ class RetrieveResponse(BaseModel):
     query: str
     results: list[CandidateResult]
     trace_id: str | None = None
+    warning: str | None = None
 
 
 # ── Endpoint ──
@@ -90,13 +92,27 @@ def retrieve_evidence(
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
+    # Separate semantic_rerank from other methods — it's a post-processing step
+    retrieval_methods = [m for m in body.methods if m != "semantic_rerank"]
+    use_semantic = "semantic_rerank" in body.methods
+
+    if not retrieval_methods:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one retrieval method is required alongside semantic_rerank",
+        )
+
     results = hybrid_retrieve(
         topic_id=topic_id,
         query=body.query.strip(),
         session=session,
         top_k=body.top_k,
-        methods=body.methods,
+        methods=retrieval_methods,
     )
+
+    warning: str | None = None
+    if use_semantic:
+        results, warning = semantic_rerank(results, body.query.strip(), topic_id)
 
     trace_id: str | None = None
     if body.persist_trace:
@@ -112,4 +128,5 @@ def retrieve_evidence(
         query=body.query.strip(),
         results=[CandidateResult(**r) for r in results],
         trace_id=trace_id,
+        warning=warning,
     )

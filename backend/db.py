@@ -111,6 +111,16 @@ def _migrate_chunk_fts() -> None:
         ensure_chunk_fts_table(session)
 
 
+def _migrate_embedding_cache() -> None:
+    """Create embedding_cache table if it doesn't exist."""
+    from models.embedding_cache import EmbeddingCache
+
+    SQLModel.metadata.create_all(
+        engine,
+        tables=[EmbeddingCache.__table__],  # type: ignore[arg-type]
+    )
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
@@ -120,3 +130,4 @@ def init_db() -> None:
     _migrate_v03_source_locator_columns()
     _migrate_retrieval_trace()
     _migrate_chunk_fts()
+    _migrate_embedding_cache()

@@ -20,7 +20,13 @@ CHINESE_STOPWORDS = set(
 )
 
 DEFAULT_TOP_K = 8
-VALID_RETRIEVE_METHODS = {"fts", "keyword_fallback", "structured", "analysis_output"}
+VALID_RETRIEVE_METHODS = {
+    "fts",
+    "keyword_fallback",
+    "structured",
+    "analysis_output",
+    "semantic_rerank",
+}
 
 
 # ── Helpers ──
