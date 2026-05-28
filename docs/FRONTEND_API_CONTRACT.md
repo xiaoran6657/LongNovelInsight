@@ -853,7 +853,9 @@ Response `200`: `{ "sessions": [...] }`
 
 **`GET /api/chat/sessions/{session_id}/messages`**
 
-Response `200`:
+`evidence_json` may be old string arrays (v0.1–v0.2) or new structured objects (v0.3+). Frontend must handle both.
+
+Response `200` (v0.3 — new assistant messages use structured evidence):
 ```json
 {
   "messages": [
@@ -871,7 +873,18 @@ Response `200`:
       "session_id": "uuid",
       "role": "assistant",
       "content": "刘备是一个仁德的领袖...",
-      "evidence_json": ["桃园结义展现了刘备的义气。"],
+      "evidence_json": [
+        {
+          "text": "刘备与关羽张飞在桃园结为兄弟...",
+          "source_type": "chunk",
+          "source_id": "uuid",
+          "chunk_id": "uuid",
+          "title": "",
+          "method": "legacy",
+          "score": 2.0,
+          "locator": null
+        }
+      ],
       "uncertainty": null,
       "created_at": "..."
     }
@@ -879,6 +892,8 @@ Response `200`:
   "total": 2
 }
 ```
+Old messages may still have `evidence_json` as `["string", ...]`. Handle both.
+
 Errors: `404` session not found.
 
 **`POST /api/chat/sessions/{session_id}/messages`**
@@ -887,21 +902,45 @@ Request:
 ```json
 { "content": "刘备的性格特点是什么？" }
 ```
-⚠️ Makes real LLM call with evidence retrieval. Content must be non-empty string (max 20000 chars).
+⚠️ Makes real LLM call with hybrid retrieval (FTS + keyword + structured + analysis output). Content must be non-empty string (max 20000 chars). A `RetrievalTrace` is persisted for every request.
 
-Response `200`:
+Response `200` (v0.3 — structured evidence items):
 ```json
 {
   "id": "uuid",
   "session_id": "uuid",
   "role": "assistant",
   "content": "刘备是一个仁德的领袖...",
-  "evidence_json": ["桃园结义展现了刘备的义气。"],
+  "evidence_json": [
+    {
+      "text": "刘备与关羽张飞在桃园结为兄弟...",
+      "source_type": "chunk",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "title": "",
+      "method": "legacy",
+      "score": 2.0,
+      "locator": null
+    }
+  ],
   "uncertainty": null,
   "created_at": "..."
 }
 ```
-`evidence_json` will be `null` or empty if no evidence found. `uncertainty` is `null` when confident, a string when uncertain.
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | str | Snippet from the evidence source |
+| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
+| `source_id` | str | ID of the matching source |
+| `chunk_id` | str or null | Chunk ID when available |
+| `title` | str | Display title |
+| `method` | str | `fts`, `keyword_fallback`, `structured`, `analysis_output`, or `legacy` |
+| `score` | float | Normalized relevance score [0, 1] |
+| `locator` | dict or null | Source locator when a chunk is linked |
+
+`evidence_json` is `null` when no evidence was found. `uncertainty` is set when the model is unsure or when retrieval found no evidence (service-enforced guard against hallucination).
+
+Backward compatibility: messages created before v0.3 may have `evidence_json` as `["string", ...]`. Handle both formats when reading old messages.
 
 Errors: `404` session not found, `409` no provider configured, `422` content is null / empty / non-string / >20000 chars.
 

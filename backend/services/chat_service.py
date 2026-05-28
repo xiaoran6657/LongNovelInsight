@@ -321,6 +321,12 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     answer = _sanitize_answer(parsed, response.content)
     uncertainty = _sanitize_uncertainty(parsed)
 
+    # When no evidence was found, guard against LLM hallucination:
+    # if the LLM returned a confident answer with no uncertainty flag,
+    # force an explicit uncertainty note so the frontend can warn the user.
+    if not candidates and not uncertainty:
+        uncertainty = "No evidence found in the novel text; answer may be unreliable"
+
     # Build structured evidence from retrieval candidates
     structured_evidence = _build_structured_evidence(candidates)
 
@@ -339,16 +345,16 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     session.commit()
     session.refresh(assistant_msg)
 
-    # Persist RetrievalTrace for debug
-    if candidates:
-        save_retrieval_trace(
-            topic_id=topic.id,
-            query=trimmed,
-            results=candidates,
-            session=session,
-            session_id=session_id,
-            message_id=user_msg.id,
-            method="hybrid",
-        )
+    # Always persist a RetrievalTrace — empty retrieval is the most
+    # important case to debug (query, index, fallback issues).
+    save_retrieval_trace(
+        topic_id=topic.id,
+        query=trimmed,
+        results=candidates if candidates else [],
+        session=session,
+        session_id=session_id,
+        message_id=user_msg.id,
+        method="hybrid",
+    )
 
     return assistant_msg

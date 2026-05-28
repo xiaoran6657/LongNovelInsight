@@ -542,7 +542,8 @@ def test_legacy_evidence_still_readable(client):
 
 
 def test_empty_retrieval_uncertainty_flag(client):
-    """When retrieval finds nothing, answer should indicate uncertainty."""
+    """When retrieval finds nothing, answer should indicate uncertainty,
+    and a RetrievalTrace should still be created for debugging."""
     with client as c:
         topic_id = _setup_chat(c)
 
@@ -568,6 +569,59 @@ def test_empty_retrieval_uncertainty_flag(client):
             )
             assert resp.status_code == 200
             data = resp.json()
-            # Should still work even with empty retrieval
             assert data["role"] == "assistant"
             assert data["content"] == "不确定"
+
+        # Empty retrieval must still create a trace
+        from sqlmodel import select as sql_select
+
+        from db import get_session
+        from main import app
+        from models.retrieval_trace import RetrievalTrace
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+        traces = session.exec(
+            sql_select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+        ).all()
+        assert len(traces) >= 1
+        empty_trace = [t for t in traces if t.query == "xyznotfound12345"]
+        assert len(empty_trace) == 1
+        assert empty_trace[0].session_id == session_id
+        assert empty_trace[0].results_json == "[]"
+
+
+def test_guard_against_hallucination_when_no_evidence(client):
+    """When retrieval is empty, a confident LLM answer with no uncertainty
+    must be flagged by the service layer."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Hallucination Guard"},
+        )
+        session_id = resp.json()["id"]
+
+        from services.llm_client import LLMResponse
+
+        def hallucinating_llm(*args, **kwargs):
+            return LLMResponse(
+                content='{"answer":"刘备是三国时期蜀汉的开国皇帝，以仁德著称。","evidence":["刘备建立蜀汉。"],"uncertainty":null}',
+                model="test",
+                usage={},
+            )
+
+        with patch(CHAT_PATCH_PATH, side_effect=hallucinating_llm):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "xyznotfound_chat_hallucination_test"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["role"] == "assistant"
+            # Uncertainty must be forced when no evidence exists
+            assert data["uncertainty"] is not None, (
+                "Service must force uncertainty when retrieval is empty"
+            )
+            assert "no evidence" in data["uncertainty"].lower()

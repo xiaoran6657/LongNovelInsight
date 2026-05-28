@@ -255,18 +255,46 @@ Each output is stored in the `analysis_output` table with:
 - `evidence_quotes` — direct quotes extracted from the LLM response
 - `confidence` — overall confidence score
 
-## Evidence-Based Chat (v0.1.0)
+## Evidence-Based Chat (v0.3)
 
-The chat flow uses keyword retrieval to ground LLM answers in source material:
+The chat flow uses hybrid retrieval to ground LLM answers in source material:
 
 1. User sends a message via `POST /api/chat/sessions/{session_id}/messages`.
-2. `retrieval_service.build_evidence_context()` performs keyword-based search:
-   - **Chunks**: substring matching, Chinese character overlap, word-level overlap — scored and ranked.
-   - **Analysis outputs**: content and title matching against the query.
-3. The top-k chunk excerpts and analysis excerpts are assembled into an evidence context.
+2. `retrieval_service.hybrid_retrieve()` performs multi-source search:
+   - **FTS**: SQLite FTS5 full-text search over chunk text/titles (BM25 scoring).
+   - **Keyword fallback**: LIKE-based substring search with CJK AND-group char-overlap for unsegmented queries.
+   - **Structured**: ExtractedAtom search by canonical_name, aliases, evidence_quotes.
+   - **Analysis output**: AnalysisOutput search by title, content, evidence_quotes.
+   - **Legacy fallback**: When hybrid returns nothing (e.g. long natural-language CJK queries), the old `retrieve_chunks()`/`retrieve_analysis()` fuzzy character-overlap scoring is used.
+3. Candidates are deduplicated by chunk_id, scores are min-max normalized to [0, 1], and the top-k are assembled into an evidence context.
 4. The LLM receives a system prompt instructing it to answer based only on evidence, outputting JSON with `answer`, `evidence`, and `uncertainty` fields.
-5. The assistant message is saved with `evidence_json` and `uncertainty` preserved.
-6. No vector embeddings are used — keyword retrieval is sufficient for v0.1.0.
+5. The assistant message is saved with structured `evidence_json` (list of objects with `text`, `source_type`, `source_id`, `chunk_id`, `method`, `score`, `locator`) and `uncertainty`.
+6. A `RetrievalTrace` is persisted for every request (including empty results) with `session_id` and `message_id` for debugging.
+7. When retrieval finds no evidence, the service layer forces an `uncertainty` note to guard against LLM hallucination.
+8. No vector embeddings are used.
+
+### evidence_json format
+
+**v0.3 (structured objects):**
+```json
+[
+  {
+    "text": "刘备与关羽张飞在桃园结为兄弟...",
+    "source_type": "chunk",
+    "source_id": "uuid",
+    "chunk_id": "uuid",
+    "title": "",
+    "method": "legacy",
+    "score": 2.0,
+    "locator": null
+  }
+]
+```
+
+**v0.1–v0.2 (string array — still valid for old messages):**
+```json
+["桃园结义展现了刘备的义气。"]
+```
 
 ## v0.2 Staged Analysis Pipeline (In Progress)
 

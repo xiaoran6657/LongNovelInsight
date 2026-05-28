@@ -701,7 +701,7 @@ List chat sessions in a topic (most recent first).
 
 ### `GET /api/chat/sessions/{session_id}/messages`
 
-List messages in a session (chronological order).
+List messages in a session (chronological order). `evidence_json` may be either old-format string arrays or new-format structured objects (see POST /messages).
 
 **Response 200:**
 ```json
@@ -720,7 +720,18 @@ List messages in a session (chronological order).
       "id": "uuid",
       "role": "assistant",
       "content": "刘备是一个仁德的领袖...",
-      "evidence_json": ["桃园结义..."],
+      "evidence_json": [
+        {
+          "text": "刘备与关羽张飞在桃园结为兄弟...",
+          "source_type": "chunk",
+          "source_id": "uuid",
+          "chunk_id": "uuid",
+          "title": "",
+          "method": "legacy",
+          "score": 2.0,
+          "locator": null
+        }
+      ],
       "uncertainty": null,
       "created_at": "..."
     }
@@ -732,25 +743,42 @@ List messages in a session (chronological order).
 
 ### `POST /api/chat/sessions/{session_id}/messages`
 
-Send a message and get an evidence-grounded assistant response. The backend performs keyword retrieval from chunks and analysis outputs, then calls the LLM.
+Send a message and get an evidence-grounded assistant response. The backend performs hybrid retrieval (FTS + keyword fallback + structured atom search + analysis output search) with legacy fuzzy fallback for long CJK queries, then calls the LLM. A `RetrievalTrace` is persisted for every request.
 
 **Request:**
 ```json
 { "content": "刘备的性格特点是什么？" }
 ```
 
-**Response 200:**
+**Response 200 (new — structured evidence):**
 ```json
 {
   "id": "uuid",
   "session_id": "uuid",
   "role": "assistant",
   "content": "刘备是一个仁德的领袖...",
-  "evidence_json": ["..."],
+  "evidence_json": [
+    {
+      "text": "刘备与关羽张飞在桃园结为兄弟...",
+      "source_type": "chunk",
+      "source_id": "uuid",
+      "chunk_id": "uuid",
+      "title": "",
+      "method": "legacy",
+      "score": 2.0,
+      "locator": null
+    }
+  ],
   "uncertainty": null,
   "created_at": "..."
 }
 ```
+`evidence_json` items: `text` (snippet), `source_type` (chunk|analysis_output|atom), `source_id`, `chunk_id` (nullable), `title`, `method` (fts|keyword_fallback|structured|analysis_output|legacy), `score` (float), `locator` (dict|null).
+
+Backward compatibility: messages created before v0.3 may have `evidence_json` as a string array `["evidence string", ...]`. Both formats are valid.
+
+When retrieval finds no evidence, the service forces an `uncertainty` note to guard against LLM hallucination. An empty RetrievalTrace (`results_json: "[]"`) is still persisted for debugging.
+
 **Errors:** `404` session not found, `409` no provider configured, `422` content must be a non-empty string (max 20000 chars).
 
 ### `DELETE /api/chat/sessions/{session_id}`
