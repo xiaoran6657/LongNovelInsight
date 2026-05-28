@@ -253,6 +253,32 @@ Delete the current document and its file from disk.
 **Response 200:** `{ "deleted": true, "freed_bytes": 1048576 }`
 **Errors:** `404` topic not found, `404` no document uploaded.
 
+### `GET /api/topics/{topic_id}/documents/current/metadata`
+
+Get document metadata including parsed `metadata_json` (e.g., EPUB source format and parsing warnings).
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "topic_id": "uuid",
+  "original_filename": "novel.epub",
+  "file_type": "epub",
+  "encoding": "epub",
+  "file_size_bytes": 524288,
+  "char_count": 500000,
+  "status": "parsed",
+  "metadata": {
+    "source_format": "epub",
+    "parsing_warnings": []
+  },
+  "created_at": "2026-05-10T12:00:00Z",
+  "updated_at": "2026-05-10T12:00:00Z"
+}
+```
+For TXT files, `metadata` is `{}`. For EPUB files, it contains `source_format` and `parsing_warnings`.
+**Errors:** `404` topic not found, `404` no document uploaded.
+
 ---
 
 ## Parse
@@ -482,6 +508,79 @@ List analysis outputs for a topic.
 Delete all analysis outputs for a topic.
 
 **Response 200:** `{ "deleted": true, "count": N }`
+
+---
+
+## Search
+
+### `POST /api/topics/{topic_id}/search`
+
+Search chunks via FTS5 full-text index with keyword fallback for CJK queries.
+
+**Request:**
+```json
+{
+  "query": "刘备 桃园",
+  "limit": 20,
+  "include_snippets": true,
+  "methods": ["fts", "keyword_fallback"]
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | str | (required) | Search query (1-500 chars) |
+| `limit` | int | `20` | Max results (1-100) |
+| `include_snippets` | bool | `true` | Include snippet text in results |
+| `methods` | list[str] | `["fts", "keyword_fallback"]` | Search methods to use |
+
+**Response 200:**
+```json
+{
+  "query": "刘备 桃园",
+  "results": [
+    {
+      "chunk_id": "uuid",
+      "topic_id": "uuid",
+      "chapter_index": 0,
+      "chunk_index": 5,
+      "title": "第一章 宴桃园豪杰三结义",
+      "snippet": "刘备和关羽张飞在桃园...",
+      "score": 2.35,
+      "method": "fts"
+    }
+  ],
+  "trace_id": null
+}
+```
+`trace_id` is reserved for future retrieval trace support (always `null` in v0.3).
+
+**Errors:** `404` topic not found, `422` query empty/too long/limit out of range/invalid methods.
+
+---
+
+### `GET /api/topics/{topic_id}/chunks/{chunk_id}/locator`
+
+Return source locator info and a short context excerpt for a chunk.
+
+**Response 200:**
+```json
+{
+  "chunk_id": "uuid",
+  "topic_id": "uuid",
+  "chapter_index": 0,
+  "chunk_index": 3,
+  "locator": {
+    "source_href": "chapter1.xhtml",
+    "offset": 450
+  },
+  "excerpt": "刘备和关羽张飞在桃园..."
+}
+```
+`locator` contains the parsed `source_locator_json` (empty object for TXT files).
+`excerpt` is the first 200 characters of the chunk text.
+
+**Errors:** `404` chunk not found (including wrong topic).
 
 ---
 

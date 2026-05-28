@@ -389,6 +389,109 @@ Response `200`:
 
 ---
 
+### 3.5b Document Metadata (v0.3)
+
+**`GET /api/topics/{topic_id}/documents/current/metadata`**
+
+Returns document metadata with parsed `metadata_json`. For TXT files `metadata` is `{}`; for EPUB it contains `source_format` and `parsing_warnings`.
+
+Response `200`:
+```json
+{
+  "id": "uuid",
+  "topic_id": "uuid",
+  "original_filename": "novel.epub",
+  "file_type": "epub",
+  "encoding": "epub",
+  "file_size_bytes": 524288,
+  "char_count": 500000,
+  "status": "parsed",
+  "metadata": {
+    "source_format": "epub",
+    "parsing_warnings": []
+  },
+  "created_at": "2026-05-10T12:00:00Z",
+  "updated_at": "2026-05-10T12:00:00Z"
+}
+```
+Errors: `404` topic not found, `404` no document uploaded.
+
+---
+
+### 3.5c Search (v0.3)
+
+**`POST /api/topics/{topic_id}/search`**
+
+Full-text search via FTS5 with keyword fallback.
+
+Request:
+```json
+{
+  "query": "刘备 桃园",
+  "limit": 20,
+  "include_snippets": true,
+  "methods": ["fts", "keyword_fallback"]
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | str | (required) | 1-500 chars |
+| `limit` | int | 20 | 1-100 |
+| `include_snippets` | bool | true | Set to false to omit snippets |
+| `methods` | list[str] | ["fts", "keyword_fallback"] | Valid: "fts", "keyword_fallback" |
+
+Response `200`:
+```json
+{
+  "query": "刘备 桃园",
+  "results": [
+    {
+      "chunk_id": "uuid",
+      "topic_id": "uuid",
+      "chapter_index": 0,
+      "chunk_index": 5,
+      "title": "第一章 宴桃园豪杰三结义",
+      "snippet": "刘备和关羽张飞在桃园...",
+      "score": 2.35,
+      "method": "fts"
+    }
+  ],
+  "trace_id": null
+}
+```
+`trace_id` is always null in v0.3 (reserved for future retrieval trace).
+
+Errors: `404` topic not found, `422` (empty query, query >500 chars, limit <1 or >100, invalid/empty methods).
+
+---
+
+### 3.5d Chunk Locator (v0.3)
+
+**`GET /api/topics/{topic_id}/chunks/{chunk_id}/locator`**
+
+Returns source locator info and a short text excerpt (first 200 chars).
+
+Response `200`:
+```json
+{
+  "chunk_id": "uuid",
+  "topic_id": "uuid",
+  "chapter_index": 0,
+  "chunk_index": 3,
+  "locator": {
+    "source_href": "chapter1.xhtml",
+    "offset": 450
+  },
+  "excerpt": "刘备和关羽张飞在桃园..."
+}
+```
+`locator` is the parsed `source_locator_json` (empty `{}` for TXT).
+
+Errors: `404` chunk not found (includes wrong-topic access).
+
+---
+
 ### 3.6 Analysis Outputs
 
 **`POST /api/topics/{topic_id}/analysis/run?limit_chunks=5`**
