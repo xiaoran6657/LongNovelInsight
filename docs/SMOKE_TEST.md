@@ -152,3 +152,34 @@ In safe mode, the run is created but stays pending (no real extraction). Use `--
 --provider-api-key-env ENV Environment variable for API key (default: DEEPSEEK_API_KEY)
 --cleanup                 Delete created resources after test
 ```
+
+## v0.3 Smoke Test
+
+The v0.3 smoke test runs as a pytest integration test using TestClient (no live server needed):
+
+```bash
+cd backend
+conda run -n LongNovelInsight python -m pytest tests/integration/test_v03_smoke.py -v -s -m integration
+```
+
+This covers the full v0.3 API surface:
+
+| # | Step | APIs Exercised |
+|---|------|----------------|
+| 1 | TXT upload + parse | `POST /documents/upload`, `POST /parse`, `GET /chapters`, `GET /chunks` |
+| 2 | Document metadata | `GET /documents/current/metadata` |
+| 3 | Search (CJK + English) | `POST /search` |
+| 4 | Retrieve + trace | `POST /retrieve` (with `persist_trace`) |
+| 5 | Chat (mocked LLM) | `POST /chat/sessions`, `POST /chat/sessions/{id}/messages` |
+| 6 | Similar scenes | `GET /similar-scenes` (chunk_id + query modes) |
+| 7 | Cleanup | `DELETE /topics/{id}`, `DELETE /providers/{id}` |
+| 8 | EPUB upload + parse | `POST /documents/upload` (.epub), `POST /parse` |
+| 9 | EPUB metadata + locator | `GET /documents/current/metadata`, `GET /chunks/{id}/locator` |
+| 10 | Entity evidence | `GET /entities/{id}/evidence` |
+| 11 | Benchmarks | FTS rebuild time, search latency, retrieval latency |
+
+All LLM calls are mocked — no API quota consumed. EPUB fixture is generated in-memory (public-domain-like content).
+
+### Adding real-LLM steps
+
+To test with a real LLM, modify the smoke test to use `--real-llm` flag (similar to v0.2's `smoke_v2_backend.py` pattern) or add extra steps at the end of the test that patch only the LLM client.

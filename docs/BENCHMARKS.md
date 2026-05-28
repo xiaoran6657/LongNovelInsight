@@ -75,3 +75,34 @@ After each run, `metadata_json.stage_timings` records:
 - **extraction** is the dominant cost (LLM calls)
 - **merge** and **final** are pure Python (near-zero cost, no API usage)
 - Compare timings across runs to identify slow chunks or provider latency issues
+
+## v0.3 Retrieval Benchmarks
+
+Run the v0.3 benchmark suite:
+
+```bash
+cd backend
+conda run -n LongNovelInsight python -m pytest tests/integration/test_v03_smoke.py -v -s -m integration -k Benchmark
+```
+
+Three benchmarks are measured:
+
+| Benchmark | What It Measures | Typical (local, 4 chunks) |
+|-----------|-----------------|---------------------------|
+| FTS rebuild | `rebuild_topic_chunk_fts()` — DELETE + batch INSERT into FTS5 | < 1ms |
+| Search latency | `POST /search` CJK query, 10 samples after warmup | ~0.8ms avg |
+| Retrieval latency | `POST /retrieve` hybrid (all methods), 10 samples after warmup | ~1.0ms avg |
+
+These are local SQLite measurements — no network, no LLM. Use them to
+detect regressions in FTS indexing or candidate generation. Actual
+end-to-end latency is dominated by the LLM call in the chat path.
+
+### v0.3 Retrieval Log Template
+
+| Date | Topic Chunks | Query | Methods | Candidates Returned | Latency (ms) | Notes |
+|------|-------------|-------|---------|-------------------|-------------|-------|
+| YYYY-MM-DD | 4 | "张三" (CJK) | fts+keyword | 2 | 0.8 | — |
+| | | | | | | |
+
+Fill in rows as you test with larger novels to track retrieval performance
+at scale.
