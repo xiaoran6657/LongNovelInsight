@@ -25,8 +25,21 @@ MAX_SNIPPET_CHARS = 300
 
 # CJK character range for detecting Chinese/Japanese/Korean text
 _CJK_RE = re.compile(r"[一-鿿㐀-䶿豈-﫿]")
-# English word token pattern for query analysis
-_WORD_RE = re.compile(r"\w{2,}")
+# Common CJK grammatical function characters that are too frequent to be useful
+# as single-character search terms. Filtered out during char-overlap expansion.
+_CJK_STOP_CHARS: frozenset[str] = frozenset({
+    "的", "了", "是", "在", "我", "他", "她", "它", "们", "这", "那",
+    "不", "也", "就", "都", "和", "与", "很", "要", "会", "能", "有",
+    "没", "你", "吗", "呢", "吧", "啊", "哦", "嗯", "但", "而", "且",
+    "或", "所", "被", "把", "从", "对", "向", "往", "朝", "到", "给",
+    "为", "以", "可", "着", "过", "得", "地", "之", "其", "一", "个",
+    "些", "每", "各", "某", "什", "么", "怎", "样", "谁", "哪", "几",
+    "还", "又", "再", "才", "刚", "已", "将", "正", "只", "最", "更",
+    "太", "好", "来", "去", "说", "看", "让", "用", "做", "想", "知",
+    "道", "人", "年", "日", "月", "时", "子", "儿", "头", "大", "小",
+    "多", "少", "上", "下", "里", "中", "前", "后", "出", "进", "种",
+    "点", "处", "等", "间", "当", "成",
+})
 
 
 def ensure_chunk_fts_table(session: Session) -> None:
@@ -282,36 +295,51 @@ def search_chunks_keyword_fallback(
     if not tokens:
         return []
 
-    # Expand CJK-only tokens into individual characters for overlap matching
-    expanded: list[str] = []
-    for t in tokens:
-        expanded.append(t)
-        # If the token is all CJK and longer than 1 char, also search per-character
-        if len(t) > 1 and all(_CJK_RE.match(ch) for ch in t):
-            expanded.extend(list(t))
-
     # Escape LIKE wildcards in all tokens
     def _escape_like(s: str) -> str:
         return s.replace("%", "\\%").replace("_", "\\_")
 
-    # Build OR of LIKE conditions, deduplicating tokens
+    # Build OR groups: each group is a list of LIKE conditions that are
+    # AND'd together; groups are OR'd. Full tokens become single-condition
+    # groups. CJK tokens with 2+ non-stop chars also get an AND group
+    # requiring all those characters to appear (char-overlap matching).
     seen: set[str] = set()
-    conditions: list[str] = []
+    or_groups: list[list[str]] = []
     params: dict = {"topic_id": topic_id, "limit": limit}
     param_idx = 0
-    for t in expanded:
-        escaped = _escape_like(t)
-        if escaped in seen:
-            continue
-        seen.add(escaped)
-        conditions.append(f"c.text LIKE :p{param_idx} ESCAPE '\\'")
-        params[f"p{param_idx}"] = f"%{escaped}%"
-        param_idx += 1
 
-    if not conditions:
+    for t in tokens:
+        escaped = _escape_like(t)
+        if escaped not in seen:
+            seen.add(escaped)
+            or_groups.append([f"c.text LIKE :p{param_idx} ESCAPE '\\'"])
+            params[f"p{param_idx}"] = f"%{escaped}%"
+            param_idx += 1
+
+        # For all-CJK tokens > 1 char, build char-overlap AND group
+        # using only non-stop characters to avoid false matches from
+        # common function characters (的, 了, 是, 在, etc.)
+        if len(t) > 1 and all(_CJK_RE.match(ch) for ch in t):
+            non_stop = list(dict.fromkeys(ch for ch in t if ch not in _CJK_STOP_CHARS))
+            if len(non_stop) >= 2:
+                and_conds: list[str] = []
+                for ch in non_stop:
+                    and_conds.append(f"c.text LIKE :p{param_idx} ESCAPE '\\'")
+                    params[f"p{param_idx}"] = f"%{_escape_like(ch)}%"
+                    param_idx += 1
+                or_groups.append(and_conds)
+
+    if not or_groups:
         return []
 
-    where = " OR ".join(conditions)
+    or_clauses: list[str] = []
+    for group in or_groups:
+        if len(group) == 1:
+            or_clauses.append(group[0])
+        else:
+            or_clauses.append("(" + " AND ".join(group) + ")")
+
+    where = " OR ".join(or_clauses)
     sql = text(
         "SELECT c.id, c.topic_id, c.chapter_index, c.chunk_index, "
         "CASE WHEN ch.title IS NULL THEN '' ELSE ch.title END AS title, "

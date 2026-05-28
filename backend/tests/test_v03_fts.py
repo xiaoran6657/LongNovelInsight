@@ -880,6 +880,129 @@ class TestCJKCharOverlap:
             results = search_chunks(tid, "刘备曹操", session)
             assert len(results) >= 1
 
+    def test_common_char_no_false_match(self, tmp_path):
+        """Query '不存在' should NOT match text that only shares stop char '在'."""
+        db_path = tmp_path / "cjk_nofalse.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_keyword_fallback,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="他是在那里了。",
+                start_char=0,
+                end_char=7,
+                char_count=7,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_keyword_fallback(tid, "不存在", session)
+            # '不存在' → non-stop chars after filtering: only '存'
+            # (不 and 在 are stop words). With only 1 non-stop char,
+            # no AND group is created, so only full-token LIKE '%不存在%'
+            # runs — which does NOT match '他是在那里了。'
+            assert len(results) == 0
+
+    def test_all_stop_chars_falls_back_to_full_token_only(self, tmp_path):
+        """Query '这是他' (all stop chars) only uses full-token LIKE, no AND group."""
+        db_path = tmp_path / "cjk_allstop.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_keyword_fallback,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c1 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="这是他说的那句话。",
+                start_char=0,
+                end_char=9,
+                char_count=9,
+            )
+            c2 = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=1,
+                chapter_index=0,
+                text="他是在那里了。",
+                start_char=10,
+                end_char=17,
+                char_count=7,
+            )
+            session.add_all([c1, c2])
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_keyword_fallback(tid, "这是他", session)
+            # Only c1 contains '这是他' as a literal substring
+            assert len(results) == 1
+            assert "这是他" in results[0]["snippet"]
+
+    def test_duplicate_non_stop_char_does_not_degenerate_to_single(self, tmp_path):
+        """Query '刘刘' (duplicate non-stop char) should NOT match text with just one '刘'."""
+        db_path = tmp_path / "cjk_dup.sqlite"
+        engine = create_engine(f"sqlite:///{db_path}")
+        import models  # noqa: F401
+
+        SQLModel.metadata.create_all(engine)
+
+        from models.chunk import Chunk
+        from services.fts_service import (
+            ensure_chunk_fts_table,
+            rebuild_topic_chunk_fts,
+            search_chunks_keyword_fallback,
+        )
+
+        with Session(engine) as session:
+            ensure_chunk_fts_table(session)
+            tid, did = str(uuid4()), str(uuid4())
+            c = Chunk(
+                topic_id=tid,
+                document_id=did,
+                chunk_index=0,
+                chapter_index=0,
+                text="刘备和曹操相遇于赤壁。",
+                start_char=0,
+                end_char=11,
+                char_count=11,
+            )
+            session.add(c)
+            session.commit()
+            rebuild_topic_chunk_fts(tid, session)
+
+            results = search_chunks_keyword_fallback(tid, "刘刘", session)
+            # After dedup: non_stop = ['刘'], len=1 → no AND group.
+            # Full-token LIKE '%刘刘%' won't match '刘备和曹操相遇于赤壁。'
+            assert len(results) == 0
+
 
 class TestScorePrecision:
     def test_score_has_two_decimal_places(self, tmp_path):
