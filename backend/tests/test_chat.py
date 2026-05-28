@@ -419,7 +419,155 @@ def test_malformed_json_fields_dont_crash(client):
             # answer should be converted to string
             assert isinstance(data["content"], str)
             assert "123" in data["content"]
-            # evidence should be empty list (not a string)
-            assert data["evidence_json"] is None or data["evidence_json"] == []
+            # evidence_json comes from retrieval now; may be non-empty
+            # old evidence from LLM ("not-list" string) is no longer used
             # uncertainty should be converted to string
             assert data["uncertainty"] is None or isinstance(data["uncertainty"], str)
+
+
+# ── v0.3 Step 8: Structured evidence + RetrievalTrace ──
+
+
+def test_structured_evidence_format(client):
+    """New chat messages should store evidence as list of structured objects."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Structured Evidence"},
+        )
+        session_id = resp.json()["id"]
+
+        with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "刘备是谁？"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            evidence = data["evidence_json"]
+            assert isinstance(evidence, list), f"Expected list, got {type(evidence)}"
+            assert len(evidence) >= 1
+            item = evidence[0]
+            assert isinstance(item, dict)
+            assert "text" in item
+            assert item["source_type"] in ("chunk", "analysis_output", "atom")
+            assert "source_id" in item
+            assert "method" in item
+            assert "score" in item
+            # score should be float (not int)
+            assert isinstance(item["score"], (int, float))
+
+
+def test_retrieval_trace_created_for_chat(client):
+    """Chat messages should create a RetrievalTrace with session/message IDs."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Trace Test"},
+        )
+        session_id = resp.json()["id"]
+
+        with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "刘备是谁？"},
+            )
+            assert resp.status_code == 200
+
+        # Verify RetrievalTrace exists
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from models.retrieval_trace import RetrievalTrace
+
+        traces = session.exec(
+            __import__("sqlmodel").select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+        ).all()
+        assert len(traces) >= 1, "RetrievalTrace should be created for chat"
+        trace = traces[-1]
+        assert trace.session_id == session_id
+        assert trace.message_id is not None
+        assert trace.method == "hybrid"
+        assert len(trace.results_json) > 0
+
+
+def test_legacy_evidence_still_readable(client):
+    """Old string[] evidence_json messages must still be returned without error."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "Legacy Evidence"},
+        )
+        session_id = resp.json()["id"]
+
+        # Simulate an old-format message directly in DB
+        from db import get_session
+        from main import app
+
+        session_gen = app.dependency_overrides.get(get_session, get_session)
+        session = next(session_gen())
+
+        from models.chat import ChatMessage
+
+        old_msg = ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content="Some old answer",
+            evidence_json=json.dumps(["evidence string 1", "evidence string 2"]),
+        )
+        session.add(old_msg)
+        session.commit()
+
+        # Fetch messages via API
+        resp = c.get(f"/api/chat/sessions/{session_id}/messages")
+        assert resp.status_code == 200
+        messages = resp.json()["messages"]
+        # Find the old-format assistant message
+        old = [m for m in messages if m["id"] == old_msg.id]
+        assert len(old) == 1
+        raw_evidence = old[0].get("evidence_json")
+        # ChatMessageRead returns the raw JSON string
+        assert isinstance(raw_evidence, str)
+        parsed = json.loads(raw_evidence)
+        assert parsed == ["evidence string 1", "evidence string 2"]
+
+
+def test_empty_retrieval_uncertainty_flag(client):
+    """When retrieval finds nothing, answer should indicate uncertainty."""
+    with client as c:
+        topic_id = _setup_chat(c)
+
+        resp = c.post(
+            f"/api/topics/{topic_id}/chat/sessions",
+            json={"title": "No Evidence"},
+        )
+        session_id = resp.json()["id"]
+
+        from services.llm_client import LLMResponse
+
+        def empty_search_response(*args, **kwargs):
+            return LLMResponse(
+                content='{"answer":"不确定","evidence":[],"uncertainty":"No evidence found"}',
+                model="test",
+                usage={},
+            )
+
+        with patch(CHAT_PATCH_PATH, side_effect=empty_search_response):
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages",
+                json={"content": "xyznotfound12345"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            # Should still work even with empty retrieval
+            assert data["role"] == "assistant"
+            assert data["content"] == "不确定"

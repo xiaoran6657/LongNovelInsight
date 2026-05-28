@@ -7,7 +7,13 @@ from models.chat import ChatMessage, ChatSession
 from models.model_provider import ModelProvider, mask_api_key
 from models.topic import Topic
 from services.llm_client import LLMClientError, LLMMessage, OpenAICompatibleLLMClient
-from services.retrieval_service import build_evidence_context
+from services.retrieval_service import (
+    DEFAULT_TOP_K,
+    hybrid_retrieve,
+    retrieve_analysis,
+    retrieve_chunks,
+    save_retrieval_trace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +158,23 @@ def _sanitize_uncertainty(parsed: dict) -> str | None:
     return uncertainty
 
 
+def _build_structured_evidence(candidates: list[dict]) -> list[dict]:
+    """Convert retrieval candidates to structured evidence items for storage."""
+    return [
+        {
+            "text": c.get("snippet", ""),
+            "source_type": c["source_type"],
+            "source_id": c["source_id"],
+            "chunk_id": c.get("chunk_id"),
+            "title": c.get("title", ""),
+            "method": c["method"],
+            "score": c["score"],
+            "locator": c.get("source_locator"),
+        }
+        for c in candidates
+    ]
+
+
 def send_user_message(session_id: str, content: str, session: Session) -> ChatMessage:
     chat_session = session.get(ChatSession, session_id)
     if chat_session is None:
@@ -174,19 +197,60 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     # Select provider
     provider = _select_provider(topic, session)
 
-    # Retrieve evidence
-    evidence = build_evidence_context(topic.id, trimmed, session)
+    # ── v0.3: Hybrid retrieval instead of legacy keyword-only ──
+    candidates = hybrid_retrieve(
+        topic_id=topic.id,
+        query=trimmed,
+        session=session,
+        top_k=DEFAULT_TOP_K,
+    )
 
-    # Build evidence text
+    # Fall back to legacy fuzzy scoring when hybrid returns nothing
+    # (hybrid is precise; long natural-language CJK queries may need fuzzier matching)
+    if not candidates:
+        legacy_chunks = retrieve_chunks(topic.id, trimmed, session, DEFAULT_TOP_K)
+        legacy_analysis = retrieve_analysis(topic.id, trimmed, session, DEFAULT_TOP_K)
+        for c in legacy_chunks:
+            candidates.append(
+                {
+                    "source_type": "chunk",
+                    "source_id": c["chunk_id"],
+                    "chunk_id": c["chunk_id"],
+                    "chapter_index": c.get("chapter_index"),
+                    "chunk_index": c.get("chunk_index"),
+                    "title": "",
+                    "snippet": c.get("text_excerpt", ""),
+                    "score": float(c.get("score", 0)),
+                    "method": "legacy",
+                    "matched_terms": [],
+                    "source_locator": None,
+                }
+            )
+        for a in legacy_analysis:
+            candidates.append(
+                {
+                    "source_type": "analysis_output",
+                    "source_id": a["output_id"],
+                    "chunk_id": None,
+                    "chapter_index": None,
+                    "chunk_index": None,
+                    "title": a.get("title", ""),
+                    "snippet": a.get("content_excerpt", ""),
+                    "score": float(a.get("score", 0)),
+                    "method": "legacy",
+                    "matched_terms": [],
+                    "source_locator": None,
+                }
+            )
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        candidates = candidates[:DEFAULT_TOP_K]
+
+    # Build evidence text for LLM from unified candidates
     evidence_parts = []
-    for c in evidence.get("chunks", []):
+    for c in candidates:
         evidence_parts.append(
-            f"[Chunk {c['chunk_id']} ch{c['chapter_index']}/"
-            f"c{c['chunk_index']}]: {c['text_excerpt']}"
-        )
-    for a in evidence.get("analysis_outputs", []):
-        evidence_parts.append(
-            f"[Analysis {a['output_id']} {a['output_type']}]: {a['content_excerpt']}"
+            f"[{c['source_type'].upper()} {c['source_id']} "
+            f"method={c['method']} score={c['score']:.2f}]: {c['snippet']}"
         )
     evidence_text = "\n\n".join(evidence_parts) if evidence_parts else "(no evidence found)"
 
@@ -255,14 +319,16 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         return assistant_msg
 
     answer = _sanitize_answer(parsed, response.content)
-    evidence_list = _sanitize_evidence(parsed)
     uncertainty = _sanitize_uncertainty(parsed)
+
+    # Build structured evidence from retrieval candidates
+    structured_evidence = _build_structured_evidence(candidates)
 
     assistant_msg = ChatMessage(
         session_id=session_id,
         role="assistant",
         content=answer,
-        evidence_json=(json.dumps(evidence_list, ensure_ascii=False) if evidence_list else None),
+        evidence_json=json.dumps(structured_evidence, ensure_ascii=False) if candidates else None,
         uncertainty=uncertainty,
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
@@ -272,4 +338,17 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
     session.add(assistant_msg)
     session.commit()
     session.refresh(assistant_msg)
+
+    # Persist RetrievalTrace for debug
+    if candidates:
+        save_retrieval_trace(
+            topic_id=topic.id,
+            query=trimmed,
+            results=candidates,
+            session=session,
+            session_id=session_id,
+            message_id=user_msg.id,
+            method="hybrid",
+        )
+
     return assistant_msg
