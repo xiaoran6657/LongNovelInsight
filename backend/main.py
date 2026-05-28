@@ -32,6 +32,7 @@ from routers import (  # noqa: E402
     model_providers,
     parse,
     provider_presets,
+    retrieve,
     search,
     topic_provider_config,
     topics,
@@ -45,6 +46,7 @@ app.include_router(topic_provider_config.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
 app.include_router(parse.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
+app.include_router(retrieve.router, prefix="/api")
 app.include_router(analysis_jobs.topic_router, prefix="/api")
 app.include_router(analysis_jobs.job_router, prefix="/api")
 app.include_router(analysis_outputs.router, prefix="/api")
