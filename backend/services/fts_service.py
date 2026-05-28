@@ -284,8 +284,8 @@ def search_chunks_keyword_fallback(
 
     Strips punctuation from the query (same as FTS path), then constructs
     LIKE '%token%' conditions joined with OR for multi-token queries.
-    CJK tokens are also split into individual characters for overlap
-    matching (e.g. "刘备曹操" → "刘备曹操" OR each individual char).
+    CJK tokens also get an AND group of deduplicated non-stop characters
+    to catch unsegmented overlap (e.g. "刘备曹操" also matches "刘备和曹操").
     Returns same shape as search_chunks_fts().
     """
     if not query or not query.strip():
