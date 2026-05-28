@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session
 
 from db import get_session
@@ -29,6 +29,21 @@ class SearchRequest(BaseModel):
     limit: int = Field(DEFAULT_LIMIT, ge=MIN_LIMIT, le=MAX_LIMIT)
     include_snippets: bool = True
     methods: list[str] = Field(default_factory=lambda: ["fts", "keyword_fallback"])
+
+    @field_validator("query")
+    @classmethod
+    def query_must_not_be_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("query must not be empty or whitespace-only")
+        return v
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def limit_must_be_int(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("limit must be an integer, not a boolean")
+        return v
 
 
 class SearchResult(BaseModel):

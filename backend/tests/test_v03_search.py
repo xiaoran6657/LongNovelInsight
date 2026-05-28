@@ -167,6 +167,14 @@ class TestSearchAPI:
         for r in results:
             assert r["method"] == "fts"
 
+    def test_whitespace_only_query_422(self, client):
+        topic_id = _create_topic(client)
+        resp = client.post(
+            f"/api/topics/{topic_id}/search",
+            json={"query": "   ", "limit": 10},
+        )
+        assert resp.status_code == 422
+
     def test_empty_query_422(self, client):
         topic_id = _create_topic(client)
         resp = client.post(
@@ -188,6 +196,14 @@ class TestSearchAPI:
         resp = client.post(
             f"/api/topics/{topic_id}/search",
             json={"query": "x" * 501, "limit": 10},
+        )
+        assert resp.status_code == 422
+
+    def test_limit_bool_422(self, client):
+        topic_id = _create_topic(client)
+        resp = client.post(
+            f"/api/topics/{topic_id}/search",
+            json={"query": "hello", "limit": True},
         )
         assert resp.status_code == 422
 
