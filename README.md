@@ -1,36 +1,39 @@
 # LongNovelInsight
 
-LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt format) and produce structured insights — character profiles, relationship maps, key events, causal chains, and thematic analysis — all stored on your own machine.
+LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt and .epub) and produce structured insights — character profiles, relationship maps, key events, causal chains, and thematic analysis — all stored on your own machine.
 
-## v0.2.0-dev (current)
+## v0.3.0-dev (current)
 
-Backend v0.2 is complete (Steps 1–14). Frontend v0.2 is complete (Steps 1–13) with error recovery, sessionStorage persistence, smoke test, and Playwright e2e. v0.2 introduces a staged analysis pipeline that is ~4× more token-efficient.
+Backend v0.3 is complete (Steps 1–12). Frontend v0.2 is complete. v0.3 adds EPUB support, SQLite FTS5 full-text search, hybrid retrieval across chunks/atoms/outputs, structured chat evidence, entity evidence explorer, similar scenes, optional semantic rerank skeleton, and retrieval trace debugging.
 
-### What's New in v0.2 Backend
+### What's New in v0.3 Backend
 
-- **Staged analysis pipeline**: Per-chunk `local_extraction` (LLM) → `deterministic merge` (Python) → `final outputs` (Python). Each chunk is sent to the LLM once instead of 6 times.
-- **8 atom types**: characters, events, relations, causal links, theme signals, worldbuilding, foreshadowing, open questions — all with stable IDs, evidence quotes, and source tracking.
-- **Analysis modes**: `preview`, `range`, `full`, `incremental` — flexible chunk selection.
-- **Retry & resume**: Failed chunks can be retried. Interrupted runs can be resumed.
-- **Hybrid storage**: Large merge/final analysis JSON is stored on disk (under `data/topics/{id}/artifacts/`); small JSON stays inline in SQLite. LocalExtraction stays inline.
-- **Active-run guard**: Prevents duplicate concurrent analysis runs for the same Topic.
-- **Legacy bridge**: Existing v0.1 endpoints (`/analysis/run`, `/analysis/outputs`) still work. `pipeline=v2` parameter on legacy endpoints delegates to v2.
+- **EPUB support**: Upload and parse .epub files. Metadata extraction (title, creator, language), spine-order chapter detection, XHTML text extraction. Unified `SourceDocument`/`SourceChapter` abstraction shared with TXT.
+- **Source locators**: Every chunk has a `source_locator_json` field tracing back to its origin (EPUB href or TXT chapter offset), enabling precise evidence navigation.
+- **FTS5 full-text search**: SQLite FTS5 virtual table over chunk text/titles with Unicode61 tokenizer. CJK keyword fallback with AND-group character overlap for unsegmented queries.
+- **Hybrid retrieval**: Multi-source candidate generation — FTS, keyword fallback, structured atom search (canonical name/aliases/evidence), analysis output search. Dedup by chunk_id, min-max score normalization. RetrievalTrace persisted per retrieval for debugging.
+- **Structured chat evidence**: `evidence_json` stored as structured objects (`text`, `source_type`, `chunk_id`, `method`, `score`, `locator`) instead of plain strings. Legacy string-array format still readable. Empty retrieval short-circuits LLM to prevent hallucination.
+- **Search / Retrieve / Locator APIs**: `POST /search` (FTS + keyword), `POST /retrieve` (hybrid with optional trace), `GET /chunks/{id}/locator` (source position + excerpt).
+- **Entity evidence**: `GET /entities/{id}/evidence` — find all evidence for an entity by atom id, stable_id, or canonical name. Returns matching atoms, source chunks (topic-isolated), and related analysis outputs.
+- **Similar scenes**: `GET /similar-scenes` — by chunk_id (builds query seed from chunk text + atom names, excludes self) or free-text query. Lexical + structured similarity, no embeddings.
+- **Optional semantic rerank**: `ENABLE_SEMANTIC_RERANK=False` feature flag with `EmbeddingProvider` skeleton and `EmbeddingCache` table. `/retrieve` accepts `semantic_rerank` method; returns warning when disabled.
+- **Document metadata**: `GET /documents/current/metadata` returns parsed EPUB metadata or empty object for TXT.
 
-### What's New in v0.2 Frontend (Steps 1–13)
+### v0.3 Backend API Summary
 
-- **v2 Analysis Run UI**: Mode selector (preview/range/full/incremental), cost projection, run creation, status polling, cancel.
-- **Run history**: List past runs with retry failed / resume actions, truncated at 10 with "show all" toggle.
-- **Stage progress**: Per-stage progress bars (extraction/merge/final) with warnings and failed extractions.
-- **Unified outputs panel**: v1 and v2 outputs in one view, filtered by run, with Delete All safety.
-- **Token slider**: Reusable TokenRangeSlider with long-press acceleration, shared between Topic Detail and Chat config.
-- **Provider config form**: Shared component used by both Topic Detail and Chat Right Panel.
-- **Error recovery**: ErrorBlock with HTTP status badge, expandable detail, and retry on all API panels. Active run ID persisted in sessionStorage across refreshes with automatic cleanup on terminal state.
-- **UX hardening**: EmptyState and StatusBadge components integrated throughout. Run history truncated. Keyboard accessibility with aria-labels and focus indicators.
-- **Smoke test**: Updated manual smoke test covering full v0.2 workflow. Playwright e2e configured with basic smoke tests.
+| Area | Endpoints |
+|------|-----------|
+| Document | `GET /documents/current/metadata` |
+| Search | `POST /search` (FTS + keyword fallback) |
+| Retrieve | `POST /retrieve` (hybrid: FTS + keyword + structured + analysis_output + optional semantic_rerank) |
+| Locator | `GET /chunks/{chunk_id}/locator` |
+| Entity Evidence | `GET /entities/{entity_id}/evidence` |
+| Similar Scenes | `GET /similar-scenes?chunk_id=...&query=...` |
+| Chat (upgraded) | Structured evidence_json, RetrievalTrace per message, empty-retrieval guard |
 
-### What It Does NOT Do (v0.2.0-dev)
+### What It Does NOT Do (v0.3.0-dev)
 
-- No EPUB/PDF parsing, no multi-novel cross-analysis, no vector DB, no Docker.
+- No PDF/OCR parsing, no DRM removal, no multi-book Topic, no cross-work analysis, no vector DB (Qdrant/Chroma/FAISS), no Docker, no LangChain/LlamaIndex, no graph visualization, no cloud sync/auth.
 
 ### You Bring Your Own API Key
 
@@ -88,9 +91,9 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the version roadmap.
 
 A step-by-step manual smoke test covering the full product workflow (health, provider, topic, upload, parse, analysis, chat, cleanup) is at [docs/FRONTEND_SMOKE_TEST.md](docs/FRONTEND_SMOKE_TEST.md). Run through it after any significant frontend change.
 
-### Backend (automated scripts)
+### Backend (automated scripts + pytest integration)
 
-v0.1 smoke test at `backend/scripts/smoke_backend.py`. v0.2 smoke test at `backend/scripts/smoke_v2_backend.py`. See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
+v0.1 smoke test at `backend/scripts/smoke_backend.py`. v0.2 smoke test at `backend/scripts/smoke_v2_backend.py`. v0.3 smoke test at `backend/tests/integration/test_v03_smoke.py` (pytest + TestClient, no live server). See [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) for details.
 
 ```bash
 # v0.1 safe-mode smoke test (no real LLM calls):
@@ -99,6 +102,10 @@ python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup
 
 # v0.2 safe-mode smoke test:
 python scripts/smoke_v2_backend.py --base-url http://127.0.0.1:8000 --cleanup
+
+# v0.3 smoke test (pytest, no live server needed):
+cd backend
+conda run -n LongNovelInsight python -m pytest tests/integration/test_v03_smoke.py -v -s -m integration
 ```
 
 ## v0.1.0 Feature Checklist

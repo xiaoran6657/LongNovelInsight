@@ -1,4 +1,4 @@
-# LongNovelInsight v0.1.0 — Architecture
+# LongNovelInsight v0.3.0-dev — Architecture
 
 ## System Overview
 
@@ -10,11 +10,14 @@ Browser (localhost:5173)
 FastAPI Backend (localhost:8000)
      │
      ├── SQLite (data/longnovelinsight.sqlite)
+     │     ├── Application tables (SQLModel)
+     │     ├── chunk_fts (FTS5 virtual table)
+     │     └── embedding_cache (optional)
      │
      ├── data/ directory
-     │     ├── topics/{topic_id}/        — uploaded novel .txt + metadata
-     │     ├── chunks/{chunk_id}.txt     — chunk text files
-     │     └── analyses/{analysis_id}.json — analysis output files
+     │     ├── topics/{topic_id}/        — uploaded novel .txt / .epub + metadata
+     │     │     └── artifacts/          — large analysis JSON (>64KB, v0.2+)
+     │     └── source files
      │
      └── LLM Provider (external HTTP)
            └── DeepSeek / OpenAI-Compatible API
@@ -96,7 +99,7 @@ The backend uses a flat `backend/` structure. There is no nested `backend/app/` 
 - All LLM calls go through `llm_client.py` — a single thin wrapper around the OpenAI-compatible chat completions API.
 - Analysis runs the 6 output types as parallel async jobs via `ThreadPoolExecutor`. Worker threads only call LLM; the main thread writes DB results.
 - Provider configuration has three layers: Preset catalog (built-in) → Provider (credentials + defaults) → TopicProviderConfig (per-novel overrides). Effective config resolves Topic > Provider > Preset.
-- Chat answers are assembled by: (1) keyword-matching the user's question against analysis outputs, (2) retrieving the top-N relevant chunks, (3) sending everything as context to the LLM.
+- Chat answers use hybrid retrieval (v0.3): FTS5 full-text search, LIKE-based CJK keyword fallback, structured atom/output search, with legacy fuzzy character-overlap fallback for long natural-language queries. Candidates are deduplicated, score-normalized, and persisted as structured evidence_json with RetrievalTrace debugging.
 
 ### SQLite Database
 
@@ -294,3 +297,112 @@ Legacy endpoints enhanced:
 - `POST /analysis/run?pipeline=v2` — creates v2 run
 - `GET /analysis/outputs?run_id=X&latest_only=true` — v2 output filtering
 - `GET /analysis/status` — includes `latest_v2_run` and `v2_available`
+
+## v0.3 Source Abstraction & EPUB
+
+v0.3 adds EPUB support via a unified source abstraction:
+
+```
+Upload (.txt or .epub)
+     │
+     ├── TXT adapter  → SourceDocument → SourceChapter
+     │
+     └── EPUB adapter → zipfile + xml.etree.ElementTree (OPF/container)
+                        + beautifulsoup4 (XHTML text extraction)
+                        → SourceDocument → SourceChapter
+     │
+     ▼
+Unified parse pipeline
+     │
+     ├── Chapter rows (source_href, nav_order for EPUB)
+     ├── Chunk rows (source_locator_json for both formats)
+     └── FTS index rebuild
+```
+
+EPUB parsing extracts text only — no JS execution, no CSS rendering, no DRM.
+
+## v0.3 Retrieval Architecture
+
+```
+User query
+     │
+     ▼
+hybrid_retrieve()
+     │
+     ├── FTS5 lexical search (chunk_fts, BM25)
+     ├── Keyword/CJK fallback (LIKE + AND-group char overlap)
+     ├── Structured atom search (canonical_name, aliases, evidence_quotes)
+     └── Analysis output search (title, content, evidence_quotes)
+     │
+     ▼
+Dedup by chunk_id → min-max score normalization → top-k
+     │
+     ▼
+Candidate[] (source_type, source_id, chunk_id, snippet, score, method, matched_terms, source_locator)
+     │
+     ├── /retrieve → response with optional trace
+     ├── /chat → structured evidence_json + RetrievalTrace per message
+     ├── /entities/{id}/evidence → atoms + chunks + outputs
+     └── /similar-scenes → chunk_id seed or free-text query
+```
+
+When `ENABLE_SEMANTIC_RERANK` is true (off by default), an additional embedding-similarity rerank step is applied after lexical/structured candidates are collected. The `EmbeddingProvider` and `EmbeddingCache` table are skeleton implementations — no real embedding API calls in v0.3.0.
+
+## v0.3 Database Additions
+
+| Table | Purpose |
+|-------|---------|
+| `retrieval_trace` | Debug records per search/chat/retrieve call |
+| `chunk_fts` | FTS5 virtual table over chunk text/titles |
+| `embedding_cache` | Optional JSON vector cache (skeleton, disabled by default) |
+
+Existing tables enhanced:
+- `document.file_type` extended to `txt` / `epub`; `metadata_json` added
+- `chapter.source_href`, `nav_order`, `metadata_json` added
+- `chunk.source_locator_json` added
+
+## v0.3 Module Additions
+
+```
+backend/
+  models/
+    retrieval_trace.py      — RetrievalTrace (debug records)
+    embedding_cache.py      — EmbeddingCache (optional, skeleton)
+  services/
+    fts_service.py          — FTS5 rebuild/delete/search + CJK fallback
+    embedding_service.py    — EmbeddingProvider skeleton + semantic_rerank stub
+    epub_parser_service.py  — EPUB text extraction
+    source_document.py      — SourceDocument / SourceChapter dataclasses
+  routers/
+    search.py               — POST /search, GET /metadata, GET /locator
+    retrieve.py             — POST /retrieve (hybrid + optional rerank)
+    entities.py             — GET /entities/{id}/evidence, GET /similar-scenes
+```
+
+## v0.3 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/topics/{id}/documents/current/metadata` | GET | Document metadata (EPUB parsed or TXT empty) |
+| `/api/topics/{id}/search` | POST | FTS5 + keyword fallback search |
+| `/api/topics/{id}/retrieve` | POST | Hybrid retrieval across all sources |
+| `/api/topics/{id}/chunks/{chunk_id}/locator` | GET | Source locator + excerpt |
+| `/api/topics/{id}/entities/{entity_id}/evidence` | GET | Entity evidence (atoms + chunks + outputs) |
+| `/api/topics/{id}/similar-scenes` | GET | Similar scenes by chunk_id or query |
+
+## Technology Boundaries (v0.3.0)
+
+| Technology | Status |
+| ---------- | ------ |
+| FastAPI + SQLModel + SQLite | Included |
+| React + TypeScript + Vite | Included |
+| beautifulsoup4 (EPUB XHTML) | Added in v0.3 |
+| SQLite FTS5 | Added in v0.3 |
+| LangChain / LlamaIndex | Forbidden |
+| Docker | Forbidden |
+| Redis / Celery / PostgreSQL | Forbidden |
+| Qdrant / Chroma / FAISS | Forbidden |
+| PDF / OCR / DRM removal | Forbidden |
+| Multi-book Topic / Cross-work analysis | Forbidden (v0.4) |
+| Graph visualization | Forbidden (v0.4) |
+| Cloud sync / Auth | Forbidden |

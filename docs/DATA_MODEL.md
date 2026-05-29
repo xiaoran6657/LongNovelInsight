@@ -174,6 +174,20 @@ v0.3: SQLite FTS5 virtual table for full-text search over chunk text/titles. Not
 | `title` | Indexed content |
 | `text` | Indexed content |
 
+### EmbeddingCache (`embedding_cache`)
+
+v0.3 Step 10: Optional cache for JSON embedding vectors (SQLite, small-scale only, no ANN index). Table is created unconditionally but only populated when `ENABLE_SEMANTIC_RERANK` is enabled and a real embedding provider is configured.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | UUID (PK) | Unique cache entry ID |
+| `topic_id` | FK → topic | Owning topic |
+| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
+| `source_id` | str | Chunk/output/atom ID |
+| `model_name` | str | Embedding model name |
+| `vector_json` | str | JSON array of float values |
+| `created_at` | datetime | Creation timestamp |
+
 ### AnalysisOutput (`analysis_output`)
 
 | Field | Type | Description |

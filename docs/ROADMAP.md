@@ -37,15 +37,16 @@ Non-goals:
 
 ## v0.3.x — Source Formats & Retrieval
 
-Goal: support EPUB and improve evidence retrieval.
+Status: Backend complete (Steps 1-12). Frontend pending (12 steps).
 
 - EPUB parsing and metadata extraction.
 - Unified TXT/EPUB source abstraction.
 - SQLite FTS5 full-text search.
+- Hybrid retrieval (FTS + keyword + structured + analysis output).
 - Retrieval trace/debugging.
 - Similar scenes.
 - Entity/evidence explorer.
-- Optional embedding rerank.
+- Optional embedding rerank (skeleton, disabled by default).
 
 Non-goals:
 - Cross-book analysis.
