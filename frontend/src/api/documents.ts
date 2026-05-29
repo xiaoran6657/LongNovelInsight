@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { Document } from "./types";
+import type { Document, DocumentMetadata } from "./types";
 
 export function uploadDocument(
   topicId: string,
@@ -15,6 +15,14 @@ export function uploadDocument(
 
 export function getCurrentDocument(topicId: string): Promise<Document> {
   return apiRequest<Document>(`/api/topics/${topicId}/documents/current`);
+}
+
+export function getDocumentMetadata(
+  topicId: string
+): Promise<DocumentMetadata> {
+  return apiRequest<DocumentMetadata>(
+    `/api/topics/${topicId}/documents/current/metadata`
+  );
 }
 
 export function deleteCurrentDocument(

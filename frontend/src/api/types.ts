@@ -151,6 +151,9 @@ export interface Chapter {
   start_char: number;
   end_char: number;
   char_count: number;
+  source_href?: string | null;
+  nav_order?: number | null;
+  metadata_json?: string | null;
   created_at: string;
 }
 
@@ -163,6 +166,7 @@ export interface Chunk {
   end_char: number;
   char_count: number;
   estimated_tokens: number;
+  source_locator_json?: string | null;
 }
 
 export interface StorageInfo {
@@ -509,3 +513,156 @@ export interface AnalysisStatusV2Response {
   latest_v2_run: LatestV2RunSummary | null;
   v2_available: boolean;
 }
+
+// ── v0.3 Document Metadata ──
+
+export interface DocumentMetadata {
+  file_type: string;
+  metadata: Record<string, unknown>;
+}
+
+// ── v0.3 Search ──
+
+export type SearchMethod = "fts" | "keyword_fallback";
+
+export interface SearchRequest {
+  query: string;
+  limit?: number;
+  include_snippets?: boolean;
+  methods?: SearchMethod[];
+}
+
+export interface SearchResult {
+  chunk_id: string;
+  topic_id: string;
+  chapter_index: number | null;
+  chunk_index: number;
+  title: string;
+  snippet: string;
+  score: number;
+  method: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+  trace_id: string | null;
+}
+
+// ── v0.3 Retrieve ──
+
+export type RetrieveMethod =
+  | "fts"
+  | "keyword_fallback"
+  | "structured"
+  | "analysis_output"
+  | "semantic_rerank";
+
+export interface RetrieveRequest {
+  query: string;
+  top_k?: number;
+  methods?: RetrieveMethod[];
+  persist_trace?: boolean;
+}
+
+export interface CandidateResult {
+  source_type: string;
+  source_id: string;
+  chunk_id: string | null;
+  chapter_index: number | null;
+  chunk_index: number | null;
+  title: string;
+  snippet: string;
+  score: number;
+  method: string;
+  matched_terms: string[];
+  source_locator: Record<string, unknown> | null;
+}
+
+export interface RetrieveResponse {
+  query: string;
+  results: CandidateResult[];
+  trace_id: string | null;
+  warning: string | null;
+}
+
+// ── v0.3 Locator ──
+
+export interface LocatorResponse {
+  chunk_id: string;
+  topic_id: string;
+  chapter_index: number | null;
+  chunk_index: number;
+  locator: Record<string, unknown>;
+  excerpt: string;
+}
+
+// ── v0.3 Entity Evidence ──
+
+export interface AtomItem {
+  id: string;
+  atom_type: string;
+  stable_id: string;
+  canonical_name: string | null;
+  title: string | null;
+  summary: string | null;
+  confidence: number;
+  evidence_quotes: string[] | null;
+  chapter_index: number | null;
+  chunk_index: number | null;
+}
+
+export interface EntityChunkItem {
+  id: string;
+  chapter_index: number | null;
+  chunk_index: number;
+  excerpt: string;
+  locator: Record<string, unknown> | null;
+}
+
+export interface EntityOutputItem {
+  id: string;
+  output_type: string;
+  title: string;
+  excerpt: string;
+}
+
+export interface EntityEvidenceResponse {
+  entity_id: string;
+  canonical_name: string | null;
+  atoms: AtomItem[];
+  chunks: EntityChunkItem[];
+  outputs: EntityOutputItem[];
+}
+
+// ── v0.3 Similar Scenes ──
+
+export interface SimilarSceneItem {
+  chunk_id: string;
+  chapter_index: number | null;
+  chunk_index: number;
+  title: string;
+  snippet: string;
+  score: number;
+  locator: Record<string, unknown> | null;
+}
+
+export interface SimilarScenesResponse {
+  results: SimilarSceneItem[];
+}
+
+// ── v0.3 Chat Evidence (structured) ──
+
+export interface StructuredEvidenceItem {
+  text: string;
+  source_type: string;
+  source_id: string;
+  chunk_id: string | null;
+  title: string;
+  method: string;
+  score: number;
+  locator: Record<string, unknown> | null;
+}
+
+/** Parsed evidence_json — either old string[] or new object[] */
+export type ParsedEvidence = string[] | StructuredEvidenceItem[] | null;
