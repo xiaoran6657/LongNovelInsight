@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { uploadDocument, deleteCurrentDocument } from "../../api/documents";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { uploadDocument, deleteCurrentDocument, getDocumentMetadata } from "../../api/documents";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
+import DocumentMetadataCard from "../document/DocumentMetadataCard";
 import type { DocumentSummary } from "../../api/types";
 
 interface Props {
@@ -39,6 +40,14 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
     },
   });
 
+  const hasDoc = document != null;
+
+  const { data: metadata, isLoading: metaLoading } = useQuery({
+    queryKey: ["document-metadata", topicId],
+    queryFn: () => getDocumentMetadata(topicId),
+    enabled: hasDoc && document.status === "parsed",
+  });
+
   if (docLoading) return <LoadingBlock text="Loading document..." />;
 
   const is404 = docError != null && String(docError.message).includes("404");
@@ -59,13 +68,18 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
           >
             {deleteDocMut.isPending ? "Deleting..." : "Delete Document"}
           </button>
+
+          <DocumentMetadataCard
+            metadata={metadata ?? null}
+            isLoading={metaLoading}
+          />
         </div>
       ) : (
         <div>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt"
+            accept=".txt,.epub"
             onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
           />
           <button
