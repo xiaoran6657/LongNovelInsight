@@ -30,6 +30,7 @@ import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
 import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
+import EntityEvidencePanel from "../features/evidence/EntityEvidencePanel";
 import { useActiveRunPersistence } from "../features/analysis/useActiveRunPersistence";
 
 export default function TopicDetailPage() {
@@ -330,6 +331,8 @@ export default function TopicDetailPage() {
         topicId={topic.id}
         runId={activeRunId}
       />
+
+      <EntityEvidencePanel topicId={topic.id} />
 
       <LegacyAnalysisPanel
         topicId={topic.id}
