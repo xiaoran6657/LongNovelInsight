@@ -18,6 +18,8 @@ import ProviderBindingPanel from "../features/topic/ProviderBindingPanel";
 import DocumentPanel from "../features/topic/DocumentPanel";
 import ParsePanel from "../features/topic/ParsePanel";
 import ChaptersPanel from "../features/topic/ChaptersPanel";
+import EpubChapterTree from "../features/topic/EpubChapterTree";
+import SourceLocatorBadge from "../features/topic/SourceLocatorBadge";
 import StoragePanel from "../features/topic/StoragePanel";
 import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
 import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
@@ -267,13 +269,24 @@ export default function TopicDetailPage() {
         <ChunkRangeSelector meta={chunksMeta} value={chunkRange} onChange={setChunkRange} />
       )}
       <ChaptersPanel chapters={chapterData?.chapters} />
+      {doc?.file_type === "epub" && chapterData?.chapters && chapterData.chapters.length > 0 && (
+        <EpubChapterTree chapters={chapterData.chapters} />
+      )}
 
       {showChunkText && chunks.length > 0 && (
         <div className="card">
           <h3>Chunk Preview</h3>
           {chunks.slice(0, 5).map((c) => (
             <div key={c.id} style={{ marginBottom: "0.5rem", padding: "0.5rem", background: "#f9f9f9", borderRadius: 4 }}>
-              <p className="text-dim" style={{ fontSize: "0.75rem" }}>Ch. {c.chapter_index} chunk {c.chunk_index} ({c.char_count} chars)</p>
+              <p className="text-dim" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                <span>Ch. {c.chapter_index} chunk {c.chunk_index} ({c.char_count} chars)</span>
+                <SourceLocatorBadge
+                  sourceLocatorJson={c.source_locator_json}
+                  fileType={doc?.file_type}
+                  chapterIndex={c.chapter_index}
+                  chunkIndex={c.chunk_index}
+                />
+              </p>
               <p style={{ fontSize: "0.8rem", maxHeight: 100, overflow: "hidden" }}>{c.text}</p>
             </div>
           ))}
