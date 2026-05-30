@@ -17,8 +17,10 @@ import type {
   ChatSessionRead,
   ChatMessageRead,
   EffectiveProviderConfig,
+  ParsedEvidence,
   ProviderPreset,
 } from "../api/types";
+import ChatEvidenceList from "../features/chat/ChatEvidenceList";
 
 function fmtTime(iso: string): string {
   try {
@@ -1119,15 +1121,15 @@ function ChatBubble({
   const [hover, setHover] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  let evidence: unknown = null;
+  let evidence: ParsedEvidence = null;
   let uncertainty: string | null = null;
   if (!isUser) {
-    try {
-      evidence = message.evidence_json
-        ? JSON.parse(message.evidence_json)
-        : null;
-    } catch {
-      evidence = message.evidence_json;
+    if (message.evidence_json) {
+      try {
+        evidence = JSON.parse(message.evidence_json) as ParsedEvidence;
+      } catch {
+        evidence = null;
+      }
     }
     uncertainty = message.uncertainty;
   }
@@ -1248,55 +1250,7 @@ function ChatBubble({
 
         {/* Evidence — assistant only */}
         {!isUser && !editing && (
-          <>
-            {Array.isArray(evidence) &&
-            (evidence as unknown[]).length > 0 ? (
-              <div
-                style={{
-                  marginTop: "0.5rem",
-                  borderTop: "1px solid #ddd",
-                  paddingTop: "0.35rem",
-                  fontSize: "0.75rem",
-                  color: "#555",
-                }}
-              >
-                <p style={{ fontWeight: 600, marginBottom: "0.2rem" }}>
-                  Evidence ({String((evidence as unknown[]).length)})
-                </p>
-                <ul style={{ paddingLeft: "1.2rem", margin: 0 }}>
-                  {(evidence as unknown[]).map((eq, i) => (
-                    <li key={i} style={{ marginBottom: "0.15rem" }}>
-                      {typeof eq === "string" ? eq : JSON.stringify(eq)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <div
-                style={{
-                  marginTop: "0.35rem",
-                  fontSize: "0.7rem",
-                  color: "#999",
-                }}
-              >
-                No evidence cited
-              </div>
-            )}
-            {uncertainty && (
-              <div
-                style={{
-                  marginTop: "0.5rem",
-                  borderTop: "1px solid #fcd34d",
-                  paddingTop: "0.35rem",
-                  fontSize: "0.73rem",
-                  color: "#92400e",
-                  fontStyle: "italic",
-                }}
-              >
-                Uncertainty: {uncertainty}
-              </div>
-            )}
-          </>
+          <ChatEvidenceList evidence={evidence} uncertainty={uncertainty} />
         )}
 
         {/* Timestamp */}
