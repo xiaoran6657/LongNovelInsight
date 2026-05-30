@@ -120,16 +120,19 @@ export interface Document {
   topic_id: string;
   original_filename: string;
   stored_filename: string;
-  file_type: string;
+  file_type: "txt" | "epub";
   content_type: string | null;
   encoding: string;
   file_size_bytes: number;
   char_count: number;
   storage_path: string;
   status: string;
+  metadata_json?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export type SourceLocator = Record<string, unknown>;
 
 // Parse
 export interface ParseResult {
@@ -517,8 +520,17 @@ export interface AnalysisStatusV2Response {
 // ── v0.3 Document Metadata ──
 
 export interface DocumentMetadata {
-  file_type: string;
+  id: string;
+  topic_id: string;
+  original_filename: string;
+  file_type: "txt" | "epub";
+  encoding: string;
+  file_size_bytes: number;
+  char_count: number;
+  status: string;
   metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── v0.3 Search ──
@@ -576,7 +588,7 @@ export interface CandidateResult {
   score: number;
   method: string;
   matched_terms: string[];
-  source_locator: Record<string, unknown> | null;
+  source_locator: SourceLocator | null;
 }
 
 export interface RetrieveResponse {
@@ -593,7 +605,7 @@ export interface LocatorResponse {
   topic_id: string;
   chapter_index: number | null;
   chunk_index: number;
-  locator: Record<string, unknown>;
+  locator: SourceLocator;
   excerpt: string;
 }
 
@@ -617,7 +629,7 @@ export interface EntityChunkItem {
   chapter_index: number | null;
   chunk_index: number;
   excerpt: string;
-  locator: Record<string, unknown> | null;
+  locator: SourceLocator | null;
 }
 
 export interface EntityOutputItem {
@@ -644,7 +656,7 @@ export interface SimilarSceneItem {
   title: string;
   snippet: string;
   score: number;
-  locator: Record<string, unknown> | null;
+  locator: SourceLocator | null;
 }
 
 export interface SimilarScenesResponse {
@@ -661,7 +673,7 @@ export interface StructuredEvidenceItem {
   title: string;
   method: string;
   score: number;
-  locator: Record<string, unknown> | null;
+  locator: SourceLocator | null;
 }
 
 /** Parsed evidence_json — either old string[] or new object[] */
