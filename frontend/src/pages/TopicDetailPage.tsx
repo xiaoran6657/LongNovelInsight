@@ -301,7 +301,6 @@ export default function TopicDetailPage() {
 
       <TopicSearchPanel
         topicId={topic.id}
-        onOpenLocator={() => setShowChunkText(true)}
       />
 
       <AnalysisRunPanel
