@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { searchChunks, getChunkLocator } from "../../api/search";
 import type { SearchMethod, SearchResponse, LocatorResponse } from "../../api/types";
 import SearchResultList from "./SearchResultList";
+import RetrievalDebugDrawer from "./RetrievalDebugDrawer";
 
 interface Props {
   topicId: string;
@@ -29,6 +30,8 @@ export default function TopicSearchPanel({ topicId }: Props) {
     new Set(["fts", "keyword_fallback"])
   );
   const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
+  const [showDebugDrawer, setShowDebugDrawer] = useState(false);
+  const submittedQueryRef = useRef("");
 
   const searchMut = useMutation({
     mutationFn: (q: string) =>
@@ -66,6 +69,8 @@ export default function TopicSearchPanel({ topicId }: Props) {
     const trimmed = query.trim();
     if (!trimmed || searchMut.isPending) return;
     setSelectedChunkId(null);
+    setShowDebugDrawer(false);
+    submittedQueryRef.current = trimmed;
     searchMut.mutate(trimmed);
   }
 
@@ -94,6 +99,20 @@ export default function TopicSearchPanel({ topicId }: Props) {
         <button onClick={handleSubmit} disabled={searchMut.isPending}>
           {searchMut.isPending ? "Searching..." : "Search"}
         </button>
+        {hasSearched && !searchMut.isPending && (
+          <button
+            onClick={() => setShowDebugDrawer(!showDebugDrawer)}
+            disabled={!submittedQueryRef.current}
+            style={{
+              fontSize: "0.8rem",
+              ...(showDebugDrawer
+                ? { background: "#e3f2fd", borderColor: "#90caf9", color: "#1565c0" }
+                : {}),
+            }}
+          >
+            {showDebugDrawer ? "Hide Debug" : "Debug retrieval"}
+          </button>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.25rem" }}>
@@ -151,6 +170,14 @@ export default function TopicSearchPanel({ topicId }: Props) {
           isLoading={locatorLoading}
           isError={locatorError}
           onClose={() => setSelectedChunkId(null)}
+        />
+      )}
+
+      {showDebugDrawer && submittedQueryRef.current && (
+        <RetrievalDebugDrawer
+          topicId={topicId}
+          query={submittedQueryRef.current}
+          onClose={() => setShowDebugDrawer(false)}
         />
       )}
     </div>
