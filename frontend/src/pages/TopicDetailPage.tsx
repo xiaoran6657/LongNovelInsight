@@ -21,6 +21,7 @@ import ChaptersPanel from "../features/topic/ChaptersPanel";
 import EpubChapterTree from "../features/topic/EpubChapterTree";
 import SourceLocatorBadge from "../features/topic/SourceLocatorBadge";
 import StoragePanel from "../features/topic/StoragePanel";
+import TopicSearchPanel from "../features/search/TopicSearchPanel";
 import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
 import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
 import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
@@ -297,6 +298,11 @@ export default function TopicDetailPage() {
       </button>
 
       <StoragePanel topicId={topic.id} />
+
+      <TopicSearchPanel
+        topicId={topic.id}
+        onOpenLocator={() => setShowChunkText(true)}
+      />
 
       <AnalysisRunPanel
         topicId={topic.id}
