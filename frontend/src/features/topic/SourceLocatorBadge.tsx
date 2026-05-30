@@ -32,7 +32,13 @@ export default function SourceLocatorBadge({
   chunkIndex,
 }: Props) {
   const loc = parseLocator(sourceLocatorJson);
-  const href = typeof loc.source_href === "string" ? loc.source_href : null;
+  const rawHref =
+    typeof loc.href === "string"
+      ? loc.href
+      : typeof (loc as Record<string, unknown>).source_href === "string"
+        ? ((loc as Record<string, unknown>).source_href as string)
+        : null;
+  const href = rawHref;
   const effectiveType = fileType ?? (href ? "epub" : "txt");
 
   let label: string;
@@ -44,16 +50,21 @@ export default function SourceLocatorBadge({
     label = "TXT source";
   }
 
+  const locChapterTitle =
+    typeof loc.chapter_title === "string" ? loc.chapter_title : null;
   const chapterLabel =
-    chapterIndex != null ? `Ch.${chapterIndex}` : "";
+    chapterIndex != null
+      ? `Ch.${chapterIndex}${locChapterTitle ? ` ${locChapterTitle}` : ""}`
+      : (locChapterTitle ?? "");
   const chunkLabel = chunkIndex != null ? `#${chunkIndex}` : "";
   const detail = [chapterLabel, chunkLabel].filter(Boolean).join(" ");
-  const title = href ?? undefined;
+  const titleParts = [locChapterTitle, href].filter(Boolean);
+  const tooltip = titleParts.length > 0 ? titleParts.join(" · ") : undefined;
 
   return (
     <span
       className="text-dim"
-      title={title}
+      title={tooltip}
       style={{
         fontSize: "0.7rem",
         padding: "0.1rem 0.35rem",
