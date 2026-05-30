@@ -41,6 +41,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
       queryClient.invalidateQueries({ queryKey: ["document", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topics"] });
+      queryClient.removeQueries({ queryKey: ["document-metadata", topicId] });
     },
     onError: (e: Error) => setUploadError(e.message),
   });
@@ -50,6 +51,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["document", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
+      queryClient.removeQueries({ queryKey: ["document-metadata", topicId] });
     },
   });
 
@@ -60,7 +62,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
     isLoading: metaLoading,
     isError: metaError,
   } = useQuery({
-    queryKey: ["document-metadata", topicId],
+    queryKey: ["document-metadata", topicId, document?.id ?? ""],
     queryFn: () => getDocumentMetadata(topicId),
     enabled: hasDoc,
     retry: false,
