@@ -505,8 +505,8 @@ test.describe("v0.3 – Similar scenes", () => {
     await input.fill("battle");
     await input.press("Enter");
 
-    // Results should appear
-    await expect(page.getByText("Results")).toBeVisible({ timeout: 5000 });
+    // Results should appear — "Results (1)" is the section label inside SimilarScenesPanel
+    await expect(page.getByText("Results (1)")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("The First Battle")).toBeVisible();
     await expect(page.getByText("Score: 0.780")).toBeVisible();
     await expect(page.getByText(/Swords clashed/)).toBeVisible();
@@ -534,14 +534,16 @@ test.describe("v0.3 – Similar scenes", () => {
 });
 
 test.describe("v0.3 – Empty and idle states", () => {
-  test("search panel shows idle message before first search", async ({ page }) => {
+  test("search panel renders with input and method toggles", async ({ page }) => {
     await mockParsedEpubTopic(page);
 
     await page.goto(`/topics/${TOPIC_ID}`);
     await expect(page.getByRole("heading", { name: "Search" })).toBeVisible({ timeout: 10000 });
 
-    // No search performed yet — idle message should show (but TopicSearchPanel
-    // only shows idle state when !hasSearched and no pending mutation)
+    // Search input and method filter checkboxes should be visible before any search
+    await expect(page.locator("input[placeholder='Search within this topic...']")).toBeVisible();
+    await expect(page.getByText("FTS")).toBeVisible();
+    await expect(page.getByText("Keyword Fallback")).toBeVisible();
   });
 
   test("entity evidence panel shows idle state before lookup", async ({ page }) => {
