@@ -17,10 +17,9 @@ import type {
   ChatSessionRead,
   ChatMessageRead,
   EffectiveProviderConfig,
-  ParsedEvidence,
   ProviderPreset,
 } from "../api/types";
-import ChatEvidenceList from "../features/chat/ChatEvidenceList";
+import ChatEvidenceList, { normalizeEvidence } from "../features/chat/ChatEvidenceList";
 
 function fmtTime(iso: string): string {
   try {
@@ -522,6 +521,7 @@ export default function TopicChatPage() {
                     {(messagesQuery.data?.messages ?? []).map((msg: ChatMessageRead) => (
                       <ChatBubble
                         key={msg.id}
+                        topicId={topicId!}
                         message={msg}
                         onDelete={(id) => deleteMsgMut.mutate(id)}
                         onEditResend={(id, content) =>
@@ -1104,11 +1104,13 @@ function ActionBtn({
 }
 
 function ChatBubble({
+  topicId,
   message,
   onDelete,
   onEditResend,
   isResending,
 }: {
+  topicId: string;
   message: ChatMessageRead;
   onDelete: (id: string) => void;
   onEditResend: (id: string, content: string) => void;
@@ -1121,18 +1123,11 @@ function ChatBubble({
   const [hover, setHover] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  let evidence: ParsedEvidence = null;
   let uncertainty: string | null = null;
   if (!isUser) {
-    if (message.evidence_json) {
-      try {
-        evidence = JSON.parse(message.evidence_json) as ParsedEvidence;
-      } catch {
-        evidence = null;
-      }
-    }
     uncertainty = message.uncertainty;
   }
+  const evidence = isUser ? null : normalizeEvidence(message.evidence_json);
 
   function handleCopy() {
     navigator.clipboard.writeText(message.content).then(() => {
@@ -1250,7 +1245,7 @@ function ChatBubble({
 
         {/* Evidence — assistant only */}
         {!isUser && !editing && (
-          <ChatEvidenceList evidence={evidence} uncertainty={uncertainty} />
+          <ChatEvidenceList topicId={topicId} evidence={evidence} uncertainty={uncertainty} />
         )}
 
         {/* Timestamp */}

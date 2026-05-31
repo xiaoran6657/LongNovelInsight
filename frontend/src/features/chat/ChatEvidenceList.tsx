@@ -1,8 +1,29 @@
 import { useState } from "react";
-import type { ParsedEvidence, StructuredEvidenceItem } from "../../api/types";
+import { useQuery } from "@tanstack/react-query";
+import { getChunkLocator } from "../../api/search";
+import type {
+  ParsedEvidence,
+  StructuredEvidenceItem,
+  LocatorResponse,
+} from "../../api/types";
 import RetrievalMethodBadge from "../search/RetrievalMethodBadge";
 
+/** Safely parse and normalize evidence_json into ParsedEvidence. */
+export function normalizeEvidence(raw: string | null): ParsedEvidence {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    // Accept either all-strings (legacy) or all-objects (structured).
+    // Mixed arrays default to legacy rendering.
+    return parsed as ParsedEvidence;
+  } catch {
+    return null;
+  }
+}
+
 interface Props {
+  topicId: string;
   evidence: ParsedEvidence;
   uncertainty: string | null;
 }
@@ -11,23 +32,50 @@ function locatorSummary(loc: Record<string, unknown> | null): string | null {
   if (!loc) return null;
   const href = loc.href ?? (loc as Record<string, unknown>).source_href;
   const parts: string[] = [];
+  if (typeof loc.chapter_title === "string") parts.push(String(loc.chapter_title));
   if (typeof href === "string") {
     const segs = href.split("/");
     parts.push(segs[segs.length - 1] || href);
   }
-  if (typeof loc.chapter_title === "string") parts.push(loc.chapter_title);
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function hrefFromLocator(loc: Record<string, unknown>): string | null {
+  const h = loc.href ?? (loc as Record<string, unknown>).source_href;
+  return typeof h === "string" ? h : null;
+}
+
+function abbreviateHref(href: string): string {
+  const parts = href.split("/");
+  return parts[parts.length - 1] || href;
 }
 
 function formatScore(score: number): string {
   return score.toFixed(3);
 }
 
-export default function ChatEvidenceList({ evidence, uncertainty }: Props) {
+export default function ChatEvidenceList({
+  topicId,
+  evidence,
+  uncertainty,
+}: Props) {
   const [collapsed, setCollapsed] = useState(false);
+  const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
 
   const items = Array.isArray(evidence) ? evidence : [];
   const hasItems = items.length > 0;
+
+  // Locator fetch for source opening
+  const {
+    data: locatorData,
+    isLoading: locatorLoading,
+    isError: locatorError,
+  } = useQuery({
+    queryKey: ["chunk-locator", topicId, selectedChunkId],
+    queryFn: () => getChunkLocator(topicId, selectedChunkId!),
+    enabled: selectedChunkId != null,
+    retry: false,
+  });
 
   // No evidence at all
   if (!hasItems) {
@@ -117,6 +165,7 @@ export default function ChatEvidenceList({ evidence, uncertainty }: Props) {
         <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
           {(items as StructuredEvidenceItem[]).map((item, i) => {
             const locSummary = locatorSummary(item.locator);
+            const isSelected = selectedChunkId === item.chunk_id;
             return (
               <div
                 key={`${item.source_id}-${i}`}
@@ -204,13 +253,49 @@ export default function ChatEvidenceList({ evidence, uncertainty }: Props) {
                   {item.text}
                 </p>
 
-                {/* Chunk ID */}
+                {/* Chunk ID + Open source */}
                 {item.chunk_id && (
-                  <p style={{ margin: "0.15rem 0 0 0" }}>
-                    <code style={{ fontSize: "0.58rem" }}>
-                      {item.chunk_id}
-                    </code>
-                  </p>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                      marginTop: "0.15rem",
+                    }}
+                  >
+                    <code style={{ fontSize: "0.58rem" }}>{item.chunk_id}</code>
+                    <button
+                      onClick={() =>
+                        setSelectedChunkId(
+                          isSelected ? null : item.chunk_id
+                        )
+                      }
+                      style={{
+                        fontSize: "0.62rem",
+                        padding: "0.08rem 0.35rem",
+                        ...(isSelected
+                          ? {
+                              background: "#e3f2fd",
+                              borderColor: "#90caf9",
+                              color: "#1565c0",
+                            }
+                          : {}),
+                      }}
+                    >
+                      {isSelected ? "Close source" : "Open source"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Inline locator detail */}
+                {isSelected && item.chunk_id && (
+                  <LocatorDetail
+                    data={locatorData ?? null}
+                    isLoading={locatorLoading}
+                    isError={locatorError}
+                    chunkId={item.chunk_id}
+                    onClose={() => setSelectedChunkId(null)}
+                  />
                 )}
               </div>
             );
@@ -233,6 +318,118 @@ export default function ChatEvidenceList({ evidence, uncertainty }: Props) {
           {uncertainty}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Inline chunk locator detail ── */
+
+function LocatorDetail({
+  data,
+  isLoading,
+  isError,
+  onClose,
+}: {
+  data: LocatorResponse | null;
+  isLoading: boolean;
+  isError: boolean;
+  chunkId: string;
+  onClose: () => void;
+}) {
+  if (isLoading) {
+    return (
+      <p className="text-dim" style={{ marginTop: "0.4rem", fontSize: "0.68rem" }}>
+        Loading locator...
+      </p>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <p className="field-error" style={{ marginTop: "0.4rem", fontSize: "0.7rem" }}>
+        Failed to load chunk locator.
+        <button
+          onClick={onClose}
+          style={{ fontSize: "0.6rem", marginLeft: "0.4rem" }}
+        >
+          Dismiss
+        </button>
+      </p>
+    );
+  }
+
+  const href = hrefFromLocator(data.locator);
+  const chapterTitle =
+    typeof data.locator.chapter_title === "string"
+      ? data.locator.chapter_title
+      : null;
+
+  return (
+    <div
+      style={{
+        marginTop: "0.4rem",
+        padding: "0.5rem",
+        border: "1px solid #c8e6c9",
+        borderRadius: 3,
+        background: "#f1f8e9",
+        fontSize: "0.7rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "0.25rem",
+        }}
+      >
+        <strong style={{ fontSize: "0.72rem" }}>Source Locator</strong>
+        <button onClick={onClose} style={{ fontSize: "0.6rem", padding: "0.08rem 0.35rem" }}>
+          Close
+        </button>
+      </div>
+
+      <div style={{ lineHeight: 1.5 }}>
+        <p style={{ margin: "0 0 0.1rem 0" }}>
+          <span className="text-dim">Chapter:</span>{" "}
+          {data.chapter_index != null ? data.chapter_index + 1 : "—"}
+          {chapterTitle && (
+            <span style={{ marginLeft: "0.25rem" }}>{chapterTitle}</span>
+          )}
+        </p>
+        <p style={{ margin: "0 0 0.1rem 0" }}>
+          <span className="text-dim">Chunk:</span> #{data.chunk_index}
+        </p>
+        {href && (
+          <p style={{ margin: "0 0 0.1rem 0" }}>
+            <span className="text-dim">Source:</span> {abbreviateHref(href)}
+            <span
+              className="text-dim"
+              style={{ fontSize: "0.6rem", marginLeft: "0.25rem" }}
+              title={href}
+            >
+              (hover for full path)
+            </span>
+          </p>
+        )}
+      </div>
+
+      <div
+        style={{
+          padding: "0.35rem",
+          marginTop: "0.3rem",
+          background: "#fff",
+          border: "1px solid #e0e0e0",
+          borderRadius: 3,
+          fontSize: "0.73rem",
+          lineHeight: 1.5,
+          maxHeight: 160,
+          overflowY: "auto",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {data.excerpt}
+      </div>
     </div>
   );
 }

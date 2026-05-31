@@ -71,7 +71,7 @@ export default function EntityEvidencePanel({ topicId }: Props) {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSearch();
           }}
-          placeholder="e.g. xiao_yan, medusa_potion, yun_lai_sect..."
+          placeholder="e.g. char_liubei, xiao_yan, 刘备..."
           style={{ flex: 1 }}
         />
         <button onClick={handleSearch} disabled={isLoading || !entityInput.trim()}>
@@ -94,7 +94,7 @@ export default function EntityEvidencePanel({ topicId }: Props) {
         </p>
       )}
 
-      {/* ── 404 / No analysis ── */}
+      {/* ── 404 — topic not found or endpoint unavailable ── */}
       {is404 && (
         <div
           style={{
@@ -108,14 +108,16 @@ export default function EntityEvidencePanel({ topicId }: Props) {
           }}
         >
           <p style={{ fontWeight: 600, marginBottom: "0.2rem" }}>
-            Entity not found
+            Topic not found or endpoint unavailable
           </p>
           <p>
-            Make sure you have run analysis on this topic and that the entity ID
-            is correct. Entity IDs use the format{" "}
-            <code style={{ fontSize: "0.75rem" }}>entity_type:entity_name</code>{" "}
-            (e.g. <code style={{ fontSize: "0.75rem" }}>character:xiao_yan</code>
-            ).
+            The entity evidence endpoint may not be available. Run analysis first
+            and verify the topic exists. Entity IDs use stable_id or canonical_name
+            (e.g.{" "}
+            <code style={{ fontSize: "0.75rem" }}>char_liubei</code>,{" "}
+            <code style={{ fontSize: "0.75rem" }}>xiao_yan</code>,{" "}
+            <code style={{ fontSize: "0.75rem" }}>刘备</code>).
+            If the entity is valid but not found, check the empty state below.
           </p>
         </div>
       )}
