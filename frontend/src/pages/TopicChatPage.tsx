@@ -326,7 +326,7 @@ export default function TopicChatPage() {
       queryClient.invalidateQueries({ queryKey: ["provider-config-chat", topicId] });
     },
     onError: (err) => {
-      setConfigSaveError((err as Error)?.message || "Save failed");
+      setConfigSaveError(err instanceof Error ? err.message : "Save failed");
     },
   });
 
@@ -419,7 +419,7 @@ export default function TopicChatPage() {
               </div>
               {newSessionMut.isError && (
                 <p className="field-error">
-                  {(newSessionMut.error as Error)?.message || "Failed to create session"}
+                  {newSessionMut.error instanceof Error ? newSessionMut.error.message : "Failed to create session"}
                 </p>
               )}
 
@@ -608,7 +608,7 @@ export default function TopicChatPage() {
                 </div>
                 {sendMut.isError && (
                   <p className="field-error" style={{ marginTop: "0.25rem" }}>
-                    {(sendMut.error as Error)?.message || "Failed to send message"}
+                    {sendMut.error instanceof Error ? sendMut.error.message : "Failed to send message"}
                   </p>
                 )}
                 <p style={{ fontSize: "0.65rem", color: "#999", marginTop: "0.2rem" }}>

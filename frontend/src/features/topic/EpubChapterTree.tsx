@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { Chapter } from "../../api/types";
 
 interface Props {
@@ -13,16 +13,17 @@ function abbreviateHref(href: string): string {
 export default function EpubChapterTree({ chapters }: Props) {
   const [expanded, setExpanded] = useState(true);
 
-  const sorted = [...chapters].sort((a, b) => {
-    const aNav = a.nav_order ?? a.chapter_index;
-    const bNav = b.nav_order ?? b.chapter_index;
-    return aNav - bNav;
-  });
-
-  // EPUB chapters have nav_order; if none do, it's a TXT mis-render guard
-  const hasEpubMeta = sorted.some(
-    (ch) => ch.source_href || ch.nav_order != null
-  );
+  const { sorted, hasEpubMeta } = useMemo(() => {
+    const s = [...chapters].sort((a, b) => {
+      const aNav = a.nav_order ?? a.chapter_index;
+      const bNav = b.nav_order ?? b.chapter_index;
+      return aNav - bNav;
+    });
+    const hasMeta = s.some(
+      (ch) => ch.source_href || ch.nav_order != null
+    );
+    return { sorted: s, hasEpubMeta: hasMeta };
+  }, [chapters]);
   if (!hasEpubMeta) return null;
 
   return (

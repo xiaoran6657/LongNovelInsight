@@ -30,6 +30,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const uploadMut = useMutation({
@@ -49,10 +50,12 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
   const deleteDocMut = useMutation({
     mutationFn: () => deleteCurrentDocument(topicId),
     onSuccess: () => {
+      setDeleteError("");
       queryClient.invalidateQueries({ queryKey: ["document", topicId] });
       queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
       queryClient.removeQueries({ queryKey: ["document-metadata", topicId] });
     },
+    onError: (e: Error) => setDeleteError(e.message),
   });
 
   const hasDoc = document != null;
@@ -130,6 +133,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
           >
             {deleteDocMut.isPending ? "Deleting..." : "Delete Document"}
           </button>
+          {deleteError && <p className="field-error" style={{ marginTop: "0.35rem" }}>{deleteError}</p>}
 
           <DocumentMetadataCard
             metadata={effectiveMetadata}
