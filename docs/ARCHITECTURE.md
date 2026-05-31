@@ -29,13 +29,51 @@ FastAPI Backend (localhost:8000)
 
 A single-page application served by Vite dev server at `localhost:5173`.
 
-**Pages / Views:**
-- **Home** — list of Topics, create new Topic, storage overview, provider status.
-- **Topic Detail** — upload novel, view parse results (chapters/chunks stats), trigger analysis, view analysis results, open chat.
-- **Provider Settings** — add/edit/delete LLM provider configs.
-- **Chat** — chat interface within a Topic.
+**Tech:** React 18 + TypeScript (strict) + Vite + TanStack Query v5 + React Router DOM v7 + Plain CSS. No UI component library, no Tailwind, no Redux/Zustand/MobX.
 
-**State Management:** React Context or lightweight state (no Redux — v0.1.0 scope does not justify it).
+**Pages / Views:**
+- **Dashboard** (`/`) — health status, topic count, storage overview.
+- **Providers** (`/providers`) — CRUD for LLM provider configs with preset catalog.
+- **Topics** (`/topics`) — list, create, delete topics with status badges.
+- **Topic Detail** (`/topics/:id`) — document upload (TXT/EPUB), parse, chapters/chunks, search panel, retrieval debug drawer, analysis runs, entity evidence explorer, similar scenes, chat link.
+- **Chat** (`/topics/:id/chat`) — multi-session chat with structured evidence, collapsible sidebars, provider config panel, source text viewer.
+
+**Component Organization (v0.3):**
+```
+src/
+  api/                  — API client modules (client.ts, types.ts, topics.ts,
+                           providers.ts, documents.ts, parse.ts, analysis.ts,
+                           chat.ts, search.ts, retrieve.ts, entities.ts)
+  components/           — Shared UI (LoadingBlock, ErrorBlock)
+  features/
+    topic/              — TopicHeader, ProviderBindingPanel, DocumentPanel,
+                           ParsePanel, ChaptersPanel, EpubChapterTree,
+                           SourceLocatorBadge, StoragePanel
+    document/           — DocumentMetadataCard (v0.3)
+    search/             — TopicSearchPanel, SearchResultList, SearchResultCard,
+                           RetrievalMethodBadge, RetrievalDebugDrawer (v0.3)
+    analysis/           — ChunksMetaPanel, ChunkRangeSelector, AnalysisRunPanel,
+                           AnalysisRunHistory, AnalysisOutputsPanel,
+                           LegacyAnalysisPanel, useActiveRunPersistence
+    evidence/           — EntityEvidencePanel (v0.3), SimilarScenesPanel (v0.3)
+    chat/               — ChatEvidenceList with normalizeEvidence() helper (v0.3)
+    provider/           — ProviderConfigForm
+  pages/                — Dashboard, ProvidersPage, TopicsPage,
+                           TopicDetailPage, TopicChatPage, NotFoundPage
+  styles/               — Plain CSS (global.css, chat.css)
+```
+
+**State Management:** TanStack Query for all server state (queries + mutations with cache invalidation). `useRef` for non-render-triggering state (submitted queries, drag handles). SessionStorage for active analysis run persistence. No global client state library.
+
+**API Communication:** `fetch`-based `apiRequest` wrapper in `src/api/client.ts`. All requests go to `VITE_API_BASE_URL` (default `http://127.0.0.1:8000`). Query keys follow `["resource", topicId, ...sub]` pattern.
+
+**v0.3 Component Highlights:**
+- **EpubChapterTree**: Collapsible, nav_order-sorted, `useMemo` for sort/filter to avoid per-render O(n log n).
+- **TopicSearchPanel**: Method filter checkboxes (FTS/Keyword Fallback), Enter-to-submit, inline chunk locator detail via `useQuery`.
+- **RetrievalDebugDrawer**: Method checkboxes for all 5 `RetrieveMethod` values, `semantic_rerank` disabled with tooltip, persisted trace via `POST /retrieve`.
+- **ChatEvidenceList**: `normalizeEvidence()` helper field-normalizes each evidence item for safe rendering (score as number, locator as object, string defaults). Structured cards with source opening. Backward-compatible with legacy `string[]`.
+- **EntityEvidencePanel**: Three sections (Atoms/Source Chunks/Related Outputs), `useQuery` with enabled guard, 404 detection.
+- **SimilarScenesPanel**: Dual-mode (By Query / By Chunk ID), scored results with inline locator detail.
 
 **API Communication:** `fetch` or `axios` to `localhost:8000/api/*`. No server-side rendering. No static generation.
 
@@ -199,7 +237,7 @@ Long-running operations (parse novel, run analysis) are tracked as jobs.
 
 **Implementation:** In-process `ThreadPoolExecutor` (v0.1.0 — no external task queue). Worker threads do NOT receive a DB session.
 
-## Technology Boundaries (v0.1.0 / v0.2.0)
+## Technology Boundaries (v0.1.0 / v0.2.0 — historical)
 
 | Technology | Status |
 | ---------- | ------ |
@@ -211,7 +249,7 @@ Long-running operations (parse novel, run analysis) are tracked as jobs.
 | Redis / Celery | Forbidden |
 | PostgreSQL | Forbidden |
 | Vector Database | Forbidden |
-| .epub / PDF parsing | Forbidden |
+| .epub / PDF parsing | EPUB: Added in v0.3. PDF: Forbidden. |
 
 ## v0.2 Staged Analysis Pipeline
 

@@ -1,4 +1,4 @@
-# Frontend API Contract — LongNovelInsight v0.2.0-dev
+# Frontend API Contract — LongNovelInsight v0.3.0-dev
 
 > Auto-generated from actual backend code (routers/ + models/), not from docs/API.md alone.
 > If a discrepancy is found between this document and backend behavior, the backend code is the authority.
@@ -72,7 +72,7 @@ Response `200`:
 ```json
 {
   "status": "ok",
-  "version": "0.2.0-dev",
+  "version": "0.3.0-dev",
   "topic_count": 3,
   "total_disk_usage_bytes": 5242880
 }

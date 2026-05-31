@@ -4,7 +4,7 @@ LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.t
 
 ## v0.3.0-dev (current)
 
-Backend v0.3 is complete (Steps 1–12). Frontend v0.2 is complete. v0.3 adds EPUB support, SQLite FTS5 full-text search, hybrid retrieval across chunks/atoms/outputs, structured chat evidence, entity evidence explorer, similar scenes, optional semantic rerank skeleton, and retrieval trace debugging.
+Backend v0.3 is complete (Steps 1–12). Frontend v0.3 is complete (Steps 1–12). v0.3 adds EPUB support, SQLite FTS5 full-text search, hybrid retrieval across chunks/atoms/outputs, structured chat evidence, entity evidence explorer, similar scenes, optional semantic rerank skeleton, and retrieval trace debugging.
 
 ### What's New in v0.3 Backend
 
@@ -19,7 +19,20 @@ Backend v0.3 is complete (Steps 1–12). Frontend v0.2 is complete. v0.3 adds EP
 - **Optional semantic rerank**: `ENABLE_SEMANTIC_RERANK=False` feature flag with `EmbeddingProvider` skeleton and `EmbeddingCache` table. `/retrieve` accepts `semantic_rerank` method; returns warning when disabled.
 - **Document metadata**: `GET /documents/current/metadata` returns parsed EPUB metadata or empty object for TXT.
 
-### v0.3 Backend API Summary
+### What's New in v0.3 Frontend
+
+- **EPUB Upload + Metadata Card**: Upload `.txt` and `.epub` files. EPUB documents show file-type badge, Document Metadata card (title, creator, language, publisher, identifier, parsing warnings), and EPUB Chapter Tree with collapsible nav_order-sorted chapter list.
+- **Source Locator Badges**: Every chunk preview shows a `SourceLocatorBadge` — EPUB (green, abbreviated href) or TXT (gray). Hover for full source path.
+- **Topic Search Panel**: Full-text search input with FTS/Keyword Fallback method toggles. Results show snippet, colored method badge, score, chapter/chunk locator, and "Open" button for inline locator detail with excerpt.
+- **Retrieval Debug Drawer**: Inline debug panel for `POST /retrieve`. Method selection checkboxes for all 5 retrieval methods (fts, keyword_fallback, structured, analysis_output, semantic_rerank). `semantic_rerank` shown disabled with tooltip (backend flag is off). Shows ranked candidates with method badge, score, matched terms, and source locator.
+- **Retrieval Method Badge**: Colored badges for all 5 methods — fts (blue), keyword_fallback (green), structured (purple), analysis_output (orange), semantic_rerank (teal).
+- **Chat Structured Evidence**: Enhanced `ChatEvidenceList` with `normalizeEvidence()` helper — safely parses `evidence_json` and renders structured cards (source_type badge, method badge, score, title, text, chunk_id, "Open source" button). Fully backward-compatible with legacy `string[]` evidence. Uncertainty warnings displayed when no evidence found.
+- **Entity Evidence Explorer**: Look up evidence for any entity by stable_id or canonical_name. Three sections: Atoms (atom_type badge, confidence, evidence quotes), Source Chunks (locator badge, excerpt), Related Outputs (output_type badge, title, excerpt). Empty state for unknown entities, 404 warning for missing topics.
+- **Similar Scenes Panel**: Dual-mode panel — "By Query" (free-text) and "By Chunk ID". Ranked results with score badge, SourceLocatorBadge, snippet, and inline locator detail via "Open source".
+- **Optional Semantic Rerank UI**: Method checkbox shown in retrieval debug drawer, disabled with "(off)" label and hover tooltip explaining the backend feature flag. RetrievalMethodBadge supports `semantic_rerank` coloring when results include it.
+- **Playwright E2E Tests**: 11 new mocked tests covering EPUB metadata, search results, retrieval debug drawer, entity evidence, similar scenes, and idle/empty states.
+
+### v0.3 API Summary
 
 | Area | Endpoints |
 |------|-----------|
@@ -154,6 +167,23 @@ conda run -n LongNovelInsight python -m pytest tests/integration/test_v03_smoke.
 - [x] Right panel: editable Provider Config + per-model usage stats
 - [x] Right panel: source text viewer
 - [x] Token usage tracked per message (prompt / completion / total) by model
+
+### v0.3 Frontend
+- [x] EPUB upload with .txt/.epub accept + format description
+- [x] Document Metadata Card with file_type badge and EPUB metadata fields
+- [x] EPUB Chapter Tree (collapsible, nav_order-sorted, abbreviated href)
+- [x] Source Locator Badge (green EPUB / gray TXT, chapter/chunk info)
+- [x] Topic Search Panel (FTS + Keyword Fallback, method toggles, Enter-to-submit)
+- [x] Search Result Cards with method badge, score, snippet, locator, Open button
+- [x] Retrieval Debug Drawer with method checkboxes, ranked candidates, trace_id
+- [x] Retrieval Method Badge with 5 colors (fts/keyword/structured/output/rerank)
+- [x] Chat Structured Evidence (normalizeEvidence, cards, backward-compat string[])
+- [x] Entity Evidence Explorer (Atoms / Source Chunks / Related Outputs sections)
+- [x] Similar Scenes Panel (By Query / By Chunk ID, score, locator, Open source)
+- [x] Optional Semantic Rerank UI (disabled checkbox with tooltip)
+- [x] UX Hardening (useMemo, delete error state, instanceof Error)
+- [x] 11 Playwright E2E tests (mocked, no real LLM)
+- [x] Final documentation pass
 
 ## License
 
