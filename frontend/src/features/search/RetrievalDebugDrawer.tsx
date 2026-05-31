@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { retrieveTopic } from "../../api/retrieve";
-import type { RetrieveResponse } from "../../api/types";
+import type { RetrieveResponse, RetrieveMethod } from "../../api/types";
 import RetrievalMethodBadge from "./RetrievalMethodBadge";
 
 interface Props {
@@ -8,6 +9,24 @@ interface Props {
   query: string;
   onClose: () => void;
 }
+
+const ALL_RETRIEVE_METHODS: {
+  key: RetrieveMethod;
+  label: string;
+  disabled?: boolean;
+  disabledReason?: string;
+}[] = [
+  { key: "fts", label: "FTS" },
+  { key: "keyword_fallback", label: "Keyword Fallback" },
+  { key: "structured", label: "Structured" },
+  { key: "analysis_output", label: "Analysis Output" },
+  {
+    key: "semantic_rerank",
+    label: "Semantic Rerank",
+    disabled: true,
+    disabledReason: "Backend feature flag ENABLE_SEMANTIC_RERANK is off",
+  },
+];
 
 function formatScore(score: number): string {
   return score.toFixed(3);
@@ -34,14 +53,31 @@ export default function RetrievalDebugDrawer({
   query,
   onClose,
 }: Props) {
+  const [methods, setMethods] = useState<Set<RetrieveMethod>>(
+    new Set(["fts", "keyword_fallback"])
+  );
+
   const debugMut = useMutation({
     mutationFn: (q: string) =>
       retrieveTopic(topicId, {
         query: q,
         top_k: 20,
         persist_trace: true,
+        methods: [...methods],
       }),
   });
+
+  function toggleMethod(m: RetrieveMethod) {
+    setMethods((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) {
+        if (next.size > 1) next.delete(m);
+      } else {
+        next.add(m);
+      }
+      return next;
+    });
+  }
 
   const runDebug = () => {
     if (debugMut.isPending) return;
@@ -78,6 +114,42 @@ export default function RetrievalDebugDrawer({
             </span>
           )}
         </div>
+        {/* ── Method checkboxes (idle state only) ── */}
+        {!response && !debugMut.isPending && !debugMut.isError && (
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.35rem" }}>
+            {ALL_RETRIEVE_METHODS.map(({ key, label, disabled, disabledReason }) => (
+              <label
+                key={key}
+                title={disabled ? disabledReason : undefined}
+                style={{
+                  fontSize: "0.73rem",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  opacity: disabled ? 0.55 : 1,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={methods.has(key)}
+                  onChange={() => toggleMethod(key)}
+                  disabled={disabled}
+                  style={{ marginRight: "0.2rem" }}
+                />
+                {label}
+                {disabled && (
+                  <span
+                    style={{
+                      fontSize: "0.6rem",
+                      color: "#999",
+                      marginLeft: "0.15rem",
+                    }}
+                  >
+                    (off)
+                  </span>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: "0.4rem" }}>
           {!response && !debugMut.isPending && !debugMut.isError && (
             <button
