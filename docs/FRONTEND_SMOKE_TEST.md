@@ -16,7 +16,7 @@ Both must run simultaneously in separate terminals.
 
 **Page:** Dashboard (`/`)
 
-- Verify "Backend Status" shows connected with version `0.3.0-dev`
+- Verify "Backend Status" shows connected with version `0.2.0-dev` (or current backend version)
 - Verify topic count is displayed
 - Stop the backend — the page should show "Connection failed" without white screen
 - Restart the backend

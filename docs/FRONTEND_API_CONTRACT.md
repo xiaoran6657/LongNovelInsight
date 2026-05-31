@@ -72,7 +72,7 @@ Response `200`:
 ```json
 {
   "status": "ok",
-  "version": "0.3.0-dev",
+  "version": "0.2.0-dev",
   "topic_count": 3,
   "total_disk_usage_bytes": 5242880
 }

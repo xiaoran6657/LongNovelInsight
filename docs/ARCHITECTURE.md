@@ -75,7 +75,7 @@ src/
 - **EntityEvidencePanel**: Three sections (Atoms/Source Chunks/Related Outputs), `useQuery` with enabled guard, 404 detection.
 - **SimilarScenesPanel**: Dual-mode (By Query / By Chunk ID), scored results with inline locator detail.
 
-**API Communication:** `fetch` or `axios` to `localhost:8000/api/*`. No server-side rendering. No static generation.
+**API Communication:** `fetch`-based `apiRequest` wrapper in `src/api/client.ts`. All requests go to `VITE_API_BASE_URL` (default `http://127.0.0.1:8000`). No server-side rendering. No static generation.
 
 ### Backend (Python + FastAPI + SQLModel)
 
