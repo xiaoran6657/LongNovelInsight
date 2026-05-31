@@ -8,18 +8,66 @@ import type {
 } from "../../api/types";
 import RetrievalMethodBadge from "../search/RetrievalMethodBadge";
 
-/** Safely parse and normalize evidence_json into ParsedEvidence. */
+/** Safely parse and normalize evidence_json into ParsedEvidence.
+ *  Object items are field-normalized so the render code can safely
+ *  call .toFixed(), access properties, etc. without crashing. */
 export function normalizeEvidence(raw: string | null): ParsedEvidence {
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    // Accept either all-strings (legacy) or all-objects (structured).
-    // Mixed arrays default to legacy rendering.
-    return parsed as ParsedEvidence;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+    // Legacy string[] — filter non-strings
+    if (typeof parsed[0] === "string") {
+      return parsed.filter((s): s is string => typeof s === "string");
+    }
+
+    // Structured object[] — normalize each item for safe rendering
+    if (typeof parsed[0] === "object" && parsed[0] !== null) {
+      return (parsed as unknown[])
+        .filter(
+          (item): item is Record<string, unknown> =>
+            typeof item === "object" && item !== null
+        )
+        .map(normalizeEvidenceItem);
+    }
+
+    return null;
   } catch {
     return null;
   }
+}
+
+function normalizeEvidenceItem(
+  raw: Record<string, unknown>
+): StructuredEvidenceItem {
+  // Safe score: number, numeric string, or default 0
+  let score = 0;
+  const rawScore = raw.score;
+  if (typeof rawScore === "number" && !isNaN(rawScore)) {
+    score = rawScore;
+  } else if (typeof rawScore === "string") {
+    const p = parseFloat(rawScore);
+    if (!isNaN(p)) score = p;
+  }
+
+  // Safe locator: object or null
+  let locator: Record<string, unknown> | null = null;
+  if (typeof raw.locator === "object" && raw.locator !== null) {
+    locator = raw.locator as Record<string, unknown>;
+  }
+
+  const chunkId = raw.chunk_id;
+  return {
+    text: typeof raw.text === "string" ? raw.text : "",
+    source_type: typeof raw.source_type === "string" ? raw.source_type : "unknown",
+    source_id: typeof raw.source_id === "string" ? raw.source_id : "",
+    chunk_id: typeof chunkId === "string" ? chunkId : null,
+    title: typeof raw.title === "string" ? raw.title : "",
+    method: typeof raw.method === "string" ? raw.method : "",
+    score,
+    locator,
+  };
 }
 
 interface Props {
@@ -60,10 +108,19 @@ export default function ChatEvidenceList({
   uncertainty,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
-  const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
+  const [selectedEvidenceIdx, setSelectedEvidenceIdx] = useState<number | null>(
+    null
+  );
 
   const items = Array.isArray(evidence) ? evidence : [];
   const hasItems = items.length > 0;
+  const isLegacy = hasItems && typeof items[0] === "string";
+
+  const selectedChunkId =
+    selectedEvidenceIdx != null && !isLegacy
+      ? (items as StructuredEvidenceItem[])[selectedEvidenceIdx]?.chunk_id ??
+        null
+      : null;
 
   // Locator fetch for source opening
   const {
@@ -110,8 +167,6 @@ export default function ChatEvidenceList({
       </div>
     );
   }
-
-  const isLegacy = typeof items[0] === "string";
 
   return (
     <div
@@ -165,7 +220,7 @@ export default function ChatEvidenceList({
         <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
           {(items as StructuredEvidenceItem[]).map((item, i) => {
             const locSummary = locatorSummary(item.locator);
-            const isSelected = selectedChunkId === item.chunk_id;
+            const isSelected = selectedEvidenceIdx === i;
             return (
               <div
                 key={`${item.source_id}-${i}`}
@@ -266,8 +321,8 @@ export default function ChatEvidenceList({
                     <code style={{ fontSize: "0.58rem" }}>{item.chunk_id}</code>
                     <button
                       onClick={() =>
-                        setSelectedChunkId(
-                          isSelected ? null : item.chunk_id
+                        setSelectedEvidenceIdx(
+                          isSelected ? null : i
                         )
                       }
                       style={{
@@ -294,7 +349,7 @@ export default function ChatEvidenceList({
                     isLoading={locatorLoading}
                     isError={locatorError}
                     chunkId={item.chunk_id}
-                    onClose={() => setSelectedChunkId(null)}
+                    onClose={() => setSelectedEvidenceIdx(null)}
                   />
                 )}
               </div>
