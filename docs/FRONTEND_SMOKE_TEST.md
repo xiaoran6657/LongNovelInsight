@@ -321,7 +321,7 @@ Both must run simultaneously in separate terminals.
 | Test | Expected |
 |------|----------|
 | Stop backend, navigate frontend | Health shows connection failed. Other pages show errors without white screen. |
-| Upload non-.txt file | 400 rejection with clear message |
+| Upload non-.txt/.epub file (e.g., .pdf) | 400 rejection with clear message |
 | Upload >200MB file | 413 rejection |
 | Parse without document | Error message, no crash |
 | Run analysis without provider | 409 or warning in UI |

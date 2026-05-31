@@ -25,7 +25,7 @@ function MetadataField({ label, value }: { label: string; value: unknown }) {
 
 export default function DocumentMetadataCard({ metadata, isLoading }: Props) {
   if (isLoading) return <p className="text-dim">Loading metadata...</p>;
-  if (!metadata) return null;
+  if (!metadata || typeof metadata.file_type !== "string") return null;
 
   const isEpub = metadata.file_type === "epub";
   const meta = metadata.metadata ?? {};

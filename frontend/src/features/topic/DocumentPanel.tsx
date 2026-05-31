@@ -71,10 +71,16 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
     retry: false,
   });
 
-  // Fallback metadata built from document object when the metadata endpoint fails
-  // or hasn't been called yet.
+  // Only trust the metadata endpoint response if it has essential fields.
+  // An empty object from a catch-all mock or old backend is not usable.
+  const metadataValid =
+    metadata != null &&
+    typeof (metadata as unknown as Record<string, unknown>).file_type === "string";
+
+  // Fallback metadata built from document object when the metadata endpoint
+  // fails, returns incomplete data, or hasn't been called yet.
   const fallbackMeta: DocumentMetadata | null =
-    hasDoc && !metadata && metaError
+    hasDoc && (!metadataValid || metaError)
       ? {
           id: document.id,
           topic_id: document.topic_id,
@@ -90,7 +96,7 @@ export default function DocumentPanel({ topicId, document, docLoading, docError 
         }
       : null;
 
-  const effectiveMetadata: DocumentMetadata | null = metadata ?? fallbackMeta ?? null;
+  const effectiveMetadata: DocumentMetadata | null = metadataValid ? (metadata as DocumentMetadata) : fallbackMeta;
 
   const fileTypeBadge = (ft: "txt" | "epub") => (
     <span
