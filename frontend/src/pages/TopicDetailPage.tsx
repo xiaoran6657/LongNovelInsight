@@ -31,6 +31,7 @@ import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
 import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
 import EntityEvidencePanel from "../features/evidence/EntityEvidencePanel";
+import SimilarScenesPanel from "../features/evidence/SimilarScenesPanel";
 import { useActiveRunPersistence } from "../features/analysis/useActiveRunPersistence";
 
 export default function TopicDetailPage() {
@@ -333,6 +334,8 @@ export default function TopicDetailPage() {
       />
 
       <EntityEvidencePanel topicId={topic.id} />
+
+      <SimilarScenesPanel topicId={topic.id} />
 
       <LegacyAnalysisPanel
         topicId={topic.id}
