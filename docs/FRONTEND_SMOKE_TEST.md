@@ -1,4 +1,4 @@
-# Frontend Smoke Test — LongNovelInsight v0.2.0-dev
+# Frontend Smoke Test — LongNovelInsight v0.3.0-dev
 
 This document describes how to manually verify the full local product workflow from a fresh start. Each step includes what to check and what to do if it fails.
 
@@ -16,7 +16,7 @@ Both must run simultaneously in separate terminals.
 
 **Page:** Dashboard (`/`)
 
-- Verify "Backend Status" shows connected with version `0.2.0-dev`
+- Verify "Backend Status" shows connected with version `0.3.0-dev`
 - Verify topic count is displayed
 - Stop the backend — the page should show "Connection failed" without white screen
 - Restart the backend
@@ -212,7 +212,111 @@ Both must run simultaneously in separate terminals.
 
 **Verify** each delete operation succeeds and the UI updates accordingly.
 
-## 14. Error Scenarios
+## 14. v0.3 — EPUB Upload & Metadata
+
+**Page:** Topic Detail (`/topics/:id`)
+
+1. Upload an `.epub` file (must be valid EPUB, no DRM)
+2. After upload, verify the file type badge shows "EPUB" (green)
+3. Verify Document Metadata card appears with: Source Format, Title, Creator, Language, Publisher, Identifier
+4. Verify EPUB Chapter Tree section appears below Chapters panel with sorted chapter list
+5. Verify each chapter shows index, title, abbreviated source_href, and nav_order
+6. Click the chapter tree header to collapse/expand
+
+**Fails?**
+- Non-EPUB file: upload still works for TXT files (v0.2 behavior)
+- Invalid EPUB (not a zip): 400 rejection
+- Missing metadata fields: card shows available fields without crashing
+
+## 15. v0.3 — Topic Search Panel
+
+**Page:** Topic Detail — Search section
+
+**Prerequisite:** Document must be parsed (chunks must exist).
+
+1. Enter a query in the search input (e.g., a character name)
+2. Toggle method checkboxes: FTS, Keyword Fallback (at least one active)
+3. Press Enter or click Search
+4. Verify results appear with: snippet text, method badge (fts/keyword_fallback), score, chapter/chunk locator
+5. Click "Open" on a result — verify inline locator detail with chapter, chunk, source, excerpt
+6. Click "Open" again or "Close" to dismiss the locator detail
+7. Verify "Debug retrieval" button appears after search
+8. Click "Debug retrieval" — verify RetrievalDebugDrawer expands
+9. Click "Run Retrieval" — verify method checkboxes (FTS, Keyword Fallback, Structured, Analysis Output, Semantic Rerank)
+10. Verify Semantic Rerank checkbox is disabled with "(off)" label and hover tooltip
+11. Verify ranked candidates appear with method badges, scores, matched terms
+
+**Fails?**
+- No chunks parsed: search returns empty results
+- Backend retrieve unavailable: debug drawer shows error
+
+## 16. v0.3 — Chat Structured Evidence
+
+**Page:** Chat (`/topics/:id/chat`)
+
+**Prerequisite:** A chat session with messages that have structured evidence_json.
+
+1. Open a chat session that has assistant responses with structured evidence
+2. Verify evidence section shows "Evidence (N)" header with count
+3. Verify each evidence item shows: source_type badge (e.g., "fts"), method badge (colored), score (3 decimals), title, text snippet
+4. When chunk_id is present, verify "Open source" button appears
+5. Click "Open source" — verify inline locator detail loads with chapter, chunk, source, excerpt
+6. Click "Close source" to dismiss
+7. Collapse the evidence section by clicking the header — verify items hide
+8. Expand again — verify items reappear
+
+## 17. v0.3 — Chat Legacy Evidence (backward compat)
+
+1. Open a chat session with old `string[]` evidence_json
+2. Verify evidence section shows "Evidence (legacy) (N)" header
+3. Verify evidence items render as a bulleted list of strings
+4. Verify no "Open source" buttons appear (legacy format has no chunk_id)
+5. Verify no crash when evidence_json is null or malformed
+
+## 18. v0.3 — Entity Evidence Explorer
+
+**Page:** Topic Detail — Entity Evidence section
+
+**Prerequisite:** Analysis must have been run (atoms exist).
+
+1. Enter an entity ID (e.g., `char_liubei`, `xiao_yan`) and click "Lookup"
+2. If entity found: verify three sections appear — Atoms, Source Chunks, Related Outputs
+3. Atoms: verify atom_type badge, canonical_name, title, summary, confidence, evidence quotes, stable_id
+4. Source Chunks: verify chapter/chunk indices, SourceLocatorBadge, excerpt, chunk ID
+5. Related Outputs: verify output_type badge, title, excerpt
+6. If entity not found: verify "No evidence found for this entity" message
+7. If topic not found: verify orange 404 warning with example IDs
+8. Press Enter in the input — should trigger lookup
+
+## 19. v0.3 — Similar Scenes Panel
+
+**Page:** Topic Detail — Similar Scenes section
+
+1. Verify two mode tabs: "By Query" and "By Chunk ID"
+2. By Query: enter a phrase, click "Find" — verify ranked results with score, chapter/chunk, snippet
+3. By Chunk ID: paste a chunk ID, click "Find" — verify results (excludes self)
+4. Click "Open source" on a result — verify inline locator detail
+5. Switch modes — verify previous results are cleared
+6. Empty search: verify "No similar scenes found" message
+
+## 20. v0.3 — Source Locator Badge
+
+1. In chunk previews and search results, verify SourceLocatorBadge shows:
+   - EPUB: green badge with "EPUB: filename" + chapter/chunk info
+   - TXT: gray badge with "TXT source" + chapter/chunk info
+2. Hover over badge — verify tooltip with full href path
+
+## 21. v0.3 — Retrieval Method Badge
+
+1. In retrieval debug drawer, search results, chat evidence, and entity evidence:
+   - fts: blue badge
+   - keyword_fallback: green badge
+   - structured: purple badge
+   - analysis_output: orange badge
+   - semantic_rerank: teal badge
+2. Verify unknown methods render with neutral gray badge
+
+## 22. Error Scenarios (v0.2 + v0.3)
 
 | Test | Expected |
 |------|----------|
