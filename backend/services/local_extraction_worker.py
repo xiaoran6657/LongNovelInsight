@@ -164,26 +164,34 @@ def run_local_extraction_for_chunk(
         last_result.duration_seconds = time.monotonic() - start
         return last_result
 
-    # ── Retry logic ──
-    err_lower = (last_result.error or "").lower()
-    is_json_error = "json" in err_lower and "parse" in err_lower
-    is_truncated = is_json_error and (
-        "truncated" in err_lower
-        or last_result.finish_reason == "length"
-        or last_result.completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
-    )
-    if not _is_retryable_result(
-        error_msg=last_result.error or "",
-        status_code=last_result.status_code,
-        is_json_error=is_json_error,
-    ):
-        last_result.duration_seconds = time.monotonic() - start
-        return last_result
+    # ── Retry logic with per-attempt re-evaluation ──
+    original_max_tokens = max_tokens
 
     for attempt in range(2):
-        retry_tokens = max_tokens
+        # Re-evaluate error classification from current last_result
+        err_lower = (last_result.error or "").lower()
+        is_json_error = "json" in err_lower and "parse" in err_lower
+        is_truncated = is_json_error and (
+            "truncated" in err_lower
+            or last_result.finish_reason == "length"
+            or last_result.completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
+        )
+        is_retryable = _is_retryable_result(
+            error_msg=last_result.error or "",
+            status_code=last_result.status_code,
+            is_json_error=is_json_error,
+        )
+        if not is_retryable:
+            last_result.duration_seconds = time.monotonic() - start
+            return last_result
+
+        # Adaptive token escalation: original → min(x2, RETRY_MAX_TOKENS) → RETRY_MAX_TOKENS
         if is_json_error:
-            retry_tokens = min(max_tokens * 2, RETRY_MAX_TOKENS)
+            if attempt == 0:
+                max_tokens = min(original_max_tokens * 2, RETRY_MAX_TOKENS)
+            else:
+                max_tokens = RETRY_MAX_TOKENS
+        # Non-JSON errors: keep current max_tokens
 
         # Longer backoff for 429; shorter for JSON truncation; moderate for transport
         if last_result.status_code == 429:
@@ -194,7 +202,7 @@ def run_local_extraction_for_chunk(
             time.sleep(3.0 * (attempt + 1))
 
         retry_result = _attempt_call(
-            client, messages, model_name, temperature, retry_tokens, extra_body, chunk_id, api_key,
+            client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key,
             thinking_mode=thinking_mode,
         )
         retry_result.retry_count = attempt + 1
@@ -202,16 +210,6 @@ def run_local_extraction_for_chunk(
             retry_result.duration_seconds = time.monotonic() - start
             return retry_result
         last_result = retry_result
-
-        # If still truncated, escalate to RETRY_MAX_TOKENS on next attempt
-        retry_err_lower = (retry_result.error or "").lower()
-        retry_is_json = "json" in retry_err_lower and "parse" in retry_err_lower
-        if retry_is_json and (
-            "truncated" in retry_err_lower
-            or retry_result.finish_reason == "length"
-            or retry_result.completion_tokens >= retry_tokens - TRUNCATION_TOKEN_MARGIN
-        ):
-            is_truncated = True
 
     last_result.duration_seconds = time.monotonic() - start
     return last_result

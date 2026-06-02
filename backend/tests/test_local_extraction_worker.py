@@ -440,6 +440,77 @@ def test_json_parse_truncation_escalates_to_16384():
         assert call_kwargs["max_tokens"] == 16384
 
 
+def test_default_4096_json_truncation_two_retries_escalate_to_16384():
+    """Default max_tokens=4096: first retry → 8192, second retry → 16384."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        # All 3 calls return truncated JSON → should use 4096, 8192, 16384
+        mock_client.chat.side_effect = [
+            MockResponseWithFinish(
+                "bad json", finish_reason="length",
+                usage={"completion_tokens": 4090, "prompt_tokens": 500, "total_tokens": 4590},
+            ),
+            MockResponseWithFinish(
+                "bad json 2", finish_reason="length",
+                usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
+            ),
+            MockResponse(VALID_EXTRACTION_JSON),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+                max_tokens=4096,
+            )
+
+        assert result.ok
+        assert result.retry_count == 2
+        assert mock_client.chat.call_count == 3
+        # Verify token escalation sequence: 4096 → 8192 → 16384
+        assert mock_client.chat.call_args_list[0].kwargs["max_tokens"] == 4096
+        assert mock_client.chat.call_args_list[1].kwargs["max_tokens"] == 8192
+        assert mock_client.chat.call_args_list[2].kwargs["max_tokens"] == 16384
+
+
+def test_transport_error_then_json_truncation_escalates():
+    """First: transport error (no token bump). Retry 1: JSON truncation at original tokens.
+    Retry 2: should escalate to 16384."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            LLMClientError("Transport error: peer closed connection"),
+            MockResponseWithFinish(
+                "bad json", finish_reason="length",
+                usage={"completion_tokens": 4090, "prompt_tokens": 500, "total_tokens": 4590},
+            ),
+            MockResponse(VALID_EXTRACTION_JSON),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+                max_tokens=4096,
+            )
+
+        assert result.ok
+        assert result.retry_count == 2
+        assert mock_client.chat.call_count == 3
+        # First attempt: original 4096 (transport error, no token escalation on retry 1)
+        assert mock_client.chat.call_args_list[0].kwargs["max_tokens"] == 4096
+        # Retry 1: still 4096 (transport error → no JSON escalation flag from attempt 0)
+        assert mock_client.chat.call_args_list[1].kwargs["max_tokens"] == 4096
+        # Retry 2: JSON truncation detected in retry 1 → escalate to 16384
+        assert mock_client.chat.call_args_list[2].kwargs["max_tokens"] == 16384
+
+
 def test_transport_error_is_retryable():
     """Transport error keyword should trigger retry."""
     from services.llm_client import LLMClientError
