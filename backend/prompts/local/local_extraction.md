@@ -103,3 +103,21 @@ Read the provided text excerpt (one or a few chunks) and extract local analysis 
 5. If the text is empty or contains only noise, set insufficient_evidence to true.
 6. You MUST include "analysis_type": "local_extraction" and "chunk_id" (matching the input chunk_id) at the top level of your response.
 7. Include "chapter_index" and "chunk_index" from the input metadata at the top level.
+
+## Output Size Limits (CRITICAL)
+This is a structured extraction task — keep JSON output concise to avoid truncation.
+Per chunk, output at most:
+- local_characters: 8 items max
+- local_events: 8 items max
+- local_relations: 8 items max
+- local_causal_links: 6 items max
+- local_theme_signals: 6 items max
+- local_worldbuilding: 6 items max
+- local_foreshadowing: 2 items max
+- local_open_questions: 4 items max
+
+If content is too rich to fit within these limits, prioritize: characters > events > relations > causality > themes > worldbuilding > open_questions.
+
+Per atom, provide at most 1-2 evidence_quotes, each under 80 characters — quote only the key phrase, not the full paragraph.
+Avoid verbose descriptions. Prefer 1-sentence summaries.
+All 8 atom array keys MUST be present in the output, even if empty (e.g. "local_open_questions": []).

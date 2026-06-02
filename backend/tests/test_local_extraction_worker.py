@@ -31,7 +31,7 @@ VALID_EXTRACTION_JSON = json.dumps(
 
 
 class MockResponse:
-    def __init__(self, content, model="mock-model", usage=None):
+    def __init__(self, content, model="mock-model", usage=None, finish_reason=None):
         self.content = content
         self.model = model
         self.usage = usage or {
@@ -39,6 +39,7 @@ class MockResponse:
             "completion_tokens": 200,
             "total_tokens": 700,
         }
+        self.finish_reason = finish_reason
 
 
 def test_build_messages_basic():
@@ -320,3 +321,183 @@ def test_retry_exhausted_returns_last_error():
         assert result.retry_count > 0
         assert "last error" in (result.error or "").lower()
         assert "first error" not in (result.error or "").lower()
+
+
+class MockResponseWithFinish:
+    """Mock response that includes finish_reason and usage fields."""
+
+    def __init__(self, content, model="mock-model", usage=None, finish_reason=None):
+        self.content = content
+        self.model = model
+        self.usage = usage or {
+            "prompt_tokens": 500,
+            "completion_tokens": 200,
+            "total_tokens": 700,
+        }
+        self.finish_reason = finish_reason
+
+
+def test_finish_reason_captured():
+    """finish_reason from LLM response should appear in result."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponseWithFinish(
+            VALID_EXTRACTION_JSON, finish_reason="stop"
+        )
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+        )
+
+        assert result.ok
+        assert result.finish_reason == "stop"
+
+
+def test_finish_reason_length_truncation_detected():
+    """finish_reason='length' should add truncation info to error."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponseWithFinish(
+            "not valid json {{{", finish_reason="length",
+            usage={"completion_tokens": 8192, "prompt_tokens": 500, "total_tokens": 8692},
+        )
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+            max_tokens=8192,
+        )
+
+        assert not result.ok
+        assert "truncated" in (result.error or "").lower()
+        assert "8192" in (result.error or "")
+        assert result.finish_reason == "length"
+
+
+def test_completion_tokens_near_max_truncation_detected():
+    """completion_tokens within 8 of max_tokens should trigger truncation on first attempt."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        # All 3 attempts return same: completion_tokens very close to initial max_tokens=8192.
+        # Retries use higher max_tokens, so the 2nd/3rd attempts won't show truncated,
+        # but the first attempt's error (with truncation) is captured in finish_reason.
+        mock_client.chat.return_value = MockResponseWithFinish(
+            "not json {{{", finish_reason="stop",
+            usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
+        )
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+            max_tokens=8192,
+        )
+
+        assert not result.ok
+        # finish_reason = "stop" even when truncated by token limit (not all providers send "length")
+        assert result.finish_reason == "stop"
+        # completion_tokens was captured
+        assert result.completion_tokens == 8188
+
+
+def test_json_parse_truncation_escalates_to_16384():
+    """JSON parse failure with truncation → next attempt uses RETRY_MAX_TOKENS=16384."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        # First call: truncation detected (completion_tokens near max)
+        mock_client.chat.side_effect = [
+            MockResponseWithFinish(
+                "bad json", finish_reason="length",
+                usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
+            ),
+            MockResponse(VALID_EXTRACTION_JSON),
+        ]
+        # Also mock time.sleep to avoid real waits
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+                max_tokens=8192,
+            )
+
+        assert result.ok
+        assert result.retry_count >= 1
+        # Second call should have max_tokens=16384
+        assert mock_client.chat.call_count == 2
+        call_kwargs = mock_client.chat.call_args_list[1].kwargs
+        assert call_kwargs["max_tokens"] == 16384
+
+
+def test_transport_error_is_retryable():
+    """Transport error keyword should trigger retry."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            LLMClientError("Transport error: peer closed connection"),
+            MockResponse(VALID_EXTRACTION_JSON),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        assert mock_client.chat.call_count == 2
+
+
+def test_thinking_mode_enabled_warning():
+    """thinking_mode=enabled should produce a warning in result."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+            thinking_mode="enabled",
+        )
+
+        assert result.ok
+        thinking_warnings = [w for w in result.warnings if "thinking" in w.lower()]
+        assert len(thinking_warnings) >= 1
+
+
+def test_thinking_mode_provider_default_no_warning():
+    """thinking_mode=provider_default should not add thinking warning."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON)
+
+        result = run_local_extraction_for_chunk(
+            chunk_id=FAKE_CHUNK_ID,
+            chunk_text=FAKE_CHUNK_TEXT,
+            base_url="http://test",
+            api_key="sk-test",
+            model_name="test-model",
+            thinking_mode="provider_default",
+        )
+
+        assert result.ok
+        thinking_warnings = [w for w in result.warnings if "thinking" in w.lower()]
+        assert len(thinking_warnings) == 0

@@ -175,18 +175,30 @@ def _execute_run(run_id: str, engine=None) -> None:
 
 
 def _fail_run(run_id: str, engine, error: str) -> None:
-    """Mark a run as failed due to an unhandled exception."""
+    """Mark a run as failed due to an unhandled exception.
+
+    Does NOT overwrite succeeded, cancelled, partial_success, or already-completed runs.
+    """
     try:
         with Session(engine) as session:
             run = session.get(AnalysisRun, run_id)
-            if run and run.status not in (JobStatus.SUCCEEDED, JobStatus.CANCELLED):
-                safe = _mask_api_keys_in_error(session, error)
-                safe = safe[:1000]
-                run.status = JobStatus.FAILED
-                run.error_message = safe
-                run.finished_at = _now()
-                session.add(run)
-                session.commit()
+            if run is None:
+                return
+            protected = {JobStatus.SUCCEEDED, JobStatus.CANCELLED, JobStatus.PARTIAL_SUCCESS}
+            if run.status in protected:
+                return
+            # If the run has already finished with stage=completed metadata, don't overwrite
+            if run.finished_at is not None:
+                metadata = run.get_metadata()
+                if metadata.get("stage") == "completed":
+                    return
+            safe = _mask_api_keys_in_error(session, error)
+            safe = safe[:1000]
+            run.status = JobStatus.FAILED
+            run.error_message = safe
+            run.finished_at = _now()
+            session.add(run)
+            session.commit()
     except Exception:
         pass  # best-effort failure recording
 

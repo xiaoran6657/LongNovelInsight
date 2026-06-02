@@ -170,3 +170,95 @@ class TestLLMClient:
         )
         assert result.content == "finally"
         assert call_count == 3
+
+    def test_transport_error_caught(self, monkeypatch):
+        """httpx.TransportError should be wrapped as LLMClientError, not bubble up."""
+
+        def mock_post(url, *args, **kwargs):
+            raise httpx.RemoteProtocolError("peer closed connection")
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="sk-test-key-12345",
+            max_retries=0,
+        )
+        with pytest.raises(LLMClientError) as exc:
+            client.chat(
+                messages=[LLMMessage(role="user", content="Hello")],
+                model="test-model",
+            )
+        assert "Transport error" in str(exc.value)
+
+    def test_transport_error_retried(self, monkeypatch):
+        call_count = 0
+
+        def mock_post(url, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise httpx.RemoteProtocolError("incomplete chunked read")
+            return _fake_response(200, {"choices": [{"message": {"content": "ok"}}]})
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="sk-test-key-12345",
+            max_retries=1,
+        )
+        result = client.chat(
+            messages=[LLMMessage(role="user", content="Hello")],
+            model="test-model",
+        )
+        assert result.content == "ok"
+        assert call_count == 2
+
+    def test_finish_reason_returned(self, monkeypatch):
+        def mock_post(url, *args, **kwargs):
+            return _fake_response(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "OK"},
+                            "finish_reason": "length",
+                        }
+                    ],
+                    "model": "test-model",
+                    "usage": {"completion_tokens": 8192},
+                },
+            )
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="sk-test-key-12345",
+        )
+        result = client.chat(
+            messages=[LLMMessage(role="user", content="Hello")],
+            model="test-model",
+        )
+        assert result.finish_reason == "length"
+        assert result.usage == {"completion_tokens": 8192}
+
+    def test_finish_reason_none_when_missing(self, monkeypatch):
+        def mock_post(url, *args, **kwargs):
+            return _fake_response(
+                200,
+                {"choices": [{"message": {"content": "OK"}}]},
+            )
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="sk-test-key-12345",
+        )
+        result = client.chat(
+            messages=[LLMMessage(role="user", content="Hello")],
+            model="test-model",
+        )
+        assert result.finish_reason is None

@@ -320,6 +320,72 @@ class TestBuildFinalCausality:
             assert content["causal_chains"][0]["resolved"] is True
 
 
+class TestBuildFinalCausalityWarnings:
+    def test_warnings_not_linear_with_unresolved_items(self, engine):
+        """Many unresolved items should produce at most 1 warning, not N warnings."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            # Create 20 events with unique stable_ids
+            for i in range(20):
+                _create_atom(
+                    session, rid, tid, AtomType.EVENT,
+                    f"evt_{i}", {"title": f"Event_{i}"}, cid, confidence=0.9,
+                )
+            # Create 15 causal links, none matching any event (all unresolved)
+            for i in range(15):
+                _create_atom(
+                    session, rid, tid, AtomType.CAUSAL_LINK,
+                    f"caus_{i}",
+                    {"cause_hint": f"Unknown_X_{i}", "effect_hint": f"Unknown_Y_{i}"},
+                    cid, confidence=0.5,
+                )
+            session.commit()
+            merge_causality(session, rid)
+            summary = build_final_causality(session, rid)
+
+        # Should have at most 1 consolidated warning, not 15
+        assert len(summary.warnings) <= 1
+        if summary.warnings:
+            assert "unresolved causal links" in summary.warnings[0].lower()
+
+    def test_resolved_event_ids_passed_through(self, engine):
+        """resolved_cause_event_id / resolved_effect_event_id from merge should appear in final."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_sunrise", {"title": "Sunrise"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_departure", {"title": "Departure"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.CAUSAL_LINK,
+                "caus_sun_dep",
+                {"cause_hint": "Sunrise", "effect_hint": "Departure"},
+                cid, confidence=0.85,
+            )
+            session.commit()
+            merge_causality(session, rid)
+            build_final_causality(session, rid)
+
+        with Session(engine) as session:
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "causality",
+                )
+            ).first()
+            content = json.loads(out.content_json)
+            item = content["causal_chains"][0]
+            assert item["resolved"] is True
+            assert item.get("resolved_cause_event_id") == "evt_sunrise"
+            assert item.get("resolved_effect_event_id") == "evt_departure"
+
+
 class TestBuildFinalThemes:
     def test_creates_output_with_themes_key(self, engine):
         tid, rid, cid = _setup_run(engine)

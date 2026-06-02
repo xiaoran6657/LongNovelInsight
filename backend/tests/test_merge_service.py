@@ -413,6 +413,106 @@ class TestMergeCausality:
             assert len(summary.warnings) > 0
             assert "unresolved" in summary.warnings[0].lower()
 
+    def test_cause_hint_equals_event_title_resolved(self, engine):
+        """cause_hint equal to event title should resolve the link."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_sword", {"title": "Sword Drawn"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_battle", {"title": "Battle Begins"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.CAUSAL_LINK,
+                "caus_sword_battle",
+                {"cause_hint": "Sword Drawn", "effect_hint": "Battle Begins"},
+                cid, confidence=0.85,
+            )
+            session.commit()
+            summary = merge_causality(session, rid)
+            assert summary.merged_count == 1
+            assert len(summary.warnings) == 0  # Should be resolved
+
+    def test_cause_hint_contains_event_title_resolved(self, engine):
+        """cause_hint containing the event title should resolve."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_battle", {"title": "Great Battle"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_flee", {"title": "Fleeing"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.CAUSAL_LINK,
+                "caus_battle_flee",
+                {"cause_hint": "the Great Battle at dawn", "effect_hint": "army Fleeing south"},
+                cid, confidence=0.85,
+            )
+            session.commit()
+            summary = merge_causality(session, rid)
+            assert len(summary.warnings) == 0
+
+    def test_short_string_no_false_match(self, engine):
+        """Very short cause/effect (< 4 chars normalized) should not match."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_a", {"title": "A"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.CAUSAL_LINK,
+                "caus_short",
+                {"cause_hint": "a", "effect_hint": "b"},
+                cid, confidence=0.5,
+            )
+            session.commit()
+            summary = merge_causality(session, rid)
+            assert len(summary.warnings) > 0
+            assert "unresolved" in summary.warnings[0].lower()
+
+    def test_resolved_event_ids_in_output(self, engine):
+        """Resolved links should have resolved_cause_event_id and resolved_effect_event_id."""
+        tid, rid, cid = _setup_run(engine)
+        with Session(engine) as session:
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_cause", {"title": "Earthquake"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.EVENT,
+                "evt_effect", {"title": "Tsunami"}, cid, confidence=0.9,
+            )
+            _create_atom(
+                session, rid, tid, AtomType.CAUSAL_LINK,
+                "caus_eq_tsunami",
+                {"cause_hint": "Earthquake", "effect_hint": "Tsunami"},
+                cid, confidence=0.85,
+            )
+            session.commit()
+            merge_causality(session, rid)
+
+        with Session(engine) as session:
+            out = session.exec(
+                __import__("sqlmodel")
+                .select(AnalysisOutput)
+                .where(
+                    AnalysisOutput.run_id == rid,
+                    AnalysisOutput.output_type == "merge_causality",
+                )
+            ).first()
+            merged = json.loads(out.content_json)
+            assert len(merged) == 1
+            assert merged[0]["resolved"] is True
+            assert merged[0].get("resolved_cause_event_id") == "evt_cause"
+            assert merged[0].get("resolved_effect_event_id") == "evt_effect"
+
 
 class TestMergeThemes:
     def test_dedup_themes(self, engine):

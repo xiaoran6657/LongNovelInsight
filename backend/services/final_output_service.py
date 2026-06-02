@@ -314,7 +314,8 @@ def build_final_causality(session: Session, run_id: str) -> FinalOutputSummary:
         return FinalOutputSummary("causality", 0)
 
     results = []
-    warnings = []
+    unresolved_count = 0
+    unresolved_examples: list[str] = []
     for item in items:
         results.append(
             {
@@ -326,6 +327,8 @@ def build_final_causality(session: Session, run_id: str) -> FinalOutputSummary:
                 ),
                 "causal_strength": "inferred",
                 "resolved": item.get("resolved", False),
+                "resolved_cause_event_id": item.get("resolved_cause_event_id"),
+                "resolved_effect_event_id": item.get("resolved_effect_event_id"),
                 "atom_count": item.get("atom_count", 0),
                 "source_chunk_ids": item.get("source_chunk_ids", []),
                 "evidence_quotes": item.get("evidence_quotes", []),
@@ -333,7 +336,21 @@ def build_final_causality(session: Session, run_id: str) -> FinalOutputSummary:
             }
         )
         if not item.get("resolved", False):
-            warnings.append(f"Unresolved: {item.get('stable_id', '?')}")
+            unresolved_count += 1
+            if len(unresolved_examples) < 10:
+                unresolved_examples.append(
+                    f"{item.get('stable_id', '?')}: "
+                    f"{str(item.get('cause_event', ''))[:40]} → "
+                    f"{str(item.get('effect_event', ''))[:40]}"
+                )
+
+    # Consolidate warnings: single summary line instead of per-item
+    warnings = []
+    if unresolved_count > 0:
+        summary = f"{unresolved_count} unresolved causal links in final output"
+        if unresolved_examples:
+            summary += f"; examples: {'; '.join(unresolved_examples[:5])}"
+        warnings.append(summary)
 
     _save_final(
         session,

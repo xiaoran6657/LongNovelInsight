@@ -2185,3 +2185,205 @@ def test_create_run_empty_range_422(client):
     assert r.status_code == 422
 
     client.delete(f"/api/topics/{topic_id}")
+
+
+# ── _fail_run protection tests ──
+
+
+def test_fail_run_does_not_overwrite_partial_success(engine):
+    """_fail_run should not change status from partial_success to failed."""
+    from datetime import datetime, timezone
+
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import _fail_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="FailRunPS P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="FailRunPS", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0, title="Ch1",
+            start_char=0, end_char=10, char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="t",
+            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        rid = run.id
+
+    # Set the run to partial_success with finished_at + completed stage
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        run.status = "partial_success"
+        run.finished_at = datetime.now(timezone.utc)
+        run.set_metadata({"stage": "completed", "failed_chunks": []})
+        session.add(run)
+        session.commit()
+
+    # Call _fail_run — should NOT overwrite partial_success
+    _fail_run(rid, engine, "late exception after completion")
+
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        assert run.status == "partial_success"
+        assert run.error_message is None
+
+
+def test_fail_run_does_not_overwrite_succeeded(engine):
+    """_fail_run should not change status from succeeded to failed."""
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import _fail_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="FailRunSucc P",
+            provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="FailRunSucc", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="t.txt",
+            file_size_bytes=10, char_count=10, status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id, document_id=doc.id, chapter_index=0,
+            title="Ch1", start_char=0, end_char=10, char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="t",
+            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        rid = run.id
+
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        run.status = "succeeded"
+        session.add(run)
+        session.commit()
+
+    _fail_run(rid, engine, "late exception after success")
+
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        assert run.status == "succeeded"
+
+
+def test_fail_run_does_not_overwrite_completed_metadata(engine):
+    """_fail_run should not overwrite a run that has finished_at + metadata.stage='completed'."""
+    from datetime import datetime, timezone
+
+    from models.analysis_run import AnalysisRun
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import _fail_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="FailRunMeta P",
+            provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="FailRunMeta", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="t.txt",
+            file_size_bytes=10, char_count=10, status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id, document_id=doc.id, chapter_index=0,
+            title="Ch1", start_char=0, end_char=10, char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="t",
+            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        rid = run.id
+
+    # Simulate a completed run (running status with finished_at + completed metadata)
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        run.status = "running"  # Running when metadata says completed (unlikely but possible)
+        run.finished_at = datetime.now(timezone.utc)
+        run.set_metadata({"stage": "completed"})
+        session.add(run)
+        session.commit()
+
+    _fail_run(rid, engine, "late exception after completion detected via metadata")
+
+    with Session(engine) as session:
+        run = session.get(AnalysisRun, rid)
+        # Should NOT have overwritten with failed
+        assert run.status == "running"
+        assert run.error_message is None

@@ -387,6 +387,82 @@ def merge_relations(session: Session, run_id: str) -> MergeSummary:
     return MergeSummary("relations", len(atoms), len(merged))
 
 
+def _normalize_match_key(s: str) -> str:
+    """Lowercase, strip, collapse whitespace for fuzzy matching."""
+    return " ".join(s.lower().split())
+
+
+def _build_event_index(
+    session: Session, run_id: str
+) -> dict[str, list[dict]]:
+    """Build lookup index from event atoms: stable_id → [{field: value}].
+
+    Each entry has: stable_id, title, summary, id_hints (from content_json).
+    Title is sourced from ExtractedAtom.title first, then content_json["title"].
+    """
+    events = _load_atoms(session, run_id, AtomType.EVENT)
+    index: dict[str, list[dict]] = {}
+    for ev in events:
+        c = _parse_json(ev.content_json)
+        if not isinstance(c, dict):
+            c = {}
+        title = (ev.title or c.get("title") or "").strip()
+        summary = (ev.summary or c.get("summary") or "").strip()
+        id_hints = []
+        for k in ("event_id_hint", "id_hint", "stable_id_hint"):
+            v = c.get(k)
+            if isinstance(v, str) and v.strip():
+                id_hints.append(v.strip())
+        entry = {
+            "stable_id": ev.stable_id,
+            "title": title,
+            "summary": summary,
+            "id_hints": id_hints,
+        }
+        index.setdefault(ev.stable_id, []).append(entry)
+    return index
+
+
+def _match_causal_side(
+    raw: str, event_index: dict[str, list[dict]]
+) -> tuple[bool, str | None]:
+    """Try to match a cause/effect string to an event stable_id.
+
+    Returns (resolved, stable_id_or_None).
+    """
+    if not raw or not raw.strip():
+        return False, None
+    raw_norm = _normalize_match_key(raw)
+    if len(raw_norm) < 4:
+        return False, None
+
+    for stable_id, entries in event_index.items():
+        for e in entries:
+            # Direct stable_id match
+            if raw_norm == _normalize_match_key(stable_id):
+                return True, stable_id
+            # Direct title match
+            title_norm = _normalize_match_key(e["title"])
+            if title_norm and raw_norm == title_norm:
+                return True, stable_id
+            # Direct id_hint match
+            for hint in e["id_hints"]:
+                if raw_norm == _normalize_match_key(hint):
+                    return True, stable_id
+            # Contains: cause text contains title (title len >= 4)
+            if title_norm and len(title_norm) >= 4 and title_norm in raw_norm:
+                return True, stable_id
+            # Reverse contains: title contains cause text (cause len >= 4)
+            if title_norm and len(title_norm) >= 4 and raw_norm in title_norm:
+                return True, stable_id
+            # Summary contains
+            summary_norm = _normalize_match_key(e["summary"])
+            if summary_norm and len(summary_norm) >= 4 and len(raw_norm) >= 4:
+                if raw_norm in summary_norm or summary_norm in raw_norm:
+                    return True, stable_id
+    return False, None
+
+
 def merge_causality(session: Session, run_id: str) -> MergeSummary:
     atoms = _load_atoms(session, run_id, AtomType.CAUSAL_LINK)
     if not atoms or len(atoms) == 0:
@@ -396,7 +472,7 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
     for a in atoms:
         grouped.setdefault(a.stable_id, []).append(a)
 
-    all_events = {a.stable_id for a in _load_atoms(session, run_id, AtomType.EVENT)}
+    event_index = _build_event_index(session, run_id)
     unresolved: list[str] = []
 
     merged = []
@@ -404,6 +480,8 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
         content_list = [_parse_json(a.content_json) for a in group]
         cause = ""
         effect = ""
+        cause_event_id = ""
+        effect_event_id = ""
         for c in content_list:
             if isinstance(c, dict):
                 cause = cause or c.get(
@@ -412,24 +490,36 @@ def merge_causality(session: Session, run_id: str) -> MergeSummary:
                 effect = effect or c.get(
                     "effect_event", c.get("effect_event_id", c.get("effect_hint", ""))
                 )
+                cause_event_id = cause_event_id or c.get("cause_event_id", "")
+                effect_event_id = effect_event_id or c.get("effect_event_id", "")
 
-        is_resolved = (cause in all_events) and (effect in all_events)
+        cause_resolved, cause_sid = _match_causal_side(cause, event_index)
+        if not cause_resolved and cause_event_id:
+            cause_resolved, cause_sid = _match_causal_side(cause_event_id, event_index)
+        effect_resolved, effect_sid = _match_causal_side(effect, event_index)
+        if not effect_resolved and effect_event_id:
+            effect_resolved, effect_sid = _match_causal_side(effect_event_id, event_index)
+
+        is_resolved = cause_resolved and effect_resolved
         if not is_resolved:
-            unresolved.append(f"{stable_id}: cause={cause}, effect={effect}")
+            unresolved.append(f"{stable_id}: cause={cause[:60]}, effect={effect[:60]}")
 
-        merged.append(
-            {
-                "stable_id": stable_id,
-                "cause_event": cause,
-                "effect_event": effect,
-                "resolved": is_resolved,
-                "atom_count": len(group),
-                "source_atom_ids": [a.id for a in group],
-                "source_chunk_ids": _group_source_chunk_ids(group),
-                "evidence_quotes": _group_evidence_quotes(group),
-                "confidence": _average_confidence(group),
-            }
-        )
+        merged_item = {
+            "stable_id": stable_id,
+            "cause_event": cause,
+            "effect_event": effect,
+            "resolved": is_resolved,
+            "atom_count": len(group),
+            "source_atom_ids": [a.id for a in group],
+            "source_chunk_ids": _group_source_chunk_ids(group),
+            "evidence_quotes": _group_evidence_quotes(group),
+            "confidence": _average_confidence(group),
+        }
+        if cause_sid:
+            merged_item["resolved_cause_event_id"] = cause_sid
+        if effect_sid:
+            merged_item["resolved_effect_event_id"] = effect_sid
+        merged.append(merged_item)
 
     warnings = []
     if unresolved:

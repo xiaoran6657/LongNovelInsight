@@ -16,6 +16,7 @@ class LLMResponse:
     content: str
     model: str
     usage: dict = field(default_factory=dict)
+    finish_reason: str | None = None
 
 
 class LLMClientError(Exception):
@@ -84,6 +85,12 @@ class OpenAICompatibleLLMClient:
                     time.sleep(1.0 * (attempt + 1))
                     continue
                 raise last_error
+            except httpx.TransportError as e:
+                last_error = LLMClientError(f"Transport error: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                raise last_error
 
             if response.status_code != 200:
                 detail = self._extract_error_detail(response)
@@ -110,10 +117,13 @@ class OpenAICompatibleLLMClient:
             if content is None:
                 raise LLMClientError("LLM response missing content")
 
+            finish_reason = choices[0].get("finish_reason")
+
             return LLMResponse(
                 content=content,
                 model=data.get("model", model),
                 usage=data.get("usage", {}),
+                finish_reason=finish_reason,
             )
 
         assert last_error is not None

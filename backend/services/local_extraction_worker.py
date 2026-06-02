@@ -18,8 +18,21 @@ from services.llm_client import LLMClientError, LLMMessage, OpenAICompatibleLLMC
 from services.prompt_loader import load_local_extraction_prompt
 
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
-RETRYABLE_KEYWORDS = ["rate limit", "rate_limit", "insufficient_system_resource"]
-DEFAULT_MAX_TOKENS = 3072
+RETRYABLE_KEYWORDS = [
+    "rate limit",
+    "rate_limit",
+    "insufficient_system_resource",
+    "timeout",
+    "timed out",
+    "transport error",
+    "network error",
+    "peer closed",
+    "incomplete chunked read",
+]
+DEFAULT_MAX_TOKENS = 4096
+RETRY_MAX_TOKENS = 16384
+# Completion tokens within this margin of max_tokens are treated as likely truncated
+TRUNCATION_TOKEN_MARGIN = 8
 
 
 @dataclass
@@ -36,6 +49,7 @@ class LocalExtractionResult:
     model_used: str | None = None
     retry_count: int = 0
     status_code: int | None = None
+    finish_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -143,7 +157,8 @@ def run_local_extraction_for_chunk(
 
     # ── First attempt ──
     last_result = _attempt_call(
-        client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key
+        client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key,
+        thinking_mode=thinking_mode,
     )
     if last_result.ok:
         last_result.duration_seconds = time.monotonic() - start
@@ -152,6 +167,11 @@ def run_local_extraction_for_chunk(
     # ── Retry logic ──
     err_lower = (last_result.error or "").lower()
     is_json_error = "json" in err_lower and "parse" in err_lower
+    is_truncated = is_json_error and (
+        "truncated" in err_lower
+        or last_result.finish_reason == "length"
+        or last_result.completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
+    )
     if not _is_retryable_result(
         error_msg=last_result.error or "",
         status_code=last_result.status_code,
@@ -163,17 +183,35 @@ def run_local_extraction_for_chunk(
     for attempt in range(2):
         retry_tokens = max_tokens
         if is_json_error:
-            retry_tokens = min(max_tokens * 2, 8192)
+            retry_tokens = min(max_tokens * 2, RETRY_MAX_TOKENS)
 
-        time.sleep(1.5 * (attempt + 1))
+        # Longer backoff for 429; shorter for JSON truncation; moderate for transport
+        if last_result.status_code == 429:
+            time.sleep(15.0 + 15.0 * attempt)
+        elif is_truncated or is_json_error:
+            time.sleep(1.5 * (attempt + 1))
+        else:
+            time.sleep(3.0 * (attempt + 1))
+
         retry_result = _attempt_call(
-            client, messages, model_name, temperature, retry_tokens, extra_body, chunk_id, api_key
+            client, messages, model_name, temperature, retry_tokens, extra_body, chunk_id, api_key,
+            thinking_mode=thinking_mode,
         )
         retry_result.retry_count = attempt + 1
         if retry_result.ok:
             retry_result.duration_seconds = time.monotonic() - start
             return retry_result
         last_result = retry_result
+
+        # If still truncated, escalate to RETRY_MAX_TOKENS on next attempt
+        retry_err_lower = (retry_result.error or "").lower()
+        retry_is_json = "json" in retry_err_lower and "parse" in retry_err_lower
+        if retry_is_json and (
+            "truncated" in retry_err_lower
+            or retry_result.finish_reason == "length"
+            or retry_result.completion_tokens >= retry_tokens - TRUNCATION_TOKEN_MARGIN
+        ):
+            is_truncated = True
 
     last_result.duration_seconds = time.monotonic() - start
     return last_result
@@ -188,7 +226,14 @@ def _attempt_call(
     extra_body: dict | None,
     chunk_id: str,
     api_key: str,
+    thinking_mode: str = "disabled",
 ) -> LocalExtractionResult:
+    warnings: list[str] = []
+    if thinking_mode == "enabled":
+        warnings.append(
+            "thinking mode enabled for local extraction may increase latency and output size risk"
+        )
+
     try:
         response = client.chat(
             messages=messages,
@@ -200,33 +245,49 @@ def _attempt_call(
         )
     except LLMClientError as e:
         masked = _mask_error(e.message, api_key)
-        return LocalExtractionResult(
+        result = LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
             error=masked,
             status_code=e.status_code,
+            warnings=warnings,
         )
+        return result
 
     usage = response.usage or {}
     model_used = response.model or model_name
+    finish_reason = response.finish_reason
+    completion_tokens = usage.get("completion_tokens", 0)
 
     parsed = parse_json_object(response.content)
     if not parsed.ok:
+        error_msg = f"JSON parse failed: {parsed.error}"
+        # Detect likely truncation
+        is_likely_truncated = (
+            finish_reason == "length"
+            or completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
+        )
+        if is_likely_truncated:
+            error_msg += (
+                f"; likely truncated at max_tokens={max_tokens}"
+                f" (finish_reason={finish_reason}, completion_tokens={completion_tokens})"
+            )
         return LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
             content_json=None,
-            error=f"JSON parse failed: {parsed.error}",
+            error=error_msg,
             prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
+            completion_tokens=completion_tokens,
             total_tokens=usage.get("total_tokens", 0),
             model_used=model_used,
-            warnings=parsed.warnings,
+            finish_reason=finish_reason,
+            warnings=warnings + parsed.warnings,
         )
 
     # Validate parsed JSON against contract
     validation = validate_local_extraction_response(parsed.parsed, chunk_id)
-    all_warnings = parsed.warnings + validation.warnings
+    all_warnings = warnings + parsed.warnings + validation.warnings
 
     if validation.errors:
         error_summary = "; ".join(validation.errors[:3])
@@ -241,6 +302,7 @@ def _attempt_call(
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             model_used=model_used,
+            finish_reason=finish_reason,
             warnings=all_warnings,
         )
 
@@ -254,5 +316,6 @@ def _attempt_call(
         completion_tokens=usage.get("completion_tokens", 0),
         total_tokens=usage.get("total_tokens", 0),
         model_used=model_used,
+        finish_reason=finish_reason,
         warnings=all_warnings,
     )
