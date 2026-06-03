@@ -374,3 +374,95 @@ class TestEntityRebuildClears:
             assert len(entities2) == 0, (
                 f"Empty rebuild should clear old registry, got {len(entities2)} entities"
             )
+
+
+class TestDeleteCleansOwnAnalysis:
+    def test_delete_removes_only_own_extractions_and_atoms(self, engine, client):
+        """Legacy delete of default Work should remove its extractions/atoms,
+        but preserve another Work's extractions/atoms."""
+        from models.analysis_run import AnalysisRun
+        from models.local_extraction import LocalExtraction
+
+        tid, w1_id, w2_id, pid = _setup_two_works(engine)
+
+        client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": pid})
+
+        # Upload + parse both Works to get real chunks
+        client.post(
+            f"/api/works/{w1_id}/documents/upload",
+            files={"file": ("w1.txt", io.BytesIO("W1 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w1_id}/parse")
+        client.post(
+            f"/api/works/{w2_id}/documents/upload",
+            files={"file": ("w2.txt", io.BytesIO("W2 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w2_id}/parse")
+
+        # Get chunk IDs for each Work
+        with Session(engine) as session:
+            w1_doc = session.exec(
+                select(Document).where(Document.work_id == w1_id)
+            ).first()
+            w2_doc = session.exec(
+                select(Document).where(Document.work_id == w2_id)
+            ).first()
+            w1_chunk = session.exec(
+                select(Chunk).where(Chunk.document_id == w1_doc.id).limit(1)
+            ).first()
+            w2_chunk = session.exec(
+                select(Chunk).where(Chunk.document_id == w2_doc.id).limit(1)
+            ).first()
+
+            run = AnalysisRun(topic_id=tid, mode="full")
+            session.add(run); session.flush()
+
+            # Create extraction + atom for each Work
+            ext1 = LocalExtraction(
+                run_id=run.id, topic_id=tid, chunk_id=w1_chunk.id,
+                status="succeeded", attempt_count=1, confidence=0.5,
+            )
+            ext2 = LocalExtraction(
+                run_id=run.id, topic_id=tid, chunk_id=w2_chunk.id,
+                status="succeeded", attempt_count=1, confidence=0.5,
+            )
+            session.add(ext1); session.add(ext2); session.flush()
+
+            atom1 = ExtractedAtom(
+                run_id=run.id, topic_id=tid, chunk_id=w1_chunk.id,
+                atom_type=AtomType.CHARACTER, stable_id="char_a",
+                content_json='{"name":"A"}',
+                source_chunk_ids=json.dumps([w1_chunk.id]),
+                evidence_quotes=json.dumps(["test"]), confidence=0.9,
+            )
+            atom2 = ExtractedAtom(
+                run_id=run.id, topic_id=tid, chunk_id=w2_chunk.id,
+                atom_type=AtomType.CHARACTER, stable_id="char_b",
+                content_json='{"name":"B"}',
+                source_chunk_ids=json.dumps([w2_chunk.id]),
+                evidence_quotes=json.dumps(["test"]), confidence=0.9,
+            )
+            session.add(atom1); session.add(atom2)
+            session.commit()
+
+            ext1_id = ext1.id
+            ext2_id = ext2.id
+            atom1_id = atom1.id
+            atom2_id = atom2.id
+
+        # Legacy delete on default Work (w1)
+        r = client.delete(f"/api/topics/{tid}/documents/current")
+        assert r.status_code == 200
+
+        # Verify: Work 1's extraction and atom are gone
+        with Session(engine) as session:
+            ext1_after = session.get(LocalExtraction, ext1_id)
+            atom1_after = session.get(ExtractedAtom, atom1_id)
+            assert ext1_after is None, "Work 1's extraction should be deleted"
+            assert atom1_after is None, "Work 1's atom should be deleted"
+
+            # Work 2's extraction and atom are preserved
+            ext2_after = session.get(LocalExtraction, ext2_id)
+            atom2_after = session.get(ExtractedAtom, atom2_id)
+            assert ext2_after is not None, "Work 2's extraction should survive"
+            assert atom2_after is not None, "Work 2's atom should survive"

@@ -393,7 +393,9 @@ def list_work_analysis_outputs(
     for o in all_outputs:
         if o.output_type.startswith("merge_"):
             continue
-        if o.run_id and o.run_id not in work_run_ids:
+        # Only include outputs whose run belongs to this Work.
+        # Exclude topic-level outputs (run_id=None) and other Works' runs.
+        if o.run_id is None or o.run_id not in work_run_ids:
             continue
         result.append({
             "id": o.id,

@@ -169,23 +169,22 @@ def _delete_document_derived_data(
 
         # Get chunk IDs for this document (before deleting chunks, to clean up
         # analysis rows that reference them)
-        doc_chunk_ids = [
-            r[0] for r in session.exec(
+        doc_chunk_ids = list(
+            session.exec(
                 select(Chunk.id).where(Chunk.document_id == document_id)
             ).all()
-        ]
+        )
 
         if doc_chunk_ids:
-            # Delete atoms referencing these chunks
             from models.local_extraction import LocalExtraction as LocalExt
 
-            atom_ids = [
-                r[0] for r in session.exec(
+            atom_ids = list(
+                session.exec(
                     select(ExtractedAtom.id).where(
                         ExtractedAtom.chunk_id.in_(doc_chunk_ids)  # noqa: E711
                     )
                 ).all()
-            ]
+            )
             if atom_ids:
                 session.exec(
                     __import__("sqlmodel").delete(ExtractedAtom).where(
