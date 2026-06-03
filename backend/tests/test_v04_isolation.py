@@ -129,6 +129,113 @@ class TestDeleteIsolation:
             f"{w2_chunk_count} → {len(w2_chunks_after)}"
         )
 
+    def test_delete_does_not_remove_other_work_analysis(self, engine, client):
+        """Legacy delete of default Work doc should preserve other Work's analysis data."""
+        from models.analysis_output import AnalysisOutput
+
+        tid, w1_id, w2_id, pid = _setup_two_works(engine)
+
+        client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": pid})
+
+        # Upload + parse Work 2
+        client.post(
+            f"/api/works/{w2_id}/documents/upload",
+            files={"file": ("w2.txt", io.BytesIO("W2 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w2_id}/parse")
+
+        # Insert analysis output directly for Work 2
+        with Session(engine) as session:
+            from models.analysis_run import AnalysisRun
+            run = AnalysisRun(topic_id=tid, mode="full")
+            session.add(run)
+            run.set_chunk_selection({"selected_chunk_ids": [], "work_id": w2_id})
+            session.add(run); session.flush()
+            ao = AnalysisOutput(
+                topic_id=tid, run_id=run.id, output_type="characters",
+                title="Chars", content_json="{}",
+                source_chunk_ids="[]", evidence_quotes="[]", confidence=0.5,
+            )
+            session.add(ao)
+            session.commit()
+
+        # Work 1 is the default Work (series_index=1), upload + parse it
+        client.post(
+            f"/api/works/{w1_id}/documents/upload",
+            files={"file": ("w1.txt", io.BytesIO("W1 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w1_id}/parse")
+
+        # Legacy delete on the Topic (deletes default Work 1's document)
+        r = client.delete(f"/api/topics/{tid}/documents/current")
+        assert r.status_code == 200
+
+        # Work 2's analysis output should still exist
+        with Session(engine) as session:
+            outputs_after = session.exec(
+                select(AnalysisOutput).where(AnalysisOutput.topic_id == tid)
+            ).all()
+            assert len(outputs_after) >= 1, (
+                "Work 2's analysis outputs should survive legacy delete of Work 1"
+            )
+
+
+class TestOutputIsolation:
+    def test_work_outputs_only_show_own_runs(self, engine, client):
+        """Work outputs endpoint should only return outputs from that Work's runs."""
+        from models.analysis_output import AnalysisOutput
+
+        tid, w1_id, w2_id, pid = _setup_two_works(engine)
+
+        client.put(f"/api/topics/{tid}/provider-config", json={"provider_id": pid})
+
+        # Upload + parse both Works
+        client.post(
+            f"/api/works/{w1_id}/documents/upload",
+            files={"file": ("w1.txt", io.BytesIO("W1 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w1_id}/parse")
+        client.post(
+            f"/api/works/{w2_id}/documents/upload",
+            files={"file": ("w2.txt", io.BytesIO("W2 第一章。\n".encode()), "text/plain")},
+        )
+        client.post(f"/api/works/{w2_id}/parse")
+
+        # Insert outputs directly for both Works
+        with Session(engine) as session:
+            from models.analysis_run import AnalysisRun
+
+            r1 = AnalysisRun(topic_id=tid, mode="full")
+            session.add(r1)
+            r1.set_chunk_selection({"selected_chunk_ids": [], "work_id": w1_id})
+            session.add(r1); session.flush()
+            session.add(AnalysisOutput(
+                topic_id=tid, run_id=r1.id, output_type="characters",
+                title="W1 Chars", content_json="{}",
+                source_chunk_ids="[]", evidence_quotes="[]", confidence=0.5,
+            ))
+
+            r2 = AnalysisRun(topic_id=tid, mode="full")
+            session.add(r2)
+            r2.set_chunk_selection({"selected_chunk_ids": [], "work_id": w2_id})
+            session.add(r2); session.flush()
+            session.add(AnalysisOutput(
+                topic_id=tid, run_id=r2.id, output_type="characters",
+                title="W2 Chars", content_json="{}",
+                source_chunk_ids="[]", evidence_quotes="[]", confidence=0.5,
+            ))
+            session.commit()
+
+        # Work 1 outputs should only include W1's output
+        r = client.get(f"/api/works/{w1_id}/analysis/outputs")
+        assert r.status_code == 200
+        w1_outputs = r.json()["outputs"]
+        w1_titles = {o["title"] for o in w1_outputs}
+        assert "W1 Chars" in w1_titles
+        assert "W2 Chars" not in w1_titles, (
+            f"Work 1 outputs should not include Work 2 outputs: {w1_titles}"
+        )
+
 
 class TestEntityAliasSafety:
     def test_traits_not_used_as_aliases(self, engine):

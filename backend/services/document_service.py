@@ -77,25 +77,13 @@ def _delete_document_derived_data(
 ) -> None:
     """Delete derived data for a document or the whole topic.
 
-    When document_id is provided, only that document's chapters/chunks and
-    associated atoms/extractions are deleted. Analysis runs/outputs/jobs
-    remain topic-scoped and are deleted only when document_id is None (full
-    topic cleanup).
+    Scoped (document_id provided + other Works exist):
+      - Only deletes that document's chapters and chunks.
+      - Preserves ChatSession, artifacts, analysis data, FTS index for other Works.
+
+    Full topic (document_id=None or no other Works):
+      - Deletes all ChatSessions, artifacts, analysis data, chapters, chunks, FTS index.
     """
-    # Chat messages -> sessions (topic-scoped)
-    sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
-    for s in sessions:
-        messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == s.id)).all()
-        for m in messages:
-            session.delete(m)
-        session.delete(s)
-
-    # Analysis artifacts (topic-scoped)
-    from services.artifact_storage_service import delete_artifacts_for_topic
-
-    delete_artifacts_for_topic(session, topic_id)
-
-    # Determine if this is the only document in the topic
     if document_id is not None:
         other_docs = session.exec(
             select(Document).where(
@@ -108,13 +96,33 @@ def _delete_document_derived_data(
         is_only_document = True
 
     if is_only_document:
-        # Full topic cleanup — no other documents exist
+        # ── Full topic cleanup ──
+
+        # Chat messages → sessions
+        sessions = session.exec(
+            select(ChatSession).where(ChatSession.topic_id == topic_id)
+        ).all()
+        for s in sessions:
+            messages = session.exec(
+                select(ChatMessage).where(ChatMessage.session_id == s.id)
+            ).all()
+            for m in messages:
+                session.delete(m)
+            session.delete(s)
+
+        # Analysis artifacts
+        from services.artifact_storage_service import delete_artifacts_for_topic
+
+        delete_artifacts_for_topic(session, topic_id)
+
+        # Analysis outputs
         outputs = session.exec(
             select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
         ).all()
         for o in outputs:
             session.delete(o)
 
+        # v2 analysis: atoms → extractions → runs
         atoms = session.exec(
             select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)
         ).all()
@@ -131,36 +139,83 @@ def _delete_document_derived_data(
         for r in runs:
             session.delete(r)
 
+        # Jobs → job_items
         jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()
         for j in jobs:
             items = session.exec(select(JobItem).where(JobItem.job_id == j.id)).all()
             for ji in items:
                 session.delete(ji)
             session.delete(j)
-    # Else: scoped cleanup — only this document's chunks/chapters are deleted.
-    # Analysis data is preserved for other Works in the topic.
 
-    # Chunks → chapters (scoped by document_id when provided)
-    chunk_query = select(Chunk)
-    chapter_query = select(Chapter)
-    if document_id is not None:
-        chunk_query = chunk_query.where(Chunk.document_id == document_id)
-        chapter_query = chapter_query.where(Chapter.document_id == document_id)
+        # All chapters and chunks for the topic
+        chunks = session.exec(
+            select(Chunk).where(Chunk.topic_id == topic_id)
+        ).all()
+        for c in chunks:
+            session.delete(c)
+        chapters = session.exec(
+            select(Chapter).where(Chapter.topic_id == topic_id)
+        ).all()
+        for ch in chapters:
+            session.delete(ch)
+
+        # FTS cleanup
+        from services.fts_service import delete_topic_chunk_fts
+
+        delete_topic_chunk_fts(topic_id, session)
+
     else:
-        chunk_query = chunk_query.where(Chunk.topic_id == topic_id)
-        chapter_query = chapter_query.where(Chapter.topic_id == topic_id)
+        # ── Scoped cleanup: only this document's data ──
 
-    chunks = session.exec(chunk_query).all()
-    for c in chunks:
-        session.delete(c)
-    chapters = session.exec(chapter_query).all()
-    for ch in chapters:
-        session.delete(ch)
+        # Get chunk IDs for this document (before deleting chunks, to clean up
+        # analysis rows that reference them)
+        doc_chunk_ids = [
+            r[0] for r in session.exec(
+                select(Chunk.id).where(Chunk.document_id == document_id)
+            ).all()
+        ]
 
-    # FTS cleanup (virtual table, no FK cascade)
-    from services.fts_service import delete_topic_chunk_fts
+        if doc_chunk_ids:
+            # Delete atoms referencing these chunks
+            from models.local_extraction import LocalExtraction as LocalExt
 
-    delete_topic_chunk_fts(topic_id, session)
+            atom_ids = [
+                r[0] for r in session.exec(
+                    select(ExtractedAtom.id).where(
+                        ExtractedAtom.chunk_id.in_(doc_chunk_ids)  # noqa: E711
+                    )
+                ).all()
+            ]
+            if atom_ids:
+                session.exec(
+                    __import__("sqlmodel").delete(ExtractedAtom).where(
+                        ExtractedAtom.id.in_(atom_ids)  # noqa: E711
+                    )
+                )
+
+            # Delete local extractions referencing these chunks
+            session.exec(
+                __import__("sqlmodel").delete(LocalExt).where(
+                    LocalExt.chunk_id.in_(doc_chunk_ids)  # noqa: E711
+                )
+            )
+
+        # Delete chunks and chapters for this document only
+        session.exec(
+            __import__("sqlmodel").delete(Chunk).where(
+                Chunk.document_id == document_id  # type: ignore[arg-type]
+            )
+        )
+        session.exec(
+            __import__("sqlmodel").delete(Chapter).where(
+                Chapter.document_id == document_id  # type: ignore[arg-type]
+            )
+        )
+
+        # Rebuild FTS from remaining chunks (removes orphan FTS entries)
+        from services.fts_service import rebuild_topic_chunk_fts
+
+        rebuild_topic_chunk_fts(topic_id, session)
 
 
 def upload_document(topic_id: str, file: UploadFile, session: Session) -> DocumentRead:

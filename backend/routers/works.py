@@ -370,17 +370,30 @@ def list_work_analysis_outputs(
     session: Session = Depends(get_session),
 ):
     from models.analysis_output import AnalysisOutput
+    from models.analysis_run import AnalysisRun
 
     work = _check_work(work_id, session)
-    outputs = session.exec(
+
+    # Find runs that belong to this Work (via chunk_selection.work_id)
+    all_runs = session.exec(
+        select(AnalysisRun).where(AnalysisRun.topic_id == work.topic_id)
+    ).all()
+    work_run_ids = {
+        r.id for r in all_runs
+        if r.get_chunk_selection().get("work_id") == work_id
+    }
+
+    all_outputs = session.exec(
         select(AnalysisOutput)
         .where(AnalysisOutput.topic_id == work.topic_id)
         .order_by(AnalysisOutput.created_at.desc())
     ).all()
 
     result = []
-    for o in outputs:
+    for o in all_outputs:
         if o.output_type.startswith("merge_"):
+            continue
+        if o.run_id and o.run_id not in work_run_ids:
             continue
         result.append({
             "id": o.id,
