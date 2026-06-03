@@ -27,6 +27,7 @@ from routers import (  # noqa: E402
     analysis_outputs,
     analysis_runs,
     chat,
+    cross_work,
     documents,
     entities,
     health,
@@ -60,3 +61,4 @@ app.include_router(analysis_runs.run_router, prefix="/api")
 app.include_router(works.topic_router, prefix="/api")
 app.include_router(works.work_router, prefix="/api")
 app.include_router(works.doc_router, prefix="/api")
+app.include_router(cross_work.router, prefix="/api")
