@@ -1,6 +1,6 @@
 """v0.4 Work CRUD API endpoints."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -153,7 +153,7 @@ def get_work_document(
 @doc_router.post("/parse")
 def parse_work(
     work_id: str,
-    force: bool = False,
+    force: bool = Query(False),
     session: Session = Depends(get_session),
 ):
     from services.parser_service import parse_novel_for_work
@@ -253,3 +253,136 @@ def get_work_metadata(
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
     }
+
+
+# ── Work-scoped analysis endpoints ──
+
+
+class WorkCreateRunRequest(BaseModel):
+    mode: str = "preview"
+    requested_types: list[str] | None = None
+    limit_chunks: int | None = None
+    chunk_index_start: int | None = None
+    chunk_index_end: int | None = None
+    chapter_index_start: int | None = None
+    chapter_index_end: int | None = None
+    force: bool = False
+    start_immediately: bool = True
+
+
+@doc_router.post("/analysis/runs", status_code=201)
+def create_work_analysis_run(
+    work_id: str,
+    body: WorkCreateRunRequest,
+    session: Session = Depends(get_session),
+):
+    from services import analysis_run_service
+
+    work = _check_work(work_id, session)
+
+    try:
+        run = analysis_run_service.create_analysis_run(
+            session,
+            work.topic_id,
+            mode=body.mode,
+            requested_types=body.requested_types,
+            limit_chunks=body.limit_chunks,
+            chunk_index_start=body.chunk_index_start,
+            chunk_index_end=body.chunk_index_end,
+            chapter_index_start=body.chapter_index_start,
+            chapter_index_end=body.chapter_index_end,
+            force=body.force,
+            work_id=work_id,
+        )
+    except ValueError as e:
+        msg = str(e)
+        conflict_keywords = (
+            "no provider", "no chunks", "not parsed",
+            "parse document", "already running", "no document",
+        )
+        if any(kw in msg.lower() for kw in conflict_keywords):
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=422, detail=msg)
+
+    if body.start_immediately:
+        analysis_run_service.start_analysis_run(run.id)
+
+    return {
+        "run": {
+            "id": run.id,
+            "topic_id": run.topic_id,
+            "mode": run.mode,
+            "status": run.status,
+            "progress_total": run.progress_total,
+        },
+        "status_url": f"/api/analysis/runs/{run.id}",
+    }
+
+
+@doc_router.get("/analysis/runs")
+def list_work_analysis_runs(
+    work_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+):
+    from services import analysis_run_service
+
+    work = _check_work(work_id, session)
+
+    # List runs for the topic (existing function), then filter by work-scoped chunks
+    page, total = analysis_run_service.list_analysis_runs(
+        session, work.topic_id, limit=limit, offset=offset
+    )
+
+    return {
+        "runs": [
+            {
+                "id": r.id,
+                "mode": r.mode,
+                "status": r.status,
+                "extraction_succeeded": r.extraction_succeeded,
+                "extraction_failed": r.extraction_failed,
+                "merge_succeeded": r.merge_succeeded,
+                "merge_failed": r.merge_failed,
+                "total_tokens": r.total_tokens,
+                "model_used": r.model_used,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in page
+        ],
+        "total": total,
+    }
+
+
+@doc_router.get("/analysis/outputs")
+def list_work_analysis_outputs(
+    work_id: str,
+    session: Session = Depends(get_session),
+):
+    from models.analysis_output import AnalysisOutput
+
+    work = _check_work(work_id, session)
+    outputs = session.exec(
+        select(AnalysisOutput)
+        .where(AnalysisOutput.topic_id == work.topic_id)
+        .order_by(AnalysisOutput.created_at.desc())
+    ).all()
+
+    result = []
+    for o in outputs:
+        if o.output_type.startswith("merge_"):
+            continue
+        result.append({
+            "id": o.id,
+            "topic_id": o.topic_id,
+            "run_id": o.run_id,
+            "output_type": o.output_type,
+            "title": o.title,
+            "confidence": o.confidence,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        })
+
+    return {"outputs": result, "total": len(result)}

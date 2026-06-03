@@ -33,8 +33,12 @@ def create_analysis_run(
     chapter_index_start: int | None = None,
     chapter_index_end: int | None = None,
     force: bool = False,
+    work_id: str | None = None,
 ) -> AnalysisRun:
-    """Create an AnalysisRun and persist it."""
+    """Create an AnalysisRun and persist it.
+
+    When work_id is provided, chunks are filtered to that Work's document only.
+    """
     from services.analysis_selection_service import (
         select_chunks_for_analysis,
         validate_analysis_mode,
@@ -52,10 +56,25 @@ def create_analysis_run(
     if active_run is not None:
         raise ValueError("Analysis is already running for this topic")
 
+    # Resolve document_id from work_id for chunk filtering
+    document_id: str | None = None
+    if work_id is not None:
+        from models.document import Document
+
+        doc = session.exec(
+            select(Document).where(Document.work_id == work_id)
+        ).first()
+        if doc is None:
+            raise ValueError("No document found for this Work")
+        document_id = doc.id
+
     # Validate chunks exist
     from models.chunk import Chunk
 
-    chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).first()
+    chunk_base = select(Chunk).where(Chunk.topic_id == topic_id)
+    if document_id is not None:
+        chunk_base = chunk_base.where(Chunk.document_id == document_id)
+    chunk = session.exec(chunk_base.limit(1)).first()
     if chunk is None:
         raise ValueError("No chunks found; parse document first")
 
@@ -69,10 +88,13 @@ def create_analysis_run(
         range_end=chunk_index_end,
         chapter_start=chapter_index_start,
         chapter_end=chapter_index_end,
+        document_id=document_id,
     )
 
     # Persist selected chunk IDs in selection info
     selection_info["selected_chunk_ids"] = [c.id for c in selected]
+    if work_id is not None:
+        selection_info["work_id"] = work_id
 
     # Resolve effective config
     effective = get_effective_config(session, topic_id)
@@ -531,6 +553,16 @@ def _execute_run_impl(run_id: str, engine) -> None:
             agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in all_exts_for_usage)
             agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in all_exts_for_usage)
             agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in all_exts_for_usage)
+
+            # Update Work status if this run was scoped to a Work
+            work_id = selection.get("work_id")
+            if work_id and run.status == JobStatus.SUCCEEDED:
+                from models.work import Work as WorkModel
+
+                work = session.get(WorkModel, work_id)
+                if work is not None:
+                    work.status = "analyzed"
+                    session.add(work)
 
             run.set_metadata(
                 {

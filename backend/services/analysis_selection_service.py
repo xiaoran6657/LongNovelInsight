@@ -12,12 +12,13 @@ from models.enums import AnalysisMode
 # ── Chunk meta ──
 
 
-def get_chunks_meta(session: Session, topic_id: str) -> dict:
+def get_chunks_meta(session: Session, topic_id: str, document_id: str | None = None) -> dict:
     """Return lightweight chunk metadata including per-chapter breakdown."""
+    base = select(Chunk).where(Chunk.topic_id == topic_id)
+    if document_id is not None:
+        base = base.where(Chunk.document_id == document_id)
     chunks = session.exec(
-        select(Chunk)
-        .where(Chunk.topic_id == topic_id)
-        .order_by(Chunk.chapter_index, Chunk.chunk_index)
+        base.order_by(Chunk.chapter_index, Chunk.chunk_index)
     ).all()
 
     doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
@@ -91,14 +92,20 @@ def select_chunks_for_analysis(
     chapter_end: int | None = None,
     incremental_run_id: str | None = None,
     safety_cap: int | None = None,
+    document_id: str | None = None,
 ) -> tuple[list[Chunk], dict]:
-    """Select chunks based on analysis mode. Returns (chunks, selection_info)."""
+    """Select chunks based on analysis mode. Returns (chunks, selection_info).
+
+    When document_id is provided, chunks are filtered to that document only
+    (work-scoped analysis). Otherwise all chunks for the topic are used.
+    """
     validate_analysis_mode(mode)
 
+    base = select(Chunk).where(Chunk.topic_id == topic_id)
+    if document_id is not None:
+        base = base.where(Chunk.document_id == document_id)
     all_chunks = session.exec(
-        select(Chunk)
-        .where(Chunk.topic_id == topic_id)
-        .order_by(Chunk.chapter_index, Chunk.chunk_index)
+        base.order_by(Chunk.chapter_index, Chunk.chunk_index)
     ).all()
 
     if not all_chunks:
