@@ -116,7 +116,9 @@ export default function AnalysisRunPanel({
      range.start < 0 || range.end < 0 ||
      (meta && (range.start > rangeMax || range.end > rangeMax)));
 
-  const est = meta ? estimateTokens(meta, mode, limitChunks, range) : null;
+  const est = meta
+    ? estimateTokens({ meta, mode, limitChunks, range, effectiveConfig })
+    : null;
   const pct = runProgressPercent(run?.run);
   const terminal = isRunTerminal(run?.run.status);
   const active = isRunActive(run?.run.status);
@@ -284,9 +286,21 @@ export default function AnalysisRunPanel({
           <AnalysisStageProgress run={run} />
 
           {run.run.total_tokens > 0 && (
-            <p className="text-dim" style={{ fontSize: "0.78rem", marginTop: "0.35rem" }}>
-              Tokens: {run.run.total_tokens.toLocaleString()} · Model: {run.run.model_used || "—"}
-            </p>
+            <div style={{ fontSize: "0.78rem", marginTop: "0.35rem" }}>
+              <p className="text-dim" style={{ margin: 0 }}>
+                Tokens: total {run.run.total_tokens.toLocaleString()}
+                {run.run.prompt_tokens != null && <> · input {run.run.prompt_tokens.toLocaleString()}</>}
+                {run.run.completion_tokens != null && <> · output {run.run.completion_tokens.toLocaleString()}</>}
+                {run.run.reasoning_tokens != null && run.run.reasoning_tokens > 0 && <> · reasoning {run.run.reasoning_tokens.toLocaleString()}</>}
+                {" · "}Model: {run.run.model_used || "—"}
+              </p>
+              {run.run.usage_unavailable_attempts != null && run.run.usage_unavailable_attempts > 0 && (
+                <p className="text-dim" style={{ margin: "0.15rem 0 0 0", color: "#e65100" }}>
+                  {run.run.usage_unavailable_attempts} failed attempt(s) did not return usage;
+                  provider dashboard may be higher.
+                </p>
+              )}
+            </div>
           )}
 
           {/* Inline retry/resume for partial_success or failed */}

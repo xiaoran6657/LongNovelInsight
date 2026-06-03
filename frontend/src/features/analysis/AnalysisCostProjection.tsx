@@ -25,7 +25,8 @@ export default function AnalysisCostProjection({ selectedChunks, estimatedInputT
         {note}
       </p>
       <p className="text-dim" style={{ fontSize: "0.72rem", marginTop: "0.35rem" }}>
-        This is an estimate, not a bill. Actual usage depends on the model, prompt, and provider pricing.
+        Estimated API usage, includes retry risk buffer. Actual usage depends on model, prompt, and provider.
+        Provider dashboard may be higher if failed/timeout attempts incur server-side usage not returned by the API.
       </p>
     </div>
   );

@@ -222,7 +222,7 @@ class MockExtractionResult:
     ):
         self.ok = ok
         self.content_json = content or MOCK_EXTRACTION_JSON
-        self.parsed_json = parsed or json.loads(self.content_json)
+        self.parsed_json = parsed or (json.loads(self.content_json) if self.content_json else None)
         self.error = error
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
@@ -231,7 +231,16 @@ class MockExtractionResult:
         self.retry_count = retry_count
         self.duration_seconds = 0.01
         self.status_code = None
+        self.finish_reason = None
         self.warnings = []
+        self.attempts = []
+        self.cumulative_prompt_tokens = prompt_tokens
+        self.cumulative_completion_tokens = completion_tokens
+        self.cumulative_total_tokens = total_tokens
+        self.cumulative_reasoning_tokens = 0
+        self.cumulative_prompt_cache_hit_tokens = 0
+        self.cumulative_prompt_cache_miss_tokens = 0
+        self.usage_unavailable_attempts = 0
 
 
 def test_full_mocked_pipeline(engine):
@@ -2387,3 +2396,325 @@ def test_fail_run_does_not_overwrite_completed_metadata(engine):
         # Should NOT have overwritten with failed
         assert run.status == "running"
         assert run.error_message is None
+
+
+# ── Cumulative token tracking tests ──
+
+
+def test_cumulative_tokens_persisted_in_local_extraction(engine):
+    """LocalExtraction.total_tokens should reflect cumulative sum of all attempts."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import _execute_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="Cumulative P", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov)
+        session.flush()
+        topic = Topic(name="Cumulative", provider_id=prov.id, status="parsed")
+        session.add(topic)
+        session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="t.txt",
+            file_size_bytes=10, char_count=10, status="parsed",
+        )
+        session.add(doc)
+        session.flush()
+        ch = Chapter(
+            topic_id=topic.id, document_id=doc.id, chapter_index=0,
+            title="Ch1", start_char=0, end_char=10, char_count=10,
+        )
+        session.add(ch)
+        session.flush()
+        ck = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="t",
+            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+
+    # Build a mock result that simulates two attempts (one failed, one succeeded)
+    class MockCumulativeResult:
+        ok = True
+        content_json = MOCK_EXTRACTION_JSON
+        parsed_json = json.loads(MOCK_EXTRACTION_JSON)
+        error = None
+        prompt_tokens = 900   # cumulative: 500 (fail) + 400 (success)
+        completion_tokens = 5090  # cumulative: 4090 (fail) + 1000 (success)
+        total_tokens = 5990  # cumulative
+        model_used = "mock-v4-flash"
+        retry_count = 1
+        duration_seconds = 0.01
+        status_code = None
+        finish_reason = "stop"
+        warnings = []
+        cumulative_reasoning_tokens = 2000
+        cumulative_prompt_cache_hit_tokens = 500
+        cumulative_prompt_cache_miss_tokens = 100
+        usage_unavailable_attempts = 0
+        attempts = [
+            {"attempt_index": 0, "ok": False, "max_tokens": 4096,
+             "prompt_tokens": 500, "completion_tokens": 4090, "total_tokens": 4590,
+             "reasoning_tokens": 2000, "prompt_cache_hit_tokens": 500,
+             "prompt_cache_miss_tokens": 0, "usage_available": True},
+            {"attempt_index": 1, "ok": True, "max_tokens": 16384,
+             "prompt_tokens": 400, "completion_tokens": 1000, "total_tokens": 1400,
+             "reasoning_tokens": 0, "prompt_cache_hit_tokens": 0,
+             "prompt_cache_miss_tokens": 100, "usage_available": True},
+        ]
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=MockCumulativeResult(),
+    ):
+        with Session(engine) as session:
+            run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+            run_id = run.id
+        _execute_run(run_id, engine=engine)
+
+    with Session(engine) as session:
+        exts = session.exec(
+            select(LocalExtraction).where(LocalExtraction.run_id == run_id)
+        ).all()
+        assert len(exts) == 1
+        ext = exts[0]
+        assert ext.total_tokens == 5990
+        assert ext.reasoning_tokens == 2000
+        assert ext.prompt_cache_hit_tokens == 500
+        assert ext.prompt_cache_miss_tokens == 100
+        assert ext.usage_unavailable_attempts == 0
+        assert ext.attempt_usage_json is not None
+        attempts_saved = json.loads(ext.attempt_usage_json)
+        assert len(attempts_saved) == 2
+
+        status = get_analysis_run_status(session, run_id)
+        assert status["run"]["total_tokens"] == 5990
+        assert status["run"]["reasoning_tokens"] == 2000
+        assert status["run"]["prompt_cache_hit_tokens"] == 500
+        assert status["run"]["prompt_cache_miss_tokens"] == 100
+
+
+def test_retry_persists_usage_fields(engine):
+    """After retry, LocalExtraction should have new usage fields and attempt_usage_json."""
+    from models.analysis_run import AnalysisRun as AnalysisRunModel
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import retry_failed_extractions
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="RetryUsage P", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="RetryUsage", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="t.txt",
+            file_size_bytes=10, char_count=10, status="parsed",
+        )
+        session.add(doc); session.flush()
+        ch = Chapter(
+            topic_id=topic.id, document_id=doc.id, chapter_index=0,
+            title="Ch1", start_char=0, end_char=10, char_count=10,
+        )
+        session.add(ch); session.flush()
+        ck = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="t",
+            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+        )
+        session.add(ck)
+        session.commit()
+        tid = topic.id
+        cid = ck.id
+
+    # Mark the run with a failed extraction
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
+        rid = run.id
+        ext = LocalExtraction(
+            run_id=rid, topic_id=tid, chunk_id=cid,
+            status="failed", attempt_count=1, confidence=0.0,
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+        )
+        session.add(ext)
+        run.status = "partial_success"
+        run.extraction_succeeded = 0
+        run.extraction_failed = 1
+        session.add(run)
+        session.commit()
+
+    # Now retry
+    class RetryMockResult:
+        ok = True
+        content_json = MOCK_EXTRACTION_JSON
+        parsed_json = json.loads(MOCK_EXTRACTION_JSON)
+        error = None
+        prompt_tokens = 300
+        completion_tokens = 200
+        total_tokens = 500
+        model_used = "mock-model"
+        retry_count = 1
+        duration_seconds = 0.01
+        status_code = None
+        finish_reason = "stop"
+        warnings = []
+        attempts = [
+            {"attempt_index": 0, "ok": True, "max_tokens": 8192,
+             "prompt_tokens": 300, "completion_tokens": 200, "total_tokens": 500,
+             "reasoning_tokens": 100, "prompt_cache_hit_tokens": 50,
+             "prompt_cache_miss_tokens": 250, "finish_reason": "stop",
+             "status_code": None, "error": None, "usage_available": True},
+        ]
+        cumulative_prompt_tokens = 300
+        cumulative_completion_tokens = 200
+        cumulative_total_tokens = 500
+        cumulative_reasoning_tokens = 100
+        cumulative_prompt_cache_hit_tokens = 50
+        cumulative_prompt_cache_miss_tokens = 250
+        usage_unavailable_attempts = 0
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=RetryMockResult(),
+    ):
+        with Session(engine) as session:
+            retry_failed_extractions(session, rid)
+
+    with Session(engine) as session:
+        exts = session.exec(
+            select(LocalExtraction).where(LocalExtraction.run_id == rid)
+        ).all()
+        assert len(exts) == 1
+        ext = exts[0]
+        assert ext.status == "succeeded"
+        assert ext.reasoning_tokens == 100
+        assert ext.prompt_cache_hit_tokens == 50
+        assert ext.prompt_cache_miss_tokens == 250
+        assert ext.usage_unavailable_attempts == 0
+        assert ext.attempt_usage_json is not None
+
+        # Run token counters: old failed (150) + new cumulative (500) = 650
+        # prompt: 100 + 300 = 400, completion: 50 + 200 = 250
+        run = session.get(AnalysisRunModel, rid)
+        assert run.total_tokens == 150 + 500
+        assert run.prompt_tokens == 100 + 300
+        assert run.completion_tokens == 50 + 200
+
+
+def test_resume_updates_run_usage_breakdown(engine):
+    """Resume should recalculate run usage after running missing chunks."""
+    from models.chapter import Chapter
+    from models.chunk import Chunk
+    from models.document import Document
+    from models.local_extraction import LocalExtraction
+    from models.model_provider import ModelProvider
+    from models.topic import Topic
+    from services.analysis_run_service import resume_analysis_run
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="ResumeUsage P", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="ResumeUsage", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="t.txt",
+            file_size_bytes=50, char_count=50, status="parsed",
+        )
+        session.add(doc); session.flush()
+        ch = Chapter(
+            topic_id=topic.id, document_id=doc.id, chapter_index=0,
+            title="Ch1", start_char=0, end_char=50, char_count=50,
+        )
+        session.add(ch); session.flush()
+        c0 = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=0, text="chunk0",
+            start_char=0, end_char=25, char_count=25, estimated_tokens=17,
+        )
+        session.add(c0); session.flush()
+        c1 = Chunk(
+            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+            chapter_index=0, chunk_index=1, text="chunk1",
+            start_char=25, end_char=50, char_count=25, estimated_tokens=17,
+        )
+        session.add(c1)
+        session.commit()
+        tid = topic.id
+        c0_id = c0.id
+
+    with Session(engine) as session:
+        run = create_analysis_run(session, tid, mode="full")
+        rid = run.id
+        # c0 succeeded with some tokens
+        ext0 = LocalExtraction(
+            run_id=rid, topic_id=tid, chunk_id=c0_id,
+            status="succeeded", attempt_count=1,
+            prompt_tokens=200, completion_tokens=100, total_tokens=300,
+            reasoning_tokens=0, prompt_cache_hit_tokens=0,
+            prompt_cache_miss_tokens=200, usage_unavailable_attempts=0,
+        )
+        session.add(ext0)
+        # c1 has no extraction (missing)
+        session.commit()
+
+    class ResumeMockResult:
+        ok = True
+        content_json = MOCK_EXTRACTION_JSON
+        parsed_json = json.loads(MOCK_EXTRACTION_JSON)
+        error = None
+        prompt_tokens = 150
+        completion_tokens = 80
+        total_tokens = 230
+        model_used = "mock"
+        retry_count = 0
+        duration_seconds = 0.01
+        status_code = None
+        finish_reason = "stop"
+        warnings = []
+        attempts = [
+            {"attempt_index": 0, "ok": True, "max_tokens": 4096,
+             "prompt_tokens": 150, "completion_tokens": 80, "total_tokens": 230,
+             "reasoning_tokens": 0, "prompt_cache_hit_tokens": 0,
+             "prompt_cache_miss_tokens": 150, "finish_reason": "stop",
+             "status_code": None, "error": None, "usage_available": True},
+        ]
+        cumulative_prompt_tokens = 150
+        cumulative_completion_tokens = 80
+        cumulative_total_tokens = 230
+        cumulative_reasoning_tokens = 0
+        cumulative_prompt_cache_hit_tokens = 0
+        cumulative_prompt_cache_miss_tokens = 150
+        usage_unavailable_attempts = 0
+
+    with patch(
+        "services.local_extraction_worker.run_local_extraction_for_chunk",
+        return_value=ResumeMockResult(),
+    ):
+        with Session(engine) as session:
+            resume_analysis_run(session, rid, retry_failed=False)
+
+    with Session(engine) as session:
+        from models.analysis_run import AnalysisRun
+
+        run = session.get(AnalysisRun, rid)
+        assert run.total_tokens == 300 + 230
+        assert run.prompt_tokens == 200 + 150
+        assert run.completion_tokens == 100 + 80

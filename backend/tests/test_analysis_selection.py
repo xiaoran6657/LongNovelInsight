@@ -316,6 +316,76 @@ def test_cost_estimate_no_chunks():
     assert est["estimated_total_input_tokens"] == 0
 
 
+def _make_test_chunks(n: int) -> list:
+    from models.chunk import Chunk
+    return [
+        Chunk(
+            topic_id="t1", document_id="d1", chunk_index=i,
+            text="test text here",
+            start_char=i * 100, end_char=(i + 1) * 100,
+            char_count=2000, estimated_tokens=1333,
+        )
+        for i in range(n)
+    ]
+
+
+def test_cost_estimate_uses_max_output_tokens():
+    """Output estimate should scale with max_output_tokens, not fixed 2048."""
+    chunks = _make_test_chunks(5)
+    est_default = estimate_v2_analysis_cost(chunks)
+    est_high = estimate_v2_analysis_cost(chunks, max_output_tokens=8192)
+    est_low = estimate_v2_analysis_cost(chunks, max_output_tokens=2048)
+    # Higher max_output_tokens → higher output estimate
+    assert est_high["estimated_total_output_tokens"] > est_low["estimated_total_output_tokens"]
+    # Default (4096) output should be between high and low
+    assert est_high["estimated_total_output_tokens"] > est_default["estimated_total_output_tokens"]
+    # Final stages should be 0 (deterministic Python, not LLM)
+    assert est_default["estimated_final_output_total"] == 0
+    assert est_default["estimated_merge_input_tokens"] == 0
+
+
+def test_cost_estimate_thinking_mode_increases_output():
+    """Thinking mode enabled should produce higher output estimate."""
+    chunks = _make_test_chunks(3)
+    est_disabled = estimate_v2_analysis_cost(chunks, thinking_mode="disabled")
+    est_enabled = estimate_v2_analysis_cost(chunks, thinking_mode="enabled")
+    assert est_enabled["estimated_total_output_tokens"] > est_disabled["estimated_total_output_tokens"]
+
+
+def test_cost_estimate_retry_multiplier_affects_output():
+    """Higher retry multiplier → higher output estimate."""
+    chunks = _make_test_chunks(1)
+    est_no_retry = estimate_v2_analysis_cost(chunks, retry_multiplier=1.0)
+    est_with_retry = estimate_v2_analysis_cost(chunks, retry_multiplier=1.5)
+    assert est_with_retry["estimated_total_output_tokens"] > est_no_retry["estimated_total_output_tokens"]
+
+
+def test_cost_estimate_final_stages_zero_llm_cost():
+    """Merge and final stages should be 0 (deterministic Python, no LLM)."""
+    chunks = _make_test_chunks(1)
+    est = estimate_v2_analysis_cost(chunks, requested_types=["characters", "events"])
+    assert est["estimated_merge_input_tokens"] == 0
+    assert est["estimated_final_input_total"] == 0
+    assert est["estimated_final_output_total"] == 0
+
+
+def test_cost_estimate_mode_affects_retry_multiplier():
+    """Preview mode → 1.15 retry; full mode → 1.25 retry; full should be higher."""
+    chunks = _make_test_chunks(3)
+    est_preview = estimate_v2_analysis_cost(chunks, mode="preview")
+    est_full = estimate_v2_analysis_cost(chunks, mode="full")
+    # Same output_per_chunk, different retry multipliers
+    assert est_full["estimated_total_output_tokens"] > est_preview["estimated_total_output_tokens"]
+
+
+def test_cost_estimate_incremental_same_as_preview():
+    """Incremental should use same 1.15 multiplier as preview."""
+    chunks = _make_test_chunks(3)
+    est_preview = estimate_v2_analysis_cost(chunks, mode="preview")
+    est_incremental = estimate_v2_analysis_cost(chunks, mode="incremental")
+    assert est_preview["estimated_total_output_tokens"] == est_incremental["estimated_total_output_tokens"]
+
+
 def test_no_chunks_returns_empty_list(client, engine):
     r = client.post("/api/topics", json={"name": "No Chunks"})
     topic_id = r.json()["id"]

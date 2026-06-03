@@ -36,6 +36,42 @@ TRUNCATION_TOKEN_MARGIN = 8
 
 
 @dataclass
+class AttemptUsage:
+    """Token usage for a single LLM attempt."""
+
+    attempt_index: int
+    ok: bool
+    max_tokens: int
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    reasoning_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0
+    prompt_cache_miss_tokens: int = 0
+    finish_reason: str | None = None
+    status_code: int | None = None
+    error: str | None = None
+    usage_available: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "attempt_index": self.attempt_index,
+            "ok": self.ok,
+            "max_tokens": self.max_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "prompt_cache_hit_tokens": self.prompt_cache_hit_tokens,
+            "prompt_cache_miss_tokens": self.prompt_cache_miss_tokens,
+            "finish_reason": self.finish_reason,
+            "status_code": self.status_code,
+            "error": self.error,
+            "usage_available": self.usage_available,
+        }
+
+
+@dataclass
 class LocalExtractionResult:
     chunk_id: str
     ok: bool
@@ -51,6 +87,74 @@ class LocalExtractionResult:
     status_code: int | None = None
     finish_reason: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # Cumulative across all attempts
+    attempts: list[AttemptUsage] = field(default_factory=list)
+    cumulative_prompt_tokens: int = 0
+    cumulative_completion_tokens: int = 0
+    cumulative_total_tokens: int = 0
+    cumulative_reasoning_tokens: int = 0
+    cumulative_prompt_cache_hit_tokens: int = 0
+    cumulative_prompt_cache_miss_tokens: int = 0
+    usage_unavailable_attempts: int = 0
+
+
+def _extract_usage_fields(usage: dict) -> dict:
+    """Extract token usage fields from an API usage dict, including thinking/cache tokens.
+
+    DeepSeek returns prompt_cache_hit_tokens / prompt_cache_miss_tokens directly.
+    OpenAI-compatible APIs use prompt_tokens_details.cached_tokens as a fallback.
+    """
+    details = usage.get("completion_tokens_details", {})
+    if not isinstance(details, dict):
+        details = {}
+    prompt_tokens = usage.get("prompt_tokens", 0)
+
+    # Cache: prefer DeepSeek-style flat fields, fallback to OpenAI-style nested
+    cache_hit = usage.get("prompt_cache_hit_tokens")
+    cache_miss = usage.get("prompt_cache_miss_tokens")
+    if cache_hit is None or cache_miss is None:
+        prompt_details = usage.get("prompt_tokens_details", {})
+        if not isinstance(prompt_details, dict):
+            prompt_details = {}
+        cached = prompt_details.get("cached_tokens", 0)
+        cache_hit = cached if cache_hit is None else cache_hit
+        cache_miss = max(0, prompt_tokens - cached) if cache_miss is None else cache_miss
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+        "reasoning_tokens": details.get("reasoning_tokens", 0),
+        "prompt_cache_hit_tokens": int(cache_hit or 0),
+        "prompt_cache_miss_tokens": int(cache_miss or 0),
+    }
+
+
+def _build_attempt(
+    attempt_index: int,
+    ok: bool,
+    max_tokens: int,
+    usage: dict | None = None,
+    finish_reason: str | None = None,
+    status_code: int | None = None,
+    error: str | None = None,
+) -> AttemptUsage:
+    fields = _extract_usage_fields(usage or {})
+    return AttemptUsage(
+        attempt_index=attempt_index,
+        ok=ok,
+        max_tokens=max_tokens,
+        prompt_tokens=fields["prompt_tokens"],
+        completion_tokens=fields["completion_tokens"],
+        total_tokens=fields["total_tokens"],
+        reasoning_tokens=fields["reasoning_tokens"],
+        prompt_cache_hit_tokens=fields["prompt_cache_hit_tokens"],
+        prompt_cache_miss_tokens=fields["prompt_cache_miss_tokens"],
+        finish_reason=finish_reason,
+        status_code=status_code,
+        error=error,
+        usage_available=usage is not None and len(usage) > 0,
+    )
 
 
 def _mask_error(error_msg: str, api_key: str) -> str:
@@ -155,13 +259,30 @@ def run_local_extraction_for_chunk(
     elif thinking_mode == "enabled":
         extra_body = {"thinking": {"type": "enabled"}}
 
+    attempts: list[AttemptUsage] = []
+    usage_unavailable = 0
+
     # ── First attempt ──
     last_result = _attempt_call(
-        client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key,
+        client,
+        messages,
+        model_name,
+        temperature,
+        max_tokens,
+        extra_body,
+        chunk_id,
+        api_key,
         thinking_mode=thinking_mode,
+        attempt_index=0,
     )
+    if last_result.attempts:
+        attempts.append(last_result.attempts[0])
+        if not last_result.attempts[0].usage_available:
+            usage_unavailable += 1
+
     if last_result.ok:
         last_result.duration_seconds = time.monotonic() - start
+        _finalize_cumulative(last_result, attempts, usage_unavailable)
         return last_result
 
     # ── Retry logic with per-attempt re-evaluation ──
@@ -183,6 +304,7 @@ def run_local_extraction_for_chunk(
         )
         if not is_retryable:
             last_result.duration_seconds = time.monotonic() - start
+            _finalize_cumulative(last_result, attempts, usage_unavailable)
             return last_result
 
         # Adaptive token escalation: original → min(x2, RETRY_MAX_TOKENS) → RETRY_MAX_TOKENS
@@ -191,7 +313,6 @@ def run_local_extraction_for_chunk(
                 max_tokens = min(original_max_tokens * 2, RETRY_MAX_TOKENS)
             else:
                 max_tokens = RETRY_MAX_TOKENS
-        # Non-JSON errors: keep current max_tokens
 
         # Longer backoff for 429; shorter for JSON truncation; moderate for transport
         if last_result.status_code == 429:
@@ -201,18 +322,54 @@ def run_local_extraction_for_chunk(
         else:
             time.sleep(3.0 * (attempt + 1))
 
+        retry_idx = attempt + 1
         retry_result = _attempt_call(
-            client, messages, model_name, temperature, max_tokens, extra_body, chunk_id, api_key,
+            client,
+            messages,
+            model_name,
+            temperature,
+            max_tokens,
+            extra_body,
+            chunk_id,
+            api_key,
             thinking_mode=thinking_mode,
+            attempt_index=retry_idx,
         )
-        retry_result.retry_count = attempt + 1
+        retry_result.retry_count = retry_idx
+        if retry_result.attempts:
+            attempts.append(retry_result.attempts[0])
+            if not retry_result.attempts[0].usage_available:
+                usage_unavailable += 1
+
         if retry_result.ok:
             retry_result.duration_seconds = time.monotonic() - start
+            _finalize_cumulative(retry_result, attempts, usage_unavailable)
             return retry_result
         last_result = retry_result
 
     last_result.duration_seconds = time.monotonic() - start
+    _finalize_cumulative(last_result, attempts, usage_unavailable)
     return last_result
+
+
+def _finalize_cumulative(
+    result: LocalExtractionResult,
+    attempts: list[AttemptUsage],
+    usage_unavailable: int,
+) -> None:
+    """Set cumulative token fields on the result from all recorded attempts."""
+    result.attempts = attempts
+    result.usage_unavailable_attempts = usage_unavailable
+    result.cumulative_prompt_tokens = sum(a.prompt_tokens for a in attempts)
+    result.cumulative_completion_tokens = sum(a.completion_tokens for a in attempts)
+    result.cumulative_total_tokens = sum(a.total_tokens for a in attempts)
+    result.cumulative_reasoning_tokens = sum(a.reasoning_tokens for a in attempts)
+    result.cumulative_prompt_cache_hit_tokens = sum(a.prompt_cache_hit_tokens for a in attempts)
+    result.cumulative_prompt_cache_miss_tokens = sum(a.prompt_cache_miss_tokens for a in attempts)
+    # For backward compatibility, set top-level fields to cumulative values
+    result.prompt_tokens = result.cumulative_prompt_tokens
+    result.completion_tokens = result.cumulative_completion_tokens
+    result.total_tokens = result.cumulative_total_tokens
 
 
 def _attempt_call(
@@ -225,6 +382,7 @@ def _attempt_call(
     chunk_id: str,
     api_key: str,
     thinking_mode: str = "disabled",
+    attempt_index: int = 0,
 ) -> LocalExtractionResult:
     warnings: list[str] = []
     if thinking_mode == "enabled":
@@ -243,14 +401,24 @@ def _attempt_call(
         )
     except LLMClientError as e:
         masked = _mask_error(e.message, api_key)
-        result = LocalExtractionResult(
+        attempt = _build_attempt(
+            attempt_index=attempt_index,
+            ok=False,
+            max_tokens=max_tokens,
+            usage=None,
+            finish_reason=None,
+            status_code=e.status_code,
+            error=masked,
+        )
+        return LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
             error=masked,
             status_code=e.status_code,
             warnings=warnings,
+            attempts=[attempt],
+            usage_unavailable_attempts=1,
         )
-        return result
 
     usage = response.usage or {}
     model_used = response.model or model_name
@@ -262,25 +430,34 @@ def _attempt_call(
         error_msg = f"JSON parse failed: {parsed.error}"
         # Detect likely truncation
         is_likely_truncated = (
-            finish_reason == "length"
-            or completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
+            finish_reason == "length" or completion_tokens >= max_tokens - TRUNCATION_TOKEN_MARGIN
         )
         if is_likely_truncated:
             error_msg += (
                 f"; likely truncated at max_tokens={max_tokens}"
                 f" (finish_reason={finish_reason}, completion_tokens={completion_tokens})"
             )
+        attempt = _build_attempt(
+            attempt_index=attempt_index,
+            ok=False,
+            max_tokens=max_tokens,
+            usage=usage,
+            finish_reason=finish_reason,
+            status_code=None,
+            error=error_msg,
+        )
         return LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
             content_json=None,
             error=error_msg,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=completion_tokens,
-            total_tokens=usage.get("total_tokens", 0),
+            prompt_tokens=attempt.prompt_tokens,
+            completion_tokens=attempt.completion_tokens,
+            total_tokens=attempt.total_tokens,
             model_used=model_used,
             finish_reason=finish_reason,
             warnings=warnings + parsed.warnings,
+            attempts=[attempt],
         )
 
     # Validate parsed JSON against contract
@@ -291,29 +468,49 @@ def _attempt_call(
         error_summary = "; ".join(validation.errors[:3])
         if len(validation.errors) > 3:
             error_summary += f" (+{len(validation.errors) - 3} more)"
+        attempt = _build_attempt(
+            attempt_index=attempt_index,
+            ok=False,
+            max_tokens=max_tokens,
+            usage=usage,
+            finish_reason=finish_reason,
+            status_code=None,
+            error=f"Validation failed: {error_summary}",
+        )
         return LocalExtractionResult(
             chunk_id=chunk_id,
             ok=False,
             content_json=json.dumps(parsed.parsed, ensure_ascii=False)[:500],
             error=f"Validation failed: {error_summary}",
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
+            prompt_tokens=attempt.prompt_tokens,
+            completion_tokens=attempt.completion_tokens,
+            total_tokens=attempt.total_tokens,
             model_used=model_used,
             finish_reason=finish_reason,
             warnings=all_warnings,
+            attempts=[attempt],
         )
 
+    attempt = _build_attempt(
+        attempt_index=attempt_index,
+        ok=True,
+        max_tokens=max_tokens,
+        usage=usage,
+        finish_reason=finish_reason,
+        status_code=None,
+        error=None,
+    )
     return LocalExtractionResult(
         chunk_id=chunk_id,
         ok=True,
         content_json=json.dumps(parsed.parsed, ensure_ascii=False),
         parsed_json=parsed.parsed,
         duration_seconds=0.0,  # filled by caller
-        prompt_tokens=usage.get("prompt_tokens", 0),
-        completion_tokens=usage.get("completion_tokens", 0),
-        total_tokens=usage.get("total_tokens", 0),
+        prompt_tokens=attempt.prompt_tokens,
+        completion_tokens=attempt.completion_tokens,
+        total_tokens=attempt.total_tokens,
         model_used=model_used,
         finish_reason=finish_reason,
         warnings=all_warnings,
+        attempts=[attempt],
     )

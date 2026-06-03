@@ -1,5 +1,6 @@
 """v0.2 AnalysisRun orchestration: create, start, parallel extraction, merge, cancel."""
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -279,6 +280,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
     succeeded = 0
     failed = 0
     total_tokens = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
     failed_chunks: list[dict] = []
 
     with ThreadPoolExecutor(max_workers=parallelism, thread_name_prefix="v2-extract") as executor:
@@ -337,6 +340,11 @@ def _execute_run_impl(run_id: str, engine) -> None:
                     total_tokens=result.total_tokens,
                     model_used=result.model_used,
                     retry_count=result.retry_count,
+                    reasoning_tokens=result.cumulative_reasoning_tokens,
+                    prompt_cache_hit_tokens=result.cumulative_prompt_cache_hit_tokens,
+                    prompt_cache_miss_tokens=result.cumulative_prompt_cache_miss_tokens,
+                    usage_unavailable_attempts=result.usage_unavailable_attempts,
+                    attempt_usage_json=_serialize_attempts(result.attempts),
                 )
                 if result.ok:
                     succeeded += 1
@@ -349,6 +357,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
                         }
                     )
                 total_tokens += result.total_tokens
+                total_prompt_tokens += result.prompt_tokens
+                total_completion_tokens += result.completion_tokens
 
                 # Update progress
                 run = session.get(AnalysisRun, run_id)
@@ -358,6 +368,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
                 run.extraction_succeeded = succeeded
                 run.extraction_failed = failed
                 run.total_tokens = total_tokens
+                run.prompt_tokens = total_prompt_tokens
+                run.completion_tokens = total_completion_tokens
                 run.progress_current = succeeded + failed
                 session.add(run)
                 session.commit()
@@ -381,6 +393,8 @@ def _execute_run_impl(run_id: str, engine) -> None:
         run.extraction_succeeded = succeeded
         run.extraction_failed = failed
         run.total_tokens = total_tokens
+        run.prompt_tokens = total_prompt_tokens
+        run.completion_tokens = total_completion_tokens
         run.progress_current = succeeded + failed
 
         # Determine final status if no merge is possible
@@ -509,6 +523,15 @@ def _execute_run_impl(run_id: str, engine) -> None:
                 if any("Final output failed:" in w for w in s.warnings)
             ]
 
+            # Aggregate usage breakdown across all extractions (in current session)
+            all_exts_for_usage = session.exec(
+                select(LocalExtraction).where(LocalExtraction.run_id == run_id)
+            ).all()
+            agg_reasoning = sum(e.reasoning_tokens or 0 for e in all_exts_for_usage)
+            agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in all_exts_for_usage)
+            agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in all_exts_for_usage)
+            agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in all_exts_for_usage)
+
             run.set_metadata(
                 {
                     "stage": "completed",
@@ -528,7 +551,15 @@ def _execute_run_impl(run_id: str, engine) -> None:
                         {"type": s.output_type, "items": s.item_count} for s in final_summaries
                     ],
                     "usage_by_stage": {
-                        "extraction": extraction_tokens,
+                        "extraction": {
+                            "prompt_tokens": total_prompt_tokens,
+                            "completion_tokens": total_completion_tokens,
+                            "total_tokens": extraction_tokens,
+                            "reasoning_tokens": agg_reasoning,
+                            "prompt_cache_hit_tokens": agg_cache_hit,
+                            "prompt_cache_miss_tokens": agg_cache_miss,
+                            "usage_unavailable_attempts": agg_unavailable,
+                        },
                         "merge": 0,
                         "final": 0,
                     },
@@ -537,6 +568,21 @@ def _execute_run_impl(run_id: str, engine) -> None:
             )
             session.add(run)
             session.commit()
+
+
+def _serialize_attempts(attempts: list) -> str | None:
+    """Serialize attempts list to JSON, handling both AttemptUsage objects and plain dicts."""
+    if not attempts:
+        return None
+    serialized = []
+    for a in attempts:
+        if hasattr(a, "to_dict"):
+            serialized.append(a.to_dict())
+        elif isinstance(a, dict):
+            serialized.append(a)
+        else:
+            serialized.append(str(a))
+    return json.dumps(serialized, ensure_ascii=False)
 
 
 def _save_extraction(
@@ -554,6 +600,11 @@ def _save_extraction(
     model_used: str | None = None,
     retry_count: int = 0,
     force: bool = False,
+    reasoning_tokens: int = 0,
+    prompt_cache_hit_tokens: int = 0,
+    prompt_cache_miss_tokens: int = 0,
+    usage_unavailable_attempts: int = 0,
+    attempt_usage_json: str | None = None,
 ) -> None:
     """Write a LocalExtraction row and, if successful, normalize atoms.
 
@@ -586,6 +637,11 @@ def _save_extraction(
         error_message=error[:1000] if error else None,
         started_at=_now(),
         finished_at=_now(),
+        reasoning_tokens=reasoning_tokens,
+        prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+        prompt_cache_miss_tokens=prompt_cache_miss_tokens,
+        usage_unavailable_attempts=usage_unavailable_attempts,
+        attempt_usage_json=attempt_usage_json,
     )
     session.add(ext)
     session.flush()
@@ -651,6 +707,12 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
         select(LocalExtraction).where(LocalExtraction.run_id == run_id)
     ).all()
 
+    # Aggregate usage breakdown across all extractions
+    agg_reasoning = sum(e.reasoning_tokens or 0 for e in extractions)
+    agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in extractions)
+    agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in extractions)
+    agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in extractions)
+
     # Separate merge intermediates from final outputs
     all_outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.run_id == run_id)).all()
     merge_outputs = [o for o in all_outputs if o.output_type.startswith("merge_")]
@@ -677,6 +739,12 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "final_failed": run.final_failed or 0,
             "final_skipped": run.final_skipped or 0,
             "total_tokens": run.total_tokens,
+            "prompt_tokens": run.prompt_tokens,
+            "completion_tokens": run.completion_tokens,
+            "reasoning_tokens": agg_reasoning,
+            "prompt_cache_hit_tokens": agg_cache_hit,
+            "prompt_cache_miss_tokens": agg_cache_miss,
+            "usage_unavailable_attempts": agg_unavailable,
             "model_used": run.model_used,
             "error_message": run.error_message,
             "started_at": run.started_at.isoformat() if run.started_at else None,
@@ -780,6 +848,49 @@ def _classify_result_error(result) -> str:
 # ── Retry / Resume ──
 
 
+def _recalculate_run_usage_from_extractions(session: Session, run_id: str) -> None:
+    """Recalculate run.prompt/completion/total_tokens and metadata usage_by_stage
+    from all LocalExtraction rows in this run."""
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        return
+
+    all_exts = session.exec(
+        select(LocalExtraction).where(LocalExtraction.run_id == run_id)
+    ).all()
+    total_prompt = sum(e.prompt_tokens or 0 for e in all_exts)
+    total_completion = sum(e.completion_tokens or 0 for e in all_exts)
+    total_all = sum(e.total_tokens or 0 for e in all_exts)
+    agg_reasoning = sum(e.reasoning_tokens or 0 for e in all_exts)
+    agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in all_exts)
+    agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in all_exts)
+    agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in all_exts)
+
+    run.prompt_tokens = total_prompt
+    run.completion_tokens = total_completion
+    run.total_tokens = total_all
+    session.add(run)
+
+    # Update metadata usage_by_stage
+    metadata = run.get_metadata()
+    metadata["usage_by_stage"] = {
+        "extraction": {
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+            "total_tokens": total_all,
+            "reasoning_tokens": agg_reasoning,
+            "prompt_cache_hit_tokens": agg_cache_hit,
+            "prompt_cache_miss_tokens": agg_cache_miss,
+            "usage_unavailable_attempts": agg_unavailable,
+        },
+        "merge": 0,
+        "final": 0,
+    }
+    run.set_metadata(metadata)
+    session.add(run)
+    session.commit()
+
+
 def _clear_atoms_for_chunk(session: Session, run_id: str, chunk_id: str) -> int:
     """Delete ExtractedAtom rows for a specific chunk in a run. Returns count."""
     from models.extracted_atom import ExtractedAtom
@@ -868,15 +979,21 @@ def retry_failed_extractions(
         _clear_atoms_for_chunk(session, run_id, chunk.id)
 
         ext.status = "succeeded" if result.ok else "failed"
-        ext.attempt_count = ext.attempt_count + 1
+        ext.attempt_count = (ext.attempt_count or 0) + 1
         ext.content_json = result.content_json
         ext.error_message = result.error[:1000] if result.error else None
         ext.confidence = 0.5
-        ext.prompt_tokens = result.prompt_tokens
-        ext.completion_tokens = result.completion_tokens
-        ext.total_tokens = result.total_tokens
+        # Add to existing token values (previous failed attempts are preserved)
+        ext.prompt_tokens = (ext.prompt_tokens or 0) + result.prompt_tokens
+        ext.completion_tokens = (ext.completion_tokens or 0) + result.completion_tokens
+        ext.total_tokens = (ext.total_tokens or 0) + result.total_tokens
         ext.model_used = result.model_used
         ext.finished_at = _now()
+        ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
+        ext.prompt_cache_hit_tokens = (ext.prompt_cache_hit_tokens or 0) + result.cumulative_prompt_cache_hit_tokens
+        ext.prompt_cache_miss_tokens = (ext.prompt_cache_miss_tokens or 0) + result.cumulative_prompt_cache_miss_tokens
+        ext.usage_unavailable_attempts = (ext.usage_unavailable_attempts or 0) + result.usage_unavailable_attempts
+        ext.attempt_usage_json = _serialize_attempts(result.attempts)
         session.add(ext)
         session.flush()
 
@@ -902,6 +1019,9 @@ def retry_failed_extractions(
 
     # Re-run merge and final stages
     _run_merge_and_final(session, run_id)
+
+    # Recalculate run usage from all extractions (including retried)
+    _recalculate_run_usage_from_extractions(session, run_id)
 
     # Update metadata
     run = session.get(AnalysisRun, run_id)
@@ -1082,15 +1202,21 @@ def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True
             session.flush()
 
         ext.status = "succeeded" if result.ok else "failed"
-        ext.attempt_count = ext.attempt_count + 1
+        ext.attempt_count = (ext.attempt_count or 0) + 1
         ext.content_json = result.content_json
         ext.error_message = result.error[:1000] if result.error else None
         ext.confidence = 0.5
-        ext.prompt_tokens = result.prompt_tokens
-        ext.completion_tokens = result.completion_tokens
-        ext.total_tokens = result.total_tokens
+        # Add to existing token values (preserving previous attempts)
+        ext.prompt_tokens = (ext.prompt_tokens or 0) + result.prompt_tokens
+        ext.completion_tokens = (ext.completion_tokens or 0) + result.completion_tokens
+        ext.total_tokens = (ext.total_tokens or 0) + result.total_tokens
         ext.model_used = result.model_used
         ext.finished_at = _now()
+        ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
+        ext.prompt_cache_hit_tokens = (ext.prompt_cache_hit_tokens or 0) + result.cumulative_prompt_cache_hit_tokens
+        ext.prompt_cache_miss_tokens = (ext.prompt_cache_miss_tokens or 0) + result.cumulative_prompt_cache_miss_tokens
+        ext.usage_unavailable_attempts = (ext.usage_unavailable_attempts or 0) + result.usage_unavailable_attempts
+        ext.attempt_usage_json = _serialize_attempts(result.attempts)
         session.add(ext)
         session.flush()
 
@@ -1125,6 +1251,9 @@ def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True
 
     # Re-run merge and final
     _run_merge_and_final(session, run_id)
+
+    # Recalculate run usage from all extractions
+    _recalculate_run_usage_from_extractions(session, run_id)
 
     run = session.get(AnalysisRun, run_id)
     return run

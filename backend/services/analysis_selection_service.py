@@ -272,8 +272,22 @@ def validate_analysis_mode(mode: str) -> None:
 def estimate_v2_analysis_cost(
     selected_chunks: list[Chunk],
     requested_types: list[str] | None = None,
+    max_output_tokens: int | None = None,
+    thinking_mode: str | None = None,
+    retry_multiplier: float | None = None,
+    prompt_overhead_tokens: int | None = None,
+    mode: str | None = None,
 ) -> dict:
-    """Estimate token cost for a v0.2 analysis run."""
+    """Estimate token cost for a v0.2 analysis run.
+
+    Parameters:
+    - max_output_tokens: effective max_output_tokens from config (default 4096).
+    - thinking_mode: "enabled" adds output buffer for reasoning tokens.
+    - retry_multiplier: explicit override. Default derived from mode:
+        preview/incremental → 1.15, full/range → 1.25.
+    - mode: "preview", "range", "full", or "incremental".
+    - prompt_overhead_tokens: system prompt + schema overhead per chunk (default 1400).
+    """
     n = len(selected_chunks)
     if n == 0:
         return {
@@ -296,19 +310,56 @@ def estimate_v2_analysis_cost(
     types = requested_types or []
     type_count = len(types) if types else 6
 
-    extraction_input = n * 800 + selected_tokens
-    extraction_output = n * 2048
+    prompt_overhead = prompt_overhead_tokens or 1400
+    effective_max_output = max_output_tokens or 4096
+    base_output = min(effective_max_output, 16384)
 
-    # Merge: deterministic Python, zero LLM cost
+    # Conservative expected output per chunk (~65% of max)
+    output_per_chunk = int(base_output * 0.65) + 1
+
+    # Thinking mode inflates output (reasoning tokens share max_tokens budget)
+    thinking_note = ""
+    if thinking_mode == "enabled":
+        output_per_chunk = int(output_per_chunk * 1.4)
+        thinking_note = (
+            f"Thinking mode enabled: output estimate includes reasoning token buffer "
+            f"(max_output_tokens={effective_max_output}). "
+        )
+
+    # Retry multiplier accounts for failed attempts that still consume tokens
+    if retry_multiplier is None:
+        if mode in ("preview", "incremental"):
+            retry_multiplier = 1.15
+        else:
+            retry_multiplier = 1.25  # full, range, or unknown
+    if retry_multiplier < 1.0:
+        retry_multiplier = 1.0
+
+    extraction_input = n * prompt_overhead + selected_tokens
+    extraction_output = int(n * output_per_chunk * retry_multiplier) + 1
+
+    # Merge and final stages are deterministic Python — no LLM cost in v0.3
     merge_input = 0
     merge_output = 0
-
-    # Final synthesis: total across all types
-    final_input_total = type_count * 1200
-    final_output_total = type_count * 1024
+    final_input_total = 0
+    final_output_total = 0
 
     total_input = extraction_input + merge_input + final_input_total
     total_output = extraction_output + merge_output + final_output_total
+
+    notes_parts = [
+        "v0.2: each chunk sent once for local_extraction per attempt. ",
+        "Merge and final stages are deterministic Python (no LLM cost). ",
+        f"Output based on max_output_tokens={effective_max_output}, "
+        f"expected ~{output_per_chunk} tokens/chunk including retry buffer (x{retry_multiplier}). ",
+        f"Default types: {type_count}. ",
+        "Estimates assume Chinese text (~1.5 chars/token). ",
+        "Actual cost depends on model and provider. ",
+        "Provider dashboard may be higher if failed/timeout attempts "
+        "have server-side usage not returned by API.",
+    ]
+    if thinking_note:
+        notes_parts.insert(2, thinking_note)
 
     return {
         "selected_chunk_count": n,
@@ -321,12 +372,5 @@ def estimate_v2_analysis_cost(
         "estimated_final_output_total": final_output_total,
         "estimated_total_input_tokens": total_input,
         "estimated_total_output_tokens": total_output,
-        "estimate_notes": (
-            "v0.2: each chunk sent once for local_extraction. "
-            "Merge stage is deterministic Python (no LLM cost). "
-            "Final synthesis: one LLM call per requested type. "
-            f"Default types: {type_count}. "
-            "Estimates assume Chinese text (~1.5 chars/token). "
-            "Actual cost depends on model and provider."
-        ),
+        "estimate_notes": "".join(notes_parts),
     }

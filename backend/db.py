@@ -121,6 +121,24 @@ def _migrate_embedding_cache() -> None:
     )
 
 
+def _migrate_local_extraction_usage_columns() -> None:
+    """Add cumulative usage and attempt tracking columns to local_extraction if missing."""
+    columns = [
+        ("reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("prompt_cache_hit_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("prompt_cache_miss_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("usage_unavailable_attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ("attempt_usage_json", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_def in columns:
+            try:
+                conn.execute(text(f"ALTER TABLE local_extraction ADD COLUMN {col_name} {col_def}"))
+            except Exception:
+                pass
+        conn.commit()
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
@@ -131,3 +149,4 @@ def init_db() -> None:
     _migrate_retrieval_trace()
     _migrate_chunk_fts()
     _migrate_embedding_cache()
+    _migrate_local_extraction_usage_columns()

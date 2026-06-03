@@ -405,8 +405,9 @@ def test_completion_tokens_near_max_truncation_detected():
         assert not result.ok
         # finish_reason = "stop" even when truncated by token limit (not all providers send "length")
         assert result.finish_reason == "stop"
-        # completion_tokens was captured
-        assert result.completion_tokens == 8188
+        # completion_tokens is cumulative across all failed attempts (3 × 8188)
+        assert result.completion_tokens > 0
+        assert result.cumulative_completion_tokens == result.completion_tokens
 
 
 def test_json_parse_truncation_escalates_to_16384():
@@ -572,3 +573,207 @@ def test_thinking_mode_provider_default_no_warning():
         assert result.ok
         thinking_warnings = [w for w in result.warnings if "thinking" in w.lower()]
         assert len(thinking_warnings) == 0
+
+
+# ── Cumulative token tracking tests ──
+
+
+def test_cumulative_tokens_two_attempts_summed():
+    """Two attempts (one fail, one success): total_tokens = sum of both."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            MockResponseWithFinish(
+                "bad json", finish_reason="length",
+                usage={"prompt_tokens": 500, "completion_tokens": 4090, "total_tokens": 4590},
+            ),
+            MockResponse(
+                VALID_EXTRACTION_JSON,
+                usage={"prompt_tokens": 400, "completion_tokens": 1000, "total_tokens": 1400},
+            ),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+                max_tokens=4096,
+            )
+
+        assert result.ok
+        # Cumulative: attempt 0 (4590) + attempt 1 (1400) = 5990
+        assert result.cumulative_total_tokens == 4590 + 1400
+        assert result.total_tokens == result.cumulative_total_tokens
+        assert result.cumulative_prompt_tokens == 500 + 400
+        assert result.cumulative_completion_tokens == 4090 + 1000
+        assert len(result.attempts) == 2
+        assert result.usage_unavailable_attempts == 0
+
+
+def test_cumulative_three_attempts_all_have_usage():
+    """Three attempts: cumulative sums all three."""
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            MockResponse("bad1", usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300}),
+            MockResponse("bad2", usage={"prompt_tokens": 110, "completion_tokens": 210, "total_tokens": 320}),
+            MockResponse(VALID_EXTRACTION_JSON, usage={"prompt_tokens": 120, "completion_tokens": 500, "total_tokens": 620}),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        assert result.cumulative_total_tokens == 300 + 320 + 620
+        assert result.cumulative_prompt_tokens == 100 + 110 + 120
+        assert result.cumulative_completion_tokens == 200 + 210 + 500
+        assert len(result.attempts) == 3
+        assert result.retry_count == 2
+
+
+def test_transport_error_no_usage_then_success():
+    """Transport error (no usage) then success: unavailable=1, tokens=success only."""
+    from services.llm_client import LLMClientError
+
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            LLMClientError("Transport error: peer closed connection"),
+            MockResponse(VALID_EXTRACTION_JSON, usage={"prompt_tokens": 300, "completion_tokens": 400, "total_tokens": 700}),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        # Only success attempt contributes to cumulative tokens
+        assert result.cumulative_total_tokens == 700
+        assert result.total_tokens == 700
+        assert result.usage_unavailable_attempts == 1
+        assert len(result.attempts) == 2
+        assert result.attempts[0].usage_available is False
+        assert result.attempts[1].usage_available is True
+
+
+def test_reasoning_tokens_cumulated():
+    """completion_tokens_details.reasoning_tokens should be cumulated."""
+    usage_with_reasoning = {
+        "prompt_tokens": 500,
+        "completion_tokens": 3000,
+        "total_tokens": 3500,
+        "completion_tokens_details": {"reasoning_tokens": 2000},
+    }
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.side_effect = [
+            MockResponseWithFinish(
+                "bad json", finish_reason="length", usage=usage_with_reasoning,
+            ),
+            MockResponse(VALID_EXTRACTION_JSON, usage={
+                "prompt_tokens": 400,
+                "completion_tokens": 800,
+                "total_tokens": 1200,
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            }),
+        ]
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+                max_tokens=4096,
+            )
+
+        assert result.ok
+        # Reasoning tokens: 2000 + 0 = 2000
+        assert result.cumulative_reasoning_tokens == 2000
+
+
+def test_prompt_cache_tokens_cumulated():
+    """prompt_tokens_details.cached_tokens should be captured."""
+    usage_with_cache = {
+        "prompt_tokens": 1500,
+        "completion_tokens": 500,
+        "total_tokens": 2000,
+        "prompt_tokens_details": {"cached_tokens": 1000},
+    }
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON, usage=usage_with_cache)
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        assert result.cumulative_prompt_cache_hit_tokens == 1000
+        assert result.cumulative_prompt_cache_miss_tokens == 500  # 1500 - 1000
+
+
+def test_deepseek_style_cache_fields_used():
+    """DeepSeek-style prompt_cache_hit_tokens/miss_tokens should be read directly."""
+    usage_deepseek = {
+        "prompt_tokens": 1500,
+        "completion_tokens": 500,
+        "total_tokens": 2000,
+        "prompt_cache_hit_tokens": 1000,
+        "prompt_cache_miss_tokens": 500,
+    }
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON, usage=usage_deepseek)
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        assert result.cumulative_prompt_cache_hit_tokens == 1000
+        assert result.cumulative_prompt_cache_miss_tokens == 500
+
+
+def test_openai_style_cache_fallback():
+    """OpenAI-style prompt_tokens_details.cached_tokens should still work as fallback."""
+    usage_openai = {
+        "prompt_tokens": 2000,
+        "completion_tokens": 300,
+        "total_tokens": 2300,
+        "prompt_tokens_details": {"cached_tokens": 1200},
+    }
+    with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
+        mock_client = mock_client_class.return_value
+        mock_client.chat.return_value = MockResponse(VALID_EXTRACTION_JSON, usage=usage_openai)
+        with patch("services.local_extraction_worker.time.sleep", return_value=None):
+            result = run_local_extraction_for_chunk(
+                chunk_id=FAKE_CHUNK_ID,
+                chunk_text=FAKE_CHUNK_TEXT,
+                base_url="http://test",
+                api_key="sk-test",
+                model_name="test-model",
+            )
+
+        assert result.ok
+        assert result.cumulative_prompt_cache_hit_tokens == 1200
+        assert result.cumulative_prompt_cache_miss_tokens == 800  # 2000 - 1200

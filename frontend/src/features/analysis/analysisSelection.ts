@@ -1,17 +1,21 @@
 import type { ChunkRange } from "./ChunkRangeSelector";
-import type { ChunksMetaResponse } from "../../api/types";
+import type { ChunksMetaResponse, EffectiveProviderConfig } from "../../api/types";
 
-export function estimateTokens(
-  meta: ChunksMetaResponse | undefined,
-  mode: string,
-  limitChunks: number,
-  range: ChunkRange
-): {
+export interface EstimateInput {
+  meta: ChunksMetaResponse | undefined;
+  mode: string;
+  limitChunks: number;
+  range: ChunkRange;
+  effectiveConfig?: EffectiveProviderConfig | null;
+}
+
+export function estimateTokens(input: EstimateInput): {
   selectedChunks: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   note: string;
 } {
+  const { meta, mode, limitChunks, range, effectiveConfig } = input;
   const totalChunks = meta?.chunk_count ?? 0;
   const totalChars = meta?.total_chars ?? 0;
   const charsPerChunk = totalChunks > 0 ? Math.round(totalChars / totalChunks) : 2000;
@@ -50,9 +54,29 @@ export function estimateTokens(
     noteParts.push("incremental: remaining chunks only (estimate)");
   }
 
+  const promptOverhead = 1400;
+  const maxOutput = effectiveConfig?.max_output_tokens ?? 4096;
+  const baseOutput = Math.min(maxOutput, 16384);
+  const thinkingMode = effectiveConfig?.thinking_mode ?? "disabled";
+
+  // Conservative expected output per chunk (~65% of max)
+  let outputPerChunk = Math.ceil(baseOutput * 0.65);
+
+  // Thinking mode inflates output
+  if (thinkingMode === "enabled") {
+    outputPerChunk = Math.ceil(outputPerChunk * 1.4);
+    noteParts.push("thinking mode enabled: includes reasoning token buffer");
+  }
+
+  // Retry buffer
+  let retryMultiplier = 1.25;
+  if (mode === "preview") retryMultiplier = 1.15;
+  if (mode === "incremental") retryMultiplier = 1.15;
+
+  const extractionInput = selected * (tokensPerChunk + promptOverhead);
+  const extractionOutput = Math.ceil(selected * outputPerChunk * retryMultiplier);
   const typeCount = 6;
-  const extractionInput = selected * (tokensPerChunk + 600);
-  const extractionOutput = selected * 2048;
+
   const total = extractionInput + extractionOutput;
 
   return {
@@ -63,8 +87,10 @@ export function estimateTokens(
       ...noteParts,
       `v2 staged pipeline: ~${selected} chunks × 1 extraction each`,
       `v0.1 would use ~${selected * typeCount} LLM calls; v0.2 uses ~${selected}`,
-      `~${tokensPerChunk.toLocaleString()} tokens/chunk`,
+      `~${tokensPerChunk.toLocaleString()} tokens/chunk text + ${promptOverhead.toLocaleString()} prompt overhead`,
+      `Output estimate based on max_output_tokens=${maxOutput}, ~${outputPerChunk} tokens/chunk × ${retryMultiplier} retry buffer`,
       `Estimated total: ${total.toLocaleString()} tokens (input: ${extractionInput.toLocaleString()}, output: ${extractionOutput.toLocaleString()})`,
+      `Note: includes retry risk buffer. Provider dashboard may be higher if failed/timeout attempts have server-side usage not returned by API.`,
     ].join(". "),
   };
 }

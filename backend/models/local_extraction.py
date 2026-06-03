@@ -22,6 +22,11 @@ class LocalExtraction(SQLModel, table=True):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    reasoning_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0
+    prompt_cache_miss_tokens: int = 0
+    usage_unavailable_attempts: int = 0
+    attempt_usage_json: str | None = None
     model_used: str | None = None
     error_message: str | None = None
 

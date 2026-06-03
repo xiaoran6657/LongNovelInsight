@@ -448,6 +448,12 @@ export interface AnalysisRun {
   final_succeeded?: number;
   final_failed?: number;
   total_tokens: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  reasoning_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  usage_unavailable_attempts?: number;
   model_used: string | null;
   error_message: string | null;
   started_at: string | null;
