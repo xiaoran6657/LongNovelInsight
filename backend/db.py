@@ -142,63 +142,99 @@ def _migrate_local_extraction_usage_columns() -> None:
 def _migrate_v04_work_tables(_engine=None) -> None:
     """v0.4 multi-Work schema: work table, document rebuild, cross-work tables.
 
-    Idempotent — safe to run multiple times. Skips if ix_document_work_id exists.
-    Accepts optional _engine for testing; defaults to module-level engine.
+    Idempotent — safe to run multiple times. Guard checks both the partial
+    unique index AND that the topic_id UNIQUE constraint has been removed.
     """
     from sqlalchemy import inspect as sa_inspect
 
     eng = _engine or engine
 
-    # Guard: skip if already migrated
+    # Guard: check if migration already applied.
+    # We verify BOTH conditions: the new index exists AND the old UNIQUE is gone.
     insp = sa_inspect(eng)
     indexes = {i["name"] for i in insp.get_indexes("document")}
-    if "ix_document_work_id" in indexes:
+    has_new_index = "ix_document_work_id" in indexes
+    has_old_unique = any(
+        "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
+        for i in insp.get_indexes("document")
+    )
+    if has_new_index and not has_old_unique:
         return
+
+    # Broken-state repair: index exists but old UNIQUE still present.
+    # Drop the partial index and redo the table rebuild.
+    if has_new_index and has_old_unique:
+        logger.warning(
+            "v0.4 migration: ix_document_work_id exists but topic_id UNIQUE "
+            "still present — redoing table rebuild"
+        )
+        with eng.connect() as conn:
+            conn.connection.dbapi_connection.execute(
+                "DROP INDEX IF EXISTS ix_document_work_id"
+            )
 
     # 1. Create work table FIRST (document rebuild references work.id FK)
     from models.work import Work
 
     SQLModel.metadata.create_all(eng, tables=[Work.__table__])  # type: ignore[arg-type]
+
     # 2. Document table rebuild via raw sqlite3 connection
-    # SQLAlchemy transactions conflict with PRAGMA foreign_keys; use raw connection
-    # Wrap in a context manager to ensure the connection returns to the pool
+    # Explicit BEGIN/COMMIT — the sqlite3 connection inside SA does not auto-commit.
     with eng.connect() as conn:
         raw = conn.connection.dbapi_connection
         raw.execute("PRAGMA foreign_keys = OFF")
-        raw.execute("DROP TABLE IF EXISTS document_new")
-        raw.execute(
-            """CREATE TABLE document_new (
-            id TEXT PRIMARY KEY,
-            topic_id TEXT NOT NULL REFERENCES topic(id),
-            work_id TEXT REFERENCES work(id),
-            original_filename TEXT NOT NULL DEFAULT '',
-            stored_filename TEXT NOT NULL DEFAULT 'original.txt',
-            file_type TEXT NOT NULL DEFAULT 'txt',
-            content_type TEXT,
-            encoding TEXT NOT NULL DEFAULT 'utf-8',
-            file_size_bytes INTEGER NOT NULL DEFAULT 0,
-            char_count INTEGER NOT NULL DEFAULT 0,
-            storage_path TEXT NOT NULL DEFAULT '',
-            metadata_json TEXT,
-            status TEXT NOT NULL DEFAULT 'uploaded',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )"""
-        )
-        raw.execute(
-            """INSERT INTO document_new (
-            id, topic_id, work_id, original_filename, stored_filename,
-            file_type, content_type, encoding, file_size_bytes, char_count,
-            storage_path, metadata_json, status, created_at, updated_at
-        ) SELECT
-            id, topic_id, NULL, original_filename, stored_filename,
-            file_type, content_type, encoding, file_size_bytes, char_count,
-            storage_path, metadata_json, status, created_at, updated_at
-        FROM document"""
-        )
-        raw.execute("DROP TABLE document")
-        raw.execute("ALTER TABLE document_new RENAME TO document")
-        raw.execute("PRAGMA foreign_keys = ON")
+        raw.execute("BEGIN")
+        try:
+            raw.execute("DROP TABLE IF EXISTS document_new")
+            raw.execute(
+                """CREATE TABLE document_new (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL REFERENCES topic(id),
+                work_id TEXT REFERENCES work(id),
+                original_filename TEXT NOT NULL DEFAULT '',
+                stored_filename TEXT NOT NULL DEFAULT 'original.txt',
+                file_type TEXT NOT NULL DEFAULT 'txt',
+                content_type TEXT,
+                encoding TEXT NOT NULL DEFAULT 'utf-8',
+                file_size_bytes INTEGER NOT NULL DEFAULT 0,
+                char_count INTEGER NOT NULL DEFAULT 0,
+                storage_path TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT,
+                status TEXT NOT NULL DEFAULT 'uploaded',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+            )
+            raw.execute(
+                """INSERT INTO document_new (
+                id, topic_id, work_id, original_filename, stored_filename,
+                file_type, content_type, encoding, file_size_bytes, char_count,
+                storage_path, metadata_json, status, created_at, updated_at
+            ) SELECT
+                id, topic_id, NULL, original_filename, stored_filename,
+                file_type, content_type, encoding, file_size_bytes, char_count,
+                storage_path, metadata_json, status, created_at, updated_at
+            FROM document"""
+            )
+            raw.execute("DROP TABLE document")
+            raw.execute("ALTER TABLE document_new RENAME TO document")
+            raw.execute("COMMIT")
+        except Exception:
+            raw.execute("ROLLBACK")
+            raise
+        finally:
+            raw.execute("PRAGMA foreign_keys = ON")
+
+    # FK integrity check after rebuild
+    with eng.connect() as conn:
+        raw = conn.connection.dbapi_connection
+        fk_result = list(raw.execute("PRAGMA foreign_key_check"))
+        if fk_result:
+            violations = "; ".join(str(r) for r in fk_result[:10])
+            logger.error("v0.4 migration FK violations: %s", violations)
+            raise RuntimeError(
+                f"v0.4 migration failed: {len(fk_result)} FK violations"
+            )
 
     # 3. Create remaining new tables via SQLModel
     from models.cross_work_run import CrossWorkRun
@@ -271,7 +307,7 @@ def _migrate_v04_work_tables(_engine=None) -> None:
             migrated += 1
 
         if migrated > 0:
-            logger.info("v0.4 migration: created default Works for %d Topics", migrated)
+            logger.info("v0.4 migration: backfilled %d documents with work_id", migrated)
         session.commit()
 
 

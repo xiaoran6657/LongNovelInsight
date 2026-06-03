@@ -8,7 +8,7 @@ class Document(SQLModel, table=True):
     __tablename__ = "document"
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    topic_id: str = Field(foreign_key="topic.id", unique=True)
+    topic_id: str = Field(foreign_key="topic.id")
     work_id: str | None = Field(default=None, foreign_key="work.id")
     original_filename: str
     stored_filename: str = "original.txt"
