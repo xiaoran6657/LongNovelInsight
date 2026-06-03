@@ -462,3 +462,37 @@ def test_get_or_create_default_work_empty_topic_raises(engine):
         with pytest.raises(HTTPException) as exc_info:
             get_or_create_default_work(tid, session)
         assert exc_info.value.status_code == 404
+
+
+def test_existing_work_backfills_null_work_id_document(engine):
+    """Existing Work + legacy Document with work_id=NULL → helper backfills it."""
+    from models.model_provider import ModelProvider
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="ExistWBackfillP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="ExistWBackfill", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        work = Work(topic_id=topic.id, title="Existing Work", series_index=1)
+        session.add(work); session.flush()
+
+        # Document created without work_id (legacy scenario)
+        doc = Document(
+            topic_id=topic.id, original_filename="orphan.txt",
+            file_size_bytes=100, char_count=50, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        tid = topic.id
+
+        from services.work_service import get_or_create_default_work
+
+        result = get_or_create_default_work(tid, session)
+        assert result.id == work.id  # Should reuse existing Work
+
+        session.refresh(doc)
+        assert doc.work_id == work.id, "NULL work_id Document should be backfilled"

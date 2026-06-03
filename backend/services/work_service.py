@@ -32,6 +32,18 @@ def get_or_create_default_work(topic_id: str, session: Session) -> Work:
     ).first()
 
     if work is not None:
+        # Backfill any NULL-work_id Documents to this Work
+        orphan_docs = session.exec(
+            select(Document).where(
+                Document.topic_id == topic_id,
+                Document.work_id.is_(None),  # type: ignore[arg-type]
+            )
+        ).all()
+        if orphan_docs:
+            for d in orphan_docs:
+                d.work_id = work.id
+                session.add(d)
+            session.commit()
         return work
 
     # No Work exists — check for legacy Document
