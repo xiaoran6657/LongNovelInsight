@@ -39,6 +39,12 @@ backend/
 │   ├── analysis_artifact.py # AnalysisArtifact (large JSON file storage metadata)
 │   ├── retrieval_trace.py   # RetrievalTrace (v0.3: debug records per search/chat/retrieve)
 │   ├── embedding_cache.py   # EmbeddingCache (v0.3: optional JSON vector cache, skeleton)
+│   ├── work.py              # Work (v0.4: one novel/volume inside a Topic)
+│   ├── global_entity.py     # GlobalEntity (v0.4: topic-level entity registry)
+│   ├── entity_mention.py    # EntityMention (v0.4: evidence-linked mentions)
+│   ├── cross_work_run.py    # CrossWorkRun (v0.4: cross-work build job tracking)
+│   ├── graph_snapshot.py    # GraphSnapshot (v0.4: cached graph JSON for visualization)
+│   ├── timeline_item.py     # TimelineItem (v0.4: ordered event timeline)
 │   ├── chat.py              # ChatSession, ChatMessage (+ ChatMessageCreate validation)
 │   ├── job.py               # Job (job_type: parse|analysis, progress, metadata)
 │   └── job_item.py          # JobItem (item_type: AnalysisType values)
@@ -56,7 +62,9 @@ backend/
 │   ├── chat.py              # session CRUD, send message with validation (two routers)
 │   ├── search.py            # v0.3: POST /search (FTS5 + keyword fallback)
 │   ├── retrieve.py          # v0.3: POST /retrieve (hybrid retrieval + optional trace)
-│   └── entities.py          # v0.3: GET entity evidence + similar scenes
+│   ├── entities.py          # v0.3: GET entity evidence + similar scenes
+│   ├── works.py             # v0.4: Work CRUD + work-scoped doc/parse/analysis
+│   └── cross_work.py        # v0.4: entity registry + graph + timeline + cross-work run
 ├── services/
 │   ├── llm_client.py        # OpenAICompatibleLLMClient (httpx, TransportError caught, finish_reason)
 │   ├── prompt_loader.py     # Load v1 + v2 prompt templates from prompts/ dir
@@ -86,23 +94,30 @@ backend/
 │   ├── source_document.py      # SourceDocument / SourceChapter dataclasses (unified TXT/EPUB)
 │   ├── fts_service.py          # FTS5 rebuild/delete/search + CJK keyword fallback
 │   ├── retrieval_service.py    # Hybrid retrieval (FTS + keyword + structured + outputs)
-│   └── embedding_service.py    # EmbeddingProvider skeleton + semantic_rerank stub (disabled)
+│   ├── embedding_service.py    # EmbeddingProvider skeleton + semantic_rerank stub (disabled)
+│   │   # ── v0.4 services ──
+│   ├── work_service.py              # Work CRUD, default Work resolution, migration helper
+│   ├── cross_work_entity_service.py # Deterministic global entity registry build
+│   ├── cross_work_graph_service.py  # Character relationship graph snapshot construction
+│   ├── cross_work_timeline_service.py # Timeline item ordering and construction
+│   └── cross_work_run_service.py    # Cross-work run orchestration and status
 ├── prompts/
 │   ├── overview.md, characters.md, relations.md, events.md, causality.md, themes.md
 │   └── local/
 │       └── local_extraction.md   # v0.2+ local extraction prompt with output size limits
-├── tests/                       # 631 passing tests
+├── tests/                       # 724 passing tests
 └── scripts/
     ├── smoke_backend.py         # v0.1 smoke test (safe + --real-llm modes)
     └── smoke_v2_backend.py      # v0.2 smoke test (safe + --real-llm modes)
 ```
 
-## Data Model (18 tables: 11 v0.1 + 4 v0.2 + 3 v0.3)
+## Data Model (24 tables: 11 v0.1 + 4 v0.2 + 3 v0.3 + 6 v0.4)
 
 ```
 ModelProvider  ?──*  Topic
 Topic          1──1  TopicProviderConfig
-Topic          1──1  Document
+Topic          1──*  Work (v0.4)
+Work           1──0..1 Document
 Document       1──*  Chapter
 Chapter        1──*  Chunk
 Topic          1──*  AnalysisOutput
@@ -119,6 +134,11 @@ Topic          1──*  RetrievalTrace (v0.3)
 ChatSession    1──*  RetrievalTrace (v0.3, optional)
 Chunk          -──-  chunk_fts (v0.3, FTS5 virtual table)
 EmbeddingCache 1──*  Topic (v0.3, optional, skeleton)
+Topic          1──*  GlobalEntity (v0.4)
+Topic          1──*  EntityMention (v0.4)
+Topic          1──*  CrossWorkRun (v0.4)
+Topic          1──*  GraphSnapshot (v0.4)
+Topic          1──*  TimelineItem (v0.4)
 ```
 
 ## Enums (all lowercase StrEnum)
@@ -133,6 +153,9 @@ EmbeddingCache 1──*  Topic (v0.3, optional, skeleton)
 | `JobItemStatus` | `pending`, `running`, `succeeded`, `failed`, `cancelled` |
 | `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
 | `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
+| `WorkStatus` (v0.4) | `empty`, `uploaded`, `parsed`, `analyzed`, `error` |
+| `EntityType` (v0.4) | `character`, `location`, `organization`, `concept`, `item`, `unknown` |
+| `CrossWorkRunMode` (v0.4) | `full`, `entities_only`, `graph_only`, `timeline_only` |
 
 ## API Endpoints (50+)
 
@@ -200,6 +223,39 @@ EmbeddingCache 1──*  Topic (v0.3, optional, skeleton)
 | GET | `/api/topics/{id}/chunks/{chunk_id}/locator` | Source locator + excerpt |
 | GET | `/api/topics/{id}/entities/{entity_id}/evidence` | Entity evidence (atoms + chunks + outputs) |
 | GET | `/api/topics/{id}/similar-scenes` | Similar scenes by chunk_id or query |
+
+### v0.4 Works (`/api/works` and `/api/topics/{id}/works`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/topics/{id}/works` | List Works (ordered by series_index) |
+| POST | `/api/topics/{id}/works` | Create Work |
+| GET | `/api/works/{id}` | Get Work detail |
+| PATCH | `/api/works/{id}` | Update Work |
+| DELETE | `/api/works/{id}` | Delete Work (409 if non-empty) |
+| POST | `/api/works/{id}/documents/upload` | Upload TXT/EPUB to Work |
+| GET | `/api/works/{id}/documents/current` | Get Work's document |
+| POST | `/api/works/{id}/parse` | Parse Work's document |
+| GET | `/api/works/{id}/chapters` | List Work's chapters |
+| GET | `/api/works/{id}/chunks` | List Work's chunks |
+| GET | `/api/works/{id}/metadata` | Work document metadata |
+| POST | `/api/works/{id}/analysis/runs` | Create v2 analysis run for Work |
+| GET | `/api/works/{id}/analysis/runs` | List analysis runs for Work |
+| GET | `/api/works/{id}/analysis/outputs` | List analysis outputs for Work |
+
+### v0.4 Cross-Work (`/api/topics/{id}`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/topics/{id}/entities` | List global entities (filterable) |
+| GET | `/api/topics/{id}/entities/{eid}` | Get entity detail |
+| GET | `/api/topics/{id}/entities/{eid}/mentions` | List entity mentions |
+| POST | `/api/topics/{id}/cross-work/build` | Rebuild entity registry |
+| GET | `/api/topics/{id}/graphs/characters` | Character relationship graph |
+| POST | `/api/topics/{id}/graphs/build` | Rebuild graph snapshot |
+| GET | `/api/topics/{id}/timeline` | Cross-work timeline (filterable) |
+| POST | `/api/topics/{id}/timeline/build` | Rebuild timeline |
+| POST | `/api/topics/{id}/cross-work/runs` | Create and start cross-work run |
+| GET | `/api/topics/{id}/cross-work/runs` | List cross-work runs |
+| GET | `/api/topics/{id}/cross-work/runs/{rid}` | Get cross-work run status |
 
 ### Analysis Outputs
 | Method | Path | Description |
@@ -288,7 +344,7 @@ zero LLM cost (deterministic Python).
 - Per-attempt error re-evaluation: if attempt 1 was transport but attempt 2 shows
   JSON truncation, attempt 3 correctly escalates to `RETRY_MAX_TOKENS`.
 
-## Test Summary (631 tests, all passing)
+## Test Summary (724 tests, all passing)
 
 | File | Tests | Key areas |
 |------|-------|-----------|
@@ -307,7 +363,7 @@ zero LLM cost (deterministic Python).
 | `test_analysis_selection.py` (v2) | 29 | Chunk meta, preview/range/full/incremental, cost estimate |
 | `test_atom_normalizer.py` (v2) | 15 | JSON normalization, evidence/confidence contract |
 | `test_v2_prompts.py` (v2) | 28 | v1+v2 prompt loading, JSON parsing, validation |
-| `test_local_extraction_worker.py` (v2/v3) | 29 | Cumulative attempts, truncation, adaptive retry, cache fields, thinking mode |
+| `test_local_extraction_worker.py` (v2/v3) | 29 | Cumulative attempts, truncation, adaptive retry, cache fields |
 | `test_merge_service.py` (v2/v3) | 22 | Deterministic merge (8 types), causality matching strategies |
 | `test_final_output_service.py` (v2/v3) | 13 | Final outputs, warning consolidation, resolved event IDs |
 | `test_artifact_storage.py` (v2) | 6 | Hybrid storage, write/read/delete, threshold |
@@ -318,6 +374,16 @@ zero LLM cost (deterministic Python).
 | `test_retrieval_integration.py` (v3) | 5 | Hybrid retrieval smoke tests |
 | `test_epub_parser.py` (v3) | 26 | EPUB parse, metadata, chapter extraction |
 | `test_search_api.py` (v3) | 8 | Search endpoint, metadata, locator |
+| `test_v04_migration.py` (v4) | 17 | Multi-Work migration, table rebuild, default Work backfill |
+| `test_works.py` (v4) | 12 | Work CRUD, delete-safety, legacy doc backfill |
+| `test_v04_upload_parse.py` (v4) | 13 | Work-scoped upload, parse, legacy compatibility |
+| `test_v04_analysis.py` (v4) | 7 | Work-scoped analysis, run isolation, work_id in status |
+| `test_v04_entities.py` (v4) | 8 | Entity registry build, alias merge, type conflict, mentions |
+| `test_v04_graph.py` (v4) | 7 | Graph edges from relations, co-occurrence fallback, filters |
+| `test_v04_timeline.py` (v4) | 7 | Timeline ordering, persistence, filters |
+| `test_v04_isolation.py` (v4) | 8 | Multi-Work source files, parse, delete, entity safety |
+| `test_v04_cross_work_run.py` (v4) | 7 | Cross-work run orchestration, modes, status |
+| `test_v04_search_filters.py` (v4) | 6 | Work-scoped search/retrieve, metadata annotation |
 
 All tests mock LLM calls. No real external API calls in CI.
 
@@ -338,7 +404,11 @@ All tests mock LLM calls. No real external API calls in CI.
 - **Hybrid retrieval (v0.3)**: FTS5 → keyword/CJK fallback → structured atoms → analysis outputs. Dedup by chunk_id, score normalization.
 - **Chat grounding**: Answers include structured evidence_json; recent 6 messages for context.
 - **Chat token tracking**: ChatMessage stores `prompt_tokens`, `completion_tokens`, `total_tokens`, `model_used` from LLM responses.
-- **Schema migration**: `init_db()` runs incremental `ALTER TABLE ADD COLUMN` migrations. v0.3.1 adds cumulative usage columns to `local_extraction`.
+- **Schema migration**: `init_db()` runs incremental `ALTER TABLE ADD COLUMN` migrations. v0.3.1 adds cumulative usage columns to `local_extraction`. v0.4 adds table-rebuild migration for multi-Work support.
+- **Multi-Work (v0.4)**: Topic 1→* Work, Work 1→0..1 Document. Legacy single-document Topics auto-migrate to one default Work. Work-scoped upload stores files per Work; parse/analysis cleanup scoped by document_id.
+- **Cross-work entity registry (v0.4)**: Deterministic merge across Works via stable_id → exact name+type → alias match. No new LLM calls. Type conflicts are not merged.
+- **Graph & timeline (v0.4)**: Derived snapshots cached in `graph_snapshot` and `timeline_item` tables. Rebuilt via cross-work run orchestration. Background thread execution avoids SQLite lock contention.
+- **Work filters (v0.4)**: Search/retrieve endpoints accept optional `work_ids`. Results annotated with `work_id`, `work_title`, `series_index`. Backward-compatible when filter is absent.
 
 ## Dependencies
 

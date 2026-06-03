@@ -3,15 +3,14 @@
 ## Project
 
 LongNovelInsight is a local-first LLM-powered long-novel analysis tool.
-Current version: **v0.3.1-dev**.
+Current version: **v0.4.0-dev**.
 
 ## Current State
 
-**v0.3 Backend — COMPLETE (Steps 1-12 of 12).** **v0.3 Frontend — COMPLETE (Steps 1-12 of 12).**
-**v0.3.1 Stability & Accounting — COMPLETE.** Transport error resilience, truncation detection,
-adaptive retry (→16384), thinking mode awareness, prompt output limits, causality multi-strategy
-matching, warning consolidation, run status protection, cumulative token accounting with usage
-breakdown (reasoning/cache/unavailable), cost estimate alignment, retry/resume usage persistence.
+**v0.3 Backend — COMPLETE.** **v0.3 Frontend — COMPLETE.** **v0.3.1 — COMPLETE.**
+**v0.4 Backend — COMPLETE (Steps 1-10 of 10).** Multi-Work data model, Work CRUD,
+Work-scoped upload/parse/analysis, cross-work entity registry, character graph,
+timeline, cross-work run orchestration, work-scoped search/retrieve filters.
 
 What each version delivered:
 - **v0.1**: Basic TXT analysis — 6 analysis types per chunk, evidence-grounded chat, keyword retrieval.
@@ -26,7 +25,7 @@ v0.3 progress detail: see `agent/PROJECT_STATUS.md` and `agent/NEXT_ACTIONS.md`.
 - **Backend**: Python + FastAPI + SQLModel + SQLite. Flat structure: `main.py`, `config.py`, `db.py`, `routers/`, `models/`, `services/`, `tests/`. No `backend/app/` nesting.
 - **Frontend**: React + TypeScript + Vite + TanStack Query + React Router DOM v7 + Plain CSS
 - **LLM**: OpenAI-Compatible API (DeepSeek by default)
-- **Quality**: pytest (631 + 5 integration) + Ruff (backend), tsc + ESLint + Vite build + 38 Playwright e2e (frontend)
+- **Quality**: pytest (724 + 5 integration) + Ruff (backend), tsc + ESLint + Vite build + 38 Playwright e2e (frontend)
 - **Storage**: Local `data/` directory + SQLite. TXT files normalized to UTF-8; EPUB stored as-is.
 - **Python env**: Conda environment `LongNovelInsight`
 - **Key deps**: `fastapi`, `uvicorn`, `sqlmodel`, `httpx`, `python-multipart`, `beautifulsoup4`, `pytest`, `ruff`
@@ -53,6 +52,16 @@ POST /api/topics/{id}/analysis/runs
 - **v0.3.1 stability fixes**: Transport error capture, `finish_reason` truncation detection, adaptive retry escalation (4096→8192→16384), per-attempt error re-evaluation, thinking mode warning, prompt output limits, causality multi-strategy matching, warning consolidation, run status protection.
 - **v0.3.1 token accounting**: Cumulative `AttemptUsage` across all LLM calls (not just last one), `LocalExtraction` fields for reasoning/cache/unavailable tokens, `_recalculate_run_usage_from_extractions`, cost estimate aligned with `max_output_tokens`/thinking/mode/retry multiplier, DeepSeek cache field priority, retry/resume usage persistence, UI token breakdown (total/input/output/reasoning).
 
+### v0.4 Backend Additions (Steps 1-10 complete)
+- **Multi-Work data model**: `Work`, `GlobalEntity`, `EntityMention`, `CrossWorkRun`, `GraphSnapshot`, `TimelineItem` — 6 new tables.
+- **Work CRUD**: `routers/works.py` + `work_service.py` — default Work resolution, delete-safe behavior.
+- **Work-scoped upload/parse/analysis**: Document stored per Work (`work_{id}_original.txt/epub`); parse cleanup scoped by document_id; analysis runs filtered by work_id.
+- **Cross-work entity registry**: `cross_work_entity_service.py` — deterministic merge via stable_id/name/alias matching, type-conflict guards.
+- **Character graph**: `cross_work_graph_service.py` — edges from relation atoms (primary) or event co-occurrence (fallback); `graph_snapshot` persistence.
+- **Timeline**: `cross_work_timeline_service.py` — ordering by work.series_index × 1M + chapter × 1K + chunk; `timeline_item` persistence.
+- **Cross-work run**: `cross_work_run_service.py` — orchestrate entity/graph/timeline builders; background thread execution.
+- **Work filters**: Search/retrieve endpoints accept optional `work_ids`; results annotated with work metadata.
+
 ### v0.3 Frontend Additions (Steps 1-12 complete)
 - **features/search/**: `TopicSearchPanel`, `SearchResultList`, `SearchResultCard`, `RetrievalMethodBadge`, `RetrievalDebugDrawer`
 - **features/evidence/**: `EntityEvidencePanel`, `SimilarScenesPanel`
@@ -68,25 +77,28 @@ backend/
   main.py, config.py, db.py
   routers/   — health, topics, documents, parse, model_providers, provider_presets,
                topic_provider_config, analysis_jobs, analysis_outputs, analysis_runs,
-               chat, search, retrieve, entities (v0.3)
+               chat, search, retrieve, entities (v0.3), works, cross_work (v0.4)
   models/    — topic, document, chapter, chunk, model_provider, topic_provider_config,
                analysis_output, analysis_run, local_extraction, extracted_atom,
                analysis_artifact, chat, job, job_item, retrieval_trace,
-               embedding_cache (v0.3)
-  services/  — 30 modules including parser_service, epub_parser_service,
+               embedding_cache (v0.3), work, global_entity, entity_mention,
+               cross_work_run, graph_snapshot, timeline_item (v0.4)
+  services/  — 35 modules including parser_service, epub_parser_service,
                fts_service, retrieval_service, embedding_service (v0.3),
                analysis_run_service, merge_service, final_output_service,
-               llm_client, chat_service, local_extraction_worker, etc.
+               llm_client, chat_service, local_extraction_worker,
+               work_service, cross_work_entity_service, cross_work_graph_service,
+               cross_work_timeline_service, cross_work_run_service (v0.4)
 ```
 
 Full architecture: `docs/ARCHITECTURE.md`. Data model: `docs/DATA_MODEL.md`. API reference: `docs/API.md`.
 
-## Forbidden (v0.3.0)
+## Forbidden (v0.4.0)
 
 Do NOT introduce or reference:
 1. Login / auth / multi-user systems
 2. Cloud sync / remote storage
-3. Multi-novel Topic (one Topic = one Document)
+3. Multiple source documents per Work
 4. PDF parsing / OCR / DRM removal
 5. Docker / containerization
 6. LangChain / LLM frameworks
@@ -94,7 +106,7 @@ Do NOT introduce or reference:
 8. Redis / Celery / PostgreSQL / message queues
 9. Plugin systems
 10. Complex abstractions or premature generalization
-11. Any v0.4+ features (multi-book, cross-work analysis, graph visualization)
+11. Any v0.5+ features (plugin marketplace, SaaS, remote storage)
 12. Tailwind / MUI / Ant Design / Chakra / Redux / Zustand / MobX
 
 ## Commands
