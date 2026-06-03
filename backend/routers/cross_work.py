@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from db import get_session
@@ -267,3 +268,85 @@ def build_timeline(
     from services.cross_work_timeline_service import build_timeline as svc_build
 
     return svc_build(topic_id, session)
+
+
+# ── Cross-work run endpoints ──
+
+
+class CreateCrossWorkRunRequest(BaseModel):
+    mode: str = "full"
+    work_ids: list[str] | None = None
+    rebuild: bool = True
+
+
+@router.post("/cross-work/runs", status_code=201)
+def create_cross_work_run(
+    topic_id: str,
+    body: CreateCrossWorkRunRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    from services.cross_work_run_service import (
+        create_cross_work_run as svc_create,
+    )
+    from services.cross_work_run_service import (
+        start_cross_work_run as svc_start,
+    )
+
+    run = svc_create(session, topic_id, mode=body.mode, work_ids=body.work_ids)
+    # Start background execution — caller polls GET /runs/{id} for status
+    svc_start(run.id)
+
+    return {
+        "id": run.id,
+        "topic_id": run.topic_id,
+        "status": run.status,
+        "mode": run.mode,
+    }
+
+
+@router.get("/cross-work/runs")
+def list_cross_work_runs(
+    topic_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    from services.cross_work_run_service import list_cross_work_runs as svc_list
+
+    runs, total = svc_list(session, topic_id, limit=limit, offset=offset)
+
+    return {
+        "runs": [
+            {
+                "id": r.id,
+                "status": r.status,
+                "mode": r.mode,
+                "error": r.error,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in runs
+        ],
+        "total": total,
+    }
+
+
+@router.get("/cross-work/runs/{run_id}")
+def get_cross_work_run(
+    topic_id: str,
+    run_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    from services.cross_work_run_service import get_cross_work_run_status
+
+    status = get_cross_work_run_status(session, run_id)
+    if status is None or status.get("topic_id") != topic_id:
+        raise HTTPException(status_code=404, detail="CrossWorkRun not found")
+    return status
