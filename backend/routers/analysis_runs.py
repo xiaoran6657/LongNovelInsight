@@ -138,6 +138,7 @@ def list_runs(
                 "merge_failed": r.merge_failed,
                 "total_tokens": r.total_tokens,
                 "model_used": r.model_used,
+                "work_id": r.get_chunk_selection().get("work_id"),
                 "started_at": r.started_at.isoformat() if r.started_at else None,
                 "finished_at": r.finished_at.isoformat() if r.finished_at else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,

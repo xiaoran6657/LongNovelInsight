@@ -253,3 +253,64 @@ class TestWorkAnalysis:
         # Only Work 1's chunk should be analyzed
         assert ck1_id in called_chunks, "Work 1's chunk should be analyzed"
         assert ck2_id not in called_chunks, "Work 2's chunk should NOT be analyzed"
+
+    def test_run_status_includes_work_id(self, engine):
+        """Run status response should include work_id from chunk selection."""
+        from models.chapter import Chapter
+        from models.chunk import Chunk
+
+        with Session(engine) as session:
+            prov = ModelProvider(
+                name="WidStatusP", provider_type="openai_compatible",
+                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            )
+            session.add(prov); session.flush()
+            topic = Topic(name="WidStatus", provider_id=prov.id, status="parsed")
+            session.add(topic); session.flush()
+            work = Work(topic_id=topic.id, title="Wid Work", series_index=1)
+            session.add(work); session.flush()
+            doc = Document(
+                topic_id=topic.id, work_id=work.id,
+                original_filename="w.txt", file_size_bytes=100,
+                char_count=50, status="parsed",
+            )
+            session.add(doc); session.flush()
+            ch = Chapter(
+                topic_id=topic.id, document_id=doc.id,
+                chapter_index=0, title="Ch1",
+                start_char=0, end_char=50, char_count=50,
+            )
+            session.add(ch); session.flush()
+            ck = Chunk(
+                topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
+                chapter_index=0, chunk_index=0, text="test",
+                start_char=0, end_char=50, char_count=50, estimated_tokens=34,
+            )
+            session.add(ck)
+            session.commit()
+            tid = topic.id
+            wid = work.id
+            rid = None
+
+        with patch(
+            "services.local_extraction_worker.run_local_extraction_for_chunk",
+            return_value=MockExtractionResult(),
+        ):
+            with Session(engine) as session:
+                from services.analysis_run_service import (
+                    _execute_run,
+                    create_analysis_run,
+                    get_analysis_run_status,
+                )
+
+                run = create_analysis_run(
+                    session, tid, mode="full", work_id=wid,
+                )
+                rid = run.id
+            _execute_run(rid, engine=engine)
+
+        with Session(engine) as session:
+            status = get_analysis_run_status(session, rid)
+            assert status["run"]["work_id"] == wid, (
+                f"Run status should include work_id, got {status['run'].get('work_id')}"
+            )

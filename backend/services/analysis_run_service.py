@@ -751,6 +751,7 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
     final_outputs = [o for o in all_outputs if not o.output_type.startswith("merge_")]
 
     metadata = run.get_metadata()
+    selection = run.get_chunk_selection()
 
     return {
         "run": {
@@ -778,6 +779,7 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "prompt_cache_miss_tokens": agg_cache_miss,
             "usage_unavailable_attempts": agg_unavailable,
             "model_used": run.model_used,
+            "work_id": selection.get("work_id"),
             "error_message": run.error_message,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "finished_at": run.finished_at.isoformat() if run.finished_at else None,
