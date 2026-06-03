@@ -31,6 +31,7 @@ class RetrieveRequest(BaseModel):
         default_factory=lambda: ["fts", "keyword_fallback", "structured", "analysis_output"]
     )
     persist_trace: bool = False
+    work_ids: list[str] | None = None
 
     @field_validator("query")
     @classmethod
@@ -60,6 +61,9 @@ class CandidateResult(BaseModel):
     method: str
     matched_terms: list[str]
     source_locator: dict | None = None
+    work_id: str | None = None
+    work_title: str | None = None
+    series_index: int | None = None
 
 
 class RetrieveResponse(BaseModel):
@@ -109,6 +113,28 @@ def retrieve_evidence(
         top_k=body.top_k,
         methods=retrieval_methods,
     )
+
+    # Filter by work_ids if specified
+    if body.work_ids:
+        from models.chunk import Chunk
+        from models.document import Document
+
+        filtered = []
+        for r in results:
+            cid = r.get("chunk_id")
+            if cid:
+                chunk = session.get(Chunk, cid)
+                if chunk is not None:
+                    doc = session.get(Document, chunk.document_id)
+                    if doc is not None and doc.work_id in body.work_ids:
+                        filtered.append(r)
+            else:
+                filtered.append(r)
+        results = filtered
+
+    # Annotate with work metadata
+    from routers.search import _annotate_work_meta
+    _annotate_work_meta(results, session)
 
     warning: str | None = None
     if use_semantic:

@@ -29,6 +29,7 @@ class SearchRequest(BaseModel):
     limit: int = Field(DEFAULT_LIMIT, ge=MIN_LIMIT, le=MAX_LIMIT)
     include_snippets: bool = True
     methods: list[str] = Field(default_factory=lambda: ["fts", "keyword_fallback"])
+    work_ids: list[str] | None = None
 
     @field_validator("query")
     @classmethod
@@ -55,6 +56,9 @@ class SearchResult(BaseModel):
     snippet: str
     score: float
     method: str
+    work_id: str | None = None
+    work_title: str | None = None
+    series_index: int | None = None
 
 
 class SearchResponse(BaseModel):
@@ -114,6 +118,22 @@ def search_topic_chunks(
                 seen.add(r["chunk_id"])
                 results.append(r)
 
+    # Filter by work_ids if specified
+    if body.work_ids:
+        from models.document import Document
+
+        filtered = []
+        for r in results:
+            chunk = session.get(Chunk, r["chunk_id"])
+            if chunk is not None:
+                doc = session.get(Document, chunk.document_id)
+                if doc is not None and doc.work_id in body.work_ids:
+                    filtered.append(r)
+        results = filtered
+
+    # Annotate with work metadata
+    _annotate_work_meta(results, session)
+
     # Sort by score descending, then limit
     results.sort(key=lambda r: r["score"], reverse=True)
     results = results[: body.limit]
@@ -153,3 +173,21 @@ def get_chunk_locator(
         locator=locator,
         excerpt=(chunk.text or "")[:LOCATOR_EXCERPT_CHARS],
     )
+
+
+def _annotate_work_meta(results: list[dict], session: Session) -> None:
+    """Annotate search results with work_id and work_title from chunk → document → work."""
+    from models.document import Document
+    from models.work import Work as WorkModel
+
+    for r in results:
+        chunk = session.get(Chunk, r.get("chunk_id"))
+        if chunk is None:
+            continue
+        doc = session.get(Document, chunk.document_id)
+        if doc is not None and doc.work_id:
+            r["work_id"] = doc.work_id
+            work = session.get(WorkModel, doc.work_id)
+            if work is not None:
+                r["work_title"] = work.title
+                r["series_index"] = work.series_index
