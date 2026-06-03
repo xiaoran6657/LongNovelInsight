@@ -183,3 +183,46 @@ def _safe_json_dict(raw: str | None) -> dict:
         return parsed if isinstance(parsed, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+# ── Graph endpoints ──
+
+
+@router.get("/graphs/characters")
+def get_character_graph(
+    topic_id: str,
+    work_id: str | None = Query(None),
+    min_confidence: float | None = Query(None),
+    min_weight: int | None = Query(None),
+    relation_type: str | None = Query(None),
+    limit_nodes: int | None = Query(None),
+    include_evidence: bool = Query(False),
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    from services.cross_work_graph_service import get_latest_character_graph
+
+    return get_latest_character_graph(
+        topic_id,
+        session,
+        work_id=work_id,
+        min_confidence=min_confidence,
+        min_weight=min_weight,
+        relation_type=relation_type,
+        limit_nodes=limit_nodes,
+        include_evidence=include_evidence,
+    )
+
+
+@router.post("/graphs/build", status_code=200)
+def build_graph(
+    topic_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Build or rebuild the character relationship graph for this topic."""
+    _check_topic(topic_id, session)
+
+    from services.cross_work_graph_service import build_character_graph
+
+    return build_character_graph(topic_id, session)
