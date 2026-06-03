@@ -252,18 +252,17 @@ def test_same_work_second_document_rejected(engine):
         )
         session.add(d1); session.commit()
 
-        # Second document with same work_id violates partial unique index
+        # Second document with same work_id should violate the partial unique index
+        import pytest
+
         d2 = Document(
             topic_id=topic.id, work_id=work.id, original_filename="book2.txt",
             file_size_bytes=100, char_count=50, status="parsed",
         )
         session.add(d2)
-        try:
+        with pytest.raises(Exception) as exc_info:
             session.commit()
-            # If it doesn't raise, check manually — SQLite may not enforce
-            # the partial unique index in all configurations
-        except Exception as e:
-            assert "UNIQUE" in str(e).upper() or "ix_document_work_id" in str(e)
+        assert "UNIQUE" in str(exc_info.value).upper() or "ix_document_work_id" in str(exc_info.value)
 
 
 def test_fk_integrity_after_migration(engine):
@@ -340,3 +339,126 @@ def test_broken_state_repair(engine):
         if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
     ]
     assert len(topic_id_uniques) == 0, "broken state should be repaired"
+
+
+def test_backfill_after_schema_migrated(engine):
+    """Schema migrated, then new NULL-work_id document appears — migration should backfill."""
+    from db import _migrate_v04_work_tables
+    from models.model_provider import ModelProvider
+
+    # First run: schema + default Work backfill
+    _migrate_v04_work_tables(_engine=engine)
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="LateBackfillP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="LateBackfill", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+
+        # Insert a Document with work_id=NULL (simulating a document that predates
+        # Work creation, or was created without a Work)
+        doc = Document(
+            topic_id=topic.id, original_filename="late.txt",
+            file_size_bytes=100, char_count=50, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        did = doc.id
+
+    # Second run: schema is OK, should still backfill the NULL work_id
+    _migrate_v04_work_tables(_engine=engine)
+
+    with Session(engine) as session:
+        doc = session.get(Document, did)
+        assert doc is not None
+        assert doc.work_id is not None, (
+            "NULL work_id should be backfilled even when schema is already migrated"
+        )
+
+
+def test_get_or_create_default_work_creates_work(engine):
+    """Legacy Topic + Document → helper creates default Work and backfills document."""
+    from models.model_provider import ModelProvider
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="HelperP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="HelperTopic", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="helper_novel.txt",
+            file_size_bytes=100, char_count=50, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        tid = topic.id
+
+        from services.work_service import get_or_create_default_work
+
+        work = get_or_create_default_work(tid, session)
+        assert work is not None
+        assert work.topic_id == tid
+        assert work.series_index == 1
+        assert work.title == "helper_novel"
+
+        # Document should be backfilled
+        session.refresh(doc)
+        assert doc.work_id == work.id
+
+
+def test_get_or_create_default_work_idempotent(engine):
+    """Calling the helper twice should return the same Work, not create a duplicate."""
+    from models.model_provider import ModelProvider
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="IdemHelperP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="IdemHelper", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="idem_novel.txt",
+            file_size_bytes=100, char_count=50, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        tid = topic.id
+
+        from services.work_service import get_or_create_default_work
+
+        w1 = get_or_create_default_work(tid, session)
+        w2 = get_or_create_default_work(tid, session)
+
+        assert w1.id == w2.id
+        # Only one Work row
+        works = session.exec(select(Work).where(Work.topic_id == tid)).all()
+        assert len(works) == 1
+
+
+def test_get_or_create_default_work_empty_topic_raises(engine):
+    """Topic with no Document → helper should raise 404."""
+    with Session(engine) as session:
+        topic = Topic(name="EmptyHelper", status="created")
+        session.add(topic)
+        session.commit()
+        tid = topic.id
+
+        import pytest
+        from fastapi import HTTPException
+
+        from services.work_service import get_or_create_default_work
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_or_create_default_work(tid, session)
+        assert exc_info.value.status_code == 404
