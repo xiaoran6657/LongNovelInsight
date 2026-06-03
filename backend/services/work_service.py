@@ -71,6 +71,40 @@ def get_or_create_default_work(topic_id: str, session: Session) -> Work:
     return work
 
 
+def ensure_default_work(topic_id: str, session: Session) -> Work:
+    """Get or create a default Work for a Topic. Unlike get_or_create_default_work,
+    this creates a Work even if no Document exists yet (for pre-upload resolution).
+    """
+    topic = session.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    work = session.exec(
+        select(Work)
+        .where(Work.topic_id == topic_id)
+        .order_by(Work.series_index.is_(None), Work.series_index, Work.created_at)
+    ).first()
+
+    if work is not None:
+        return work
+
+    doc = session.exec(
+        select(Document).where(Document.topic_id == topic_id)
+    ).first()
+
+    title = _derive_work_title(doc) if doc else topic.name
+    work = Work(
+        topic_id=topic_id,
+        title=title,
+        series_index=1,
+        status=_derive_work_status(doc) if doc else "empty",
+    )
+    session.add(work)
+    session.commit()
+    session.refresh(work)
+    return work
+
+
 def backfill_null_work_ids(topic_id: str, session: Session) -> int:
     """Attach all Documents with work_id=NULL to a default Work.
 

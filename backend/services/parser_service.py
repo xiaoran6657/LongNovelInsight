@@ -128,12 +128,13 @@ def _split_into_chunks(text: str, chapter_start: int, chapter_end: int) -> list[
 def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session: Session) -> dict:
     """Write Chapter/Chunk rows from a SourceDocument, with locator fields.
 
-    Idempotent: removes old chapters/chunks before writing new ones.
+    Idempotent: removes old chapters/chunks for this document before writing new ones.
+    Uses document_id scoping so other Works in the same Topic are not affected.
     Updates Document.char_count, .status, .metadata_json, and Topic.storage_bytes.
     """
-    # Idempotent: remove old chapters and chunks
-    session.exec(delete(Chunk).where(Chunk.topic_id == topic_id))  # type: ignore[arg-type]
-    session.exec(delete(Chapter).where(Chapter.topic_id == topic_id))  # type: ignore[arg-type]
+    # Idempotent: remove old chapters and chunks for this document only
+    session.exec(delete(Chunk).where(Chunk.document_id == doc.id))  # type: ignore[arg-type]
+    session.exec(delete(Chapter).where(Chapter.document_id == doc.id))  # type: ignore[arg-type]
     session.flush()
 
     total_chars = 0
@@ -241,13 +242,39 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
 
 
 def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
+    """Legacy topic-level parse — resolves default Work and delegates."""
     topic = session.get(Topic, topic_id)
     if topic is None:
         raise ValueError("Topic not found")
 
-    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
+    from services.work_service import get_or_create_default_work
+
+    work = get_or_create_default_work(topic_id, session)
+    doc = session.exec(select(Document).where(Document.work_id == work.id)).first()
     if doc is None:
         raise ValueError("No document uploaded")
+
+    return _do_parse(topic_id, doc, session, force, work)
+
+
+def parse_novel_for_work(work_id: str, session: Session, force: bool = False) -> dict:
+    """Work-scoped parse. Reads document by work_id, scopes cleanup to this document."""
+    from models.work import Work as WorkModel
+
+    work = session.get(WorkModel, work_id)
+    if work is None:
+        raise ValueError("Work not found")
+
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
+    if doc is None:
+        raise ValueError("No document uploaded to this Work")
+
+    return _do_parse(work.topic_id, doc, session, force, work)
+
+
+def _do_parse(
+    topic_id: str, doc: Document, session: Session, force: bool, work=None
+) -> dict:
 
     available_types = {"txt", "epub"}
     if doc.file_type not in available_types:
@@ -258,8 +285,10 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
     if not source_path.exists():
         raise ValueError(f"Source file not found on disk: {doc.stored_filename}")
 
-    # Check if already parsed
-    existing_chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id).limit(1)).first()
+    # Check if already parsed (scoped to this document)
+    existing_chunk = session.exec(
+        select(Chunk).where(Chunk.document_id == doc.id).limit(1)
+    ).first()
     has_outputs = (
         session.exec(
             select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
@@ -268,8 +297,12 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
     )
 
     if existing_chunk and not force:
-        chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
-        chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
+        chapters = session.exec(
+            select(Chapter).where(Chapter.document_id == doc.id)
+        ).all()
+        chunks = session.exec(
+            select(Chunk).where(Chunk.document_id == doc.id)
+        ).all()
         return {
             "already_parsed": True,
             "chapter_count": len(chapters),
@@ -286,6 +319,12 @@ def parse_novel(topic_id: str, session: Session, force: bool = False) -> dict:
         source = _epub_to_source_document(topic_id, doc)
 
     result = _persist_parse(topic_id, doc, source, session)
+
+    # Update Work status
+    if work is not None:
+        work.status = "parsed"
+        session.add(work)
+        session.commit()
 
     # Rebuild FTS index after parse (idempotent — old rows already cleared by
     # _persist_parse deleting chunks; this inserts fresh rows).

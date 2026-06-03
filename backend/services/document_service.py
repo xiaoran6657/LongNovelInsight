@@ -68,6 +68,10 @@ def _get_doc_by_topic(topic_id: str, session: Session) -> Document | None:
     return session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
 
+def _get_doc_by_work(work_id: str, session: Session) -> Document | None:
+    return session.exec(select(Document).where(Document.work_id == work_id)).first()
+
+
 def _delete_document_derived_data(topic_id: str, session: Session) -> None:
     # Chat messages -> sessions
     sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
@@ -123,6 +127,7 @@ def _delete_document_derived_data(topic_id: str, session: Session) -> None:
 
 
 def upload_document(topic_id: str, file: UploadFile, session: Session) -> DocumentRead:
+    """Legacy topic-level upload — resolves default Work and delegates."""
     topic = session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
@@ -130,19 +135,61 @@ def upload_document(topic_id: str, file: UploadFile, session: Session) -> Docume
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    fn_lower = file.filename.lower()
+    from services.work_service import ensure_default_work
+
+    work = ensure_default_work(topic_id, session)
+
+    # Check if Work already has a Document
+    existing = _get_doc_by_work(work.id, session)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Work already has a document")
+
+    return _do_upload(topic_id, work.id, work, file, session, topic)
+
+
+def upload_document_to_work(work_id: str, file: UploadFile, session: Session) -> DocumentRead:
+    """Upload a document into a specific Work. Rejects if Work already has a Document."""
+    from models.work import Work as WorkModel
+
+    work = session.get(WorkModel, work_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="Work not found")
+
+    topic = session.get(Topic, work.topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    existing = _get_doc_by_work(work_id, session)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Work already has a document")
+
+    return _do_upload(work.topic_id, work_id, work, file, session, topic)
+
+
+def _do_upload(
+    topic_id: str,
+    work_id: str,
+    work,
+    file: UploadFile,
+    session: Session,
+    topic: Topic,
+) -> DocumentRead:
+    """Shared upload logic — called by both topic-level and work-level uploads."""
+    fn_lower = file.filename.lower() if file.filename else ""
     if fn_lower.endswith(".txt"):
-        return _upload_txt(topic_id, file, session, topic)
+        return _upload_txt(topic_id, work_id, file, session, topic, work)
     elif fn_lower.endswith(".epub"):
-        return _upload_epub(topic_id, file, session, topic)
+        return _upload_epub(topic_id, work_id, file, session, topic, work)
     else:
         raise HTTPException(status_code=400, detail="Only .txt and .epub files are supported")
 
 
-def _upload_txt(topic_id: str, file: UploadFile, session: Session, topic) -> DocumentRead:
-    existing = _get_doc_by_topic(topic_id, session)
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="Topic already has a document")
+def _upload_txt(
+    topic_id: str, work_id: str, file: UploadFile, session: Session, topic, work
+) -> DocumentRead:
 
     content = file.file.read(config.UPLOAD_MAX_BYTES + 1)
     if len(content) > config.UPLOAD_MAX_BYTES:
@@ -168,6 +215,7 @@ def _upload_txt(topic_id: str, file: UploadFile, session: Session, topic) -> Doc
 
     doc = Document(
         topic_id=topic_id,
+        work_id=work_id,
         original_filename=file.filename,
         stored_filename="original.txt",
         file_type="txt",
@@ -182,16 +230,16 @@ def _upload_txt(topic_id: str, file: UploadFile, session: Session, topic) -> Doc
 
     topic.storage_bytes = len(content)
     session.add(topic)
+    _update_work_status(work, "uploaded", session)
 
     session.commit()
     session.refresh(doc)
     return DocumentRead.model_validate(doc)
 
 
-def _upload_epub(topic_id: str, file: UploadFile, session: Session, topic) -> DocumentRead:
-    existing = _get_doc_by_topic(topic_id, session)
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="Topic already has a document")
+def _upload_epub(
+    topic_id: str, work_id: str, file: UploadFile, session: Session, topic, work
+) -> DocumentRead:
 
     content = file.file.read(config.UPLOAD_MAX_BYTES + 1)
     if len(content) > config.UPLOAD_MAX_BYTES:
@@ -217,6 +265,7 @@ def _upload_epub(topic_id: str, file: UploadFile, session: Session, topic) -> Do
 
     doc = Document(
         topic_id=topic_id,
+        work_id=work_id,
         original_filename=file.filename,
         stored_filename="original.epub",
         file_type="epub",
@@ -231,6 +280,7 @@ def _upload_epub(topic_id: str, file: UploadFile, session: Session, topic) -> Do
 
     topic.storage_bytes = len(content)
     session.add(topic)
+    _update_work_status(work, "uploaded", session)
 
     session.commit()
     session.refresh(doc)
@@ -238,11 +288,19 @@ def _upload_epub(topic_id: str, file: UploadFile, session: Session, topic) -> Do
 
 
 def get_current_document(topic_id: str, session: Session) -> DocumentRead:
+    """Legacy topic-level get — resolves default Work."""
     topic = session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    doc = _get_doc_by_topic(topic_id, session)
+    from services.work_service import get_or_create_default_work
+
+    try:
+        work = get_or_create_default_work(topic_id, session)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="No document uploaded")
+
+    doc = _get_doc_by_work(work.id, session)
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
 
@@ -250,11 +308,19 @@ def get_current_document(topic_id: str, session: Session) -> DocumentRead:
 
 
 def delete_current_document(topic_id: str, session: Session) -> dict:
+    """Legacy topic-level delete — resolves default Work."""
     topic = session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    doc = _get_doc_by_topic(topic_id, session)
+    from services.work_service import get_or_create_default_work
+
+    try:
+        work = get_or_create_default_work(topic_id, session)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="No document uploaded")
+
+    doc = _get_doc_by_work(work.id, session)
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
 
@@ -271,3 +337,11 @@ def delete_current_document(topic_id: str, session: Session) -> dict:
     session.delete(doc)
     session.commit()
     return {"deleted": True, "freed_bytes": freed}
+
+
+def _update_work_status(work, status: str, session: Session) -> None:
+    """Update Work status if it's a progression (empty→uploaded→parsed)."""
+    progression = {"empty": 0, "uploaded": 1, "parsed": 2, "analyzed": 3}
+    if progression.get(status, 0) > progression.get(work.status, -1):
+        work.status = status
+        session.add(work)

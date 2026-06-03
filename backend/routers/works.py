@@ -1,6 +1,6 @@
 """v0.4 Work CRUD API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -118,3 +118,138 @@ def delete_work(work_id: str, session: Session = Depends(get_session)) -> dict:
     session.delete(work)
     session.commit()
     return {"deleted": True}
+
+
+# ── Work-scoped document/parse endpoints ──
+
+doc_router = APIRouter(prefix="/works/{work_id}", tags=["works"])
+
+
+@doc_router.post("/documents/upload", status_code=201)
+def upload_document_endpoint(
+    work_id: str,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    from services.document_service import upload_document_to_work as svc_upload
+
+    return svc_upload(work_id, file, session)
+
+
+@doc_router.get("/documents/current")
+def get_work_document(
+    work_id: str, session: Session = Depends(get_session)
+):
+    from models.document import Document, DocumentRead
+
+    doc = session.exec(
+        select(Document).where(Document.work_id == work_id)
+    ).first()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No document uploaded to this Work")
+    return DocumentRead.model_validate(doc)
+
+
+@doc_router.post("/parse")
+def parse_work(
+    work_id: str,
+    force: bool = False,
+    session: Session = Depends(get_session),
+):
+    from services.parser_service import parse_novel_for_work
+
+    try:
+        return parse_novel_for_work(work_id, session, force=force)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@doc_router.get("/chapters")
+def list_work_chapters(
+    work_id: str, session: Session = Depends(get_session)
+):
+    from models.chapter import Chapter, ChapterRead
+    from models.document import Document
+
+    doc = session.exec(
+        select(Document).where(Document.work_id == work_id)
+    ).first()
+    if doc is None:
+        return {"chapters": []}
+
+    chapters = session.exec(
+        select(Chapter)
+        .where(Chapter.document_id == doc.id)
+        .order_by(Chapter.chapter_index)
+    ).all()
+    return {"chapters": [ChapterRead.model_validate(c).model_dump() for c in chapters]}
+
+
+@doc_router.get("/chunks")
+def list_work_chunks(
+    work_id: str,
+    include_text: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+):
+    from models.chunk import Chunk, ChunkRead
+    from models.document import Document
+
+    doc = session.exec(
+        select(Document).where(Document.work_id == work_id)
+    ).first()
+    if doc is None:
+        return {"chunks": []}
+
+    chunks = session.exec(
+        select(Chunk)
+        .where(Chunk.document_id == doc.id)
+        .order_by(Chunk.chapter_index, Chunk.chunk_index)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    result = []
+    for c in chunks:
+        d = ChunkRead.model_validate(c).model_dump()
+        if not include_text:
+            d["text"] = ""
+        result.append(d)
+
+    return {"chunks": result}
+
+
+@doc_router.get("/metadata")
+def get_work_metadata(
+    work_id: str, session: Session = Depends(get_session)
+):
+    import json
+
+    from models.document import Document
+
+    doc = session.exec(
+        select(Document).where(Document.work_id == work_id)
+    ).first()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No document found for this Work")
+
+    metadata: dict = {}
+    if doc.metadata_json:
+        try:
+            metadata = json.loads(doc.metadata_json)
+        except json.JSONDecodeError:
+            pass
+    return {
+        "id": doc.id,
+        "topic_id": doc.topic_id,
+        "original_filename": doc.original_filename,
+        "file_type": doc.file_type,
+        "encoding": doc.encoding,
+        "file_size_bytes": doc.file_size_bytes,
+        "char_count": doc.char_count,
+        "status": doc.status,
+        "metadata": metadata,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+    }
