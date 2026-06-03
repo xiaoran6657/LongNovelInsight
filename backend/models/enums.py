@@ -64,3 +64,27 @@ class AtomType(StrEnum):
     WORLDBUILDING = "worldbuilding"
     FORESHADOWING = "foreshadowing"
     OPEN_QUESTION = "open_question"
+
+
+class WorkStatus(StrEnum):
+    EMPTY = "empty"
+    UPLOADED = "uploaded"
+    PARSED = "parsed"
+    ANALYZED = "analyzed"
+    ERROR = "error"
+
+
+class EntityType(StrEnum):
+    CHARACTER = "character"
+    LOCATION = "location"
+    ORGANIZATION = "organization"
+    CONCEPT = "concept"
+    ITEM = "item"
+    UNKNOWN = "unknown"
+
+
+class CrossWorkRunMode(StrEnum):
+    FULL = "full"
+    ENTITIES_ONLY = "entities_only"
+    GRAPH_ONLY = "graph_only"
+    TIMELINE_ONLY = "timeline_only"

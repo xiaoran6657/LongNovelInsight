@@ -1,0 +1,171 @@
+"""Tests for v0.4 multi-Work schema migration."""
+
+from sqlmodel import Session, select
+
+from models.document import Document
+from models.topic import Topic
+from models.work import Work
+
+
+def test_work_table_exists(engine):
+    """work table should be created by init_db."""
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(engine)
+    tables = insp.get_table_names()
+    assert "work" in tables
+
+
+def test_document_work_id_column_exists(engine):
+    """document.work_id column should exist after migration."""
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(engine)
+    cols = {c["name"] for c in insp.get_columns("document")}
+    assert "work_id" in cols
+
+
+def test_ix_document_work_id_exists(engine):
+    """Partial unique index on document(work_id) should exist after migration."""
+    from sqlalchemy import inspect as sa_inspect
+
+    from db import _migrate_v04_work_tables
+
+    _migrate_v04_work_tables(_engine=engine)
+
+    insp = sa_inspect(engine)
+    indexes = {i["name"] for i in insp.get_indexes("document")}
+    assert "ix_document_work_id" in indexes
+
+
+def test_all_v04_tables_exist(engine):
+    """All 6 new v0.4 tables should exist."""
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(engine)
+    tables = set(insp.get_table_names())
+    for name in (
+        "work",
+        "global_entity",
+        "entity_mention",
+        "cross_work_run",
+        "graph_snapshot",
+        "timeline_item",
+    ):
+        assert name in tables, f"Table '{name}' not found"
+
+
+def test_legacy_topic_gets_default_work(engine):
+    """Topic with Document but no Work → default Work created, document.work_id set."""
+    from models.model_provider import ModelProvider
+
+    # Setup: Topic + Document without explicit Work
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="MigProv", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="MigrationTest", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="novel.txt",
+            file_size_bytes=100, char_count=50, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        tid = topic.id
+        did = doc.id
+
+    # Run migration directly on the test engine
+    from db import _migrate_v04_work_tables
+    _migrate_v04_work_tables(_engine=engine)
+
+    # Verify
+    with Session(engine) as session:
+        doc = session.get(Document, did)
+        assert doc is not None
+        assert doc.work_id is not None, "document.work_id should be backfilled"
+
+        work = session.get(Work, doc.work_id)
+        assert work is not None
+        assert work.topic_id == tid
+        assert work.series_index == 1
+        assert work.title == "novel"
+
+
+def test_migration_idempotent(engine):
+    """Running migration twice should not create duplicate Works."""
+    from models.model_provider import ModelProvider
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="IdemP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="IdemTopic", provider_id=prov.id, status="parsed")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="book.epub",
+            file_size_bytes=200, char_count=100, status="parsed",
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+        tid = topic.id
+
+    from db import _migrate_v04_work_tables
+
+    _migrate_v04_work_tables(_engine=engine)
+
+    with Session(engine) as session:
+        count_before = len(session.exec(select(Work).where(Work.topic_id == tid)).all())
+
+    # Run migration again — idempotent
+    _migrate_v04_work_tables(_engine=engine)
+
+    with Session(engine) as session:
+        count_after = len(session.exec(select(Work).where(Work.topic_id == tid)).all())
+        assert count_after == count_before, "Migration should be idempotent"
+
+
+def test_topic_without_document_no_work_created(engine):
+    """Topic with no Document should not get a default Work."""
+    with Session(engine) as session:
+        topic = Topic(name="EmptyTopic", status="created")
+        session.add(topic)
+        session.commit()
+        tid = topic.id
+
+    from db import _migrate_v04_work_tables
+    _migrate_v04_work_tables(_engine=engine)
+
+    with Session(engine) as session:
+        works = session.exec(select(Work).where(Work.topic_id == tid)).all()
+        assert len(works) == 0
+
+
+def test_document_can_have_null_work_id(engine):
+    """Newly uploaded documents without a Work should allow work_id=NULL."""
+    from models.model_provider import ModelProvider
+
+    with Session(engine) as session:
+        prov = ModelProvider(
+            name="NullWIdP", provider_type="openai_compatible",
+            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+        )
+        session.add(prov); session.flush()
+        topic = Topic(name="NullWId", provider_id=prov.id, status="uploaded")
+        session.add(topic); session.flush()
+        doc = Document(
+            topic_id=topic.id, original_filename="test.txt",
+            file_size_bytes=10, char_count=10,
+            work_id=None,
+        )
+        session.add(doc)
+        session.commit()
+
+        assert doc.id is not None
+        assert doc.work_id is None

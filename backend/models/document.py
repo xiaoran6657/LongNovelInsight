@@ -9,6 +9,7 @@ class Document(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     topic_id: str = Field(foreign_key="topic.id", unique=True)
+    work_id: str | None = Field(default=None, foreign_key="work.id")
     original_filename: str
     stored_filename: str = "original.txt"
     file_type: str = "txt"
@@ -26,6 +27,7 @@ class Document(SQLModel, table=True):
 class DocumentRead(SQLModel):
     id: str
     topic_id: str
+    work_id: str | None = None
     original_filename: str
     stored_filename: str
     file_type: str
