@@ -226,3 +226,44 @@ def build_graph(
     from services.cross_work_graph_service import build_character_graph
 
     return build_character_graph(topic_id, session)
+
+
+# ── Timeline endpoints ──
+
+
+@router.get("/timeline")
+def get_timeline(
+    topic_id: str,
+    work_id: str | None = Query(None),
+    participant_entity_id: str | None = Query(None),
+    min_confidence: float | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> dict:
+    _check_topic(topic_id, session)
+
+    from services.cross_work_timeline_service import get_timeline as svc_get
+
+    return svc_get(
+        topic_id,
+        session,
+        work_id=work_id,
+        participant_entity_id=participant_entity_id,
+        min_confidence=min_confidence,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/timeline/build", status_code=200)
+def build_timeline(
+    topic_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Build or rebuild the cross-work timeline for this topic."""
+    _check_topic(topic_id, session)
+
+    from services.cross_work_timeline_service import build_timeline as svc_build
+
+    return svc_build(topic_id, session)
