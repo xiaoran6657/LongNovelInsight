@@ -20,8 +20,8 @@ ruff check . && ruff format --check .
 backend/
 ├── main.py                  # FastAPI app, CORS, lifespan (init_db)
 ├── config.py                # DATA_DIR, DB_PATH, UPLOAD_MAX_BYTES (200MB)
-├── db.py                    # SQLite engine + get_session() dependency
-├── pyproject.toml           # Dependencies: fastapi, uvicorn, sqlmodel, httpx, python-multipart
+├── db.py                    # SQLite engine + get_session() dependency + incremental migrations
+├── pyproject.toml           # Dependencies: fastapi, uvicorn, sqlmodel, httpx, python-multipart, beautifulsoup4
 ├── provider_presets.py      # Provider preset catalog (DeepSeek, OpenAI, Qwen, Moonshot)
 ├── models/
 │   ├── enums.py             # StrEnum: AnalysisType, JobType, JobStatus, AnalysisMode, AtomType
@@ -29,14 +29,16 @@ backend/
 │   ├── topic.py             # Topic (provider_id FK→model_provider)
 │   ├── model_provider.py    # ModelProvider (masked_api_key @property, validators)
 │   ├── topic_provider_config.py # TopicProviderConfig (topic-level config overrides)
-│   ├── document.py          # Document (topic_id unique, status, encoding)
-│   ├── chapter.py           # Chapter (chapter_index, title, char offsets)
-│   ├── chunk.py             # Chunk (text in SQLite, estimated_tokens)
+│   ├── document.py          # Document (topic_id unique, status, encoding, file_type, metadata_json)
+│   ├── chapter.py           # Chapter (chapter_index, title, char offsets, source_href, nav_order)
+│   ├── chunk.py             # Chunk (text in SQLite, estimated_tokens, source_locator_json)
 │   ├── analysis_output.py   # AnalysisOutput (content_json, evidence, confidence, run_id FK)
 │   ├── analysis_run.py      # AnalysisRun (v2 staged pipeline lifecycle)
-│   ├── local_extraction.py  # LocalExtraction (per-chunk LLM extraction result)
+│   ├── local_extraction.py  # LocalExtraction (per-chunk LLM extraction, cumulative usage fields)
 │   ├── extracted_atom.py    # ExtractedAtom (normalized atomic facts, stable_id)
 │   ├── analysis_artifact.py # AnalysisArtifact (large JSON file storage metadata)
+│   ├── retrieval_trace.py   # RetrievalTrace (v0.3: debug records per search/chat/retrieve)
+│   ├── embedding_cache.py   # EmbeddingCache (v0.3: optional JSON vector cache, skeleton)
 │   ├── chat.py              # ChatSession, ChatMessage (+ ChatMessageCreate validation)
 │   ├── job.py               # Job (job_type: parse|analysis, progress, metadata)
 │   └── job_item.py          # JobItem (item_type: AnalysisType values)
@@ -51,16 +53,19 @@ backend/
 │   ├── analysis_jobs.py     # job CRUD, status (with latest_v2_run), cancel
 │   ├── analysis_outputs.py  # run analysis (v1 + pipeline=v2 bridge), list/delete outputs
 │   ├── analysis_runs.py     # v2 run CRUD, retry-failed, resume, cancel
-│   └── chat.py              # session CRUD, send message with validation (two routers)
+│   ├── chat.py              # session CRUD, send message with validation (two routers)
+│   ├── search.py            # v0.3: POST /search (FTS5 + keyword fallback)
+│   ├── retrieve.py          # v0.3: POST /retrieve (hybrid retrieval + optional trace)
+│   └── entities.py          # v0.3: GET entity evidence + similar scenes
 ├── services/
-│   ├── llm_client.py        # OpenAICompatibleLLMClient (httpx, 2 retries, 120s timeout)
+│   ├── llm_client.py        # OpenAICompatibleLLMClient (httpx, TransportError caught, finish_reason)
 │   ├── prompt_loader.py     # Load v1 + v2 prompt templates from prompts/ dir
 │   ├── analysis_service.py  # v1: run_single_analysis_output + batch-map-merge pipeline
 │   ├── analysis_worker.py   # v1 worker: run_one_analysis_type (no DB, pure LLM + retry)
 │   ├── job_service.py       # run_analysis_job (async parallel execution, bounded pool)
 │   ├── provider_config_service.py # Effective config resolution + recommendations
 │   ├── document_service.py  # upload (multi-encoding→UTF-8), delete with v2 cascade
-│   ├── chat_service.py      # send_user_message (evidence retrieval + history + LLM)
+│   ├── chat_service.py      # send_user_message (hybrid retrieval + history + LLM)
 │   ├── retrieval_service.py # Keyword retrieval (stopwords, _make_excerpt, top_k=8)
 │   ├── topic_service.py     # delete_topic (full cascade including v2 data), summary helpers
 │   ├── storage.py           # File I/O with path traversal protection (_is_safe)
@@ -69,25 +74,30 @@ backend/
 │   │   # ── v0.2 services ──
 │   ├── stable_id_service.py       # Canonical stable ID generation (CJK-safe)
 │   ├── atom_normalizer.py         # JSON → ExtractedAtom normalization (contract-strict)
-│   ├── analysis_selection_service.py # Chunk meta + selection (preview/range/full/incremental)
+│   ├── analysis_selection_service.py # Chunk meta + selection (preview/range/full/incremental) + cost estimate
 │   ├── analysis_response_parser.py   # LLM JSON response parsing + validation
-│   ├── local_extraction_worker.py    # Single-chunk v2 local_extraction (pure function, retry)
-│   ├── analysis_run_service.py       # v2 orchestrator: create/start/cancel/retry/resume
-│   ├── merge_service.py              # Deterministic merge (8 types, Python-only)
+│   ├── local_extraction_worker.py    # Single-chunk v2 local_extraction (cumulative attempts, adaptive retry)
+│   ├── analysis_run_service.py       # v2 orchestrator: create/start/cancel/retry/resume + usage recalculation
+│   ├── merge_service.py              # Deterministic merge (8 types, Python-only, multi-strategy causality)
 │   ├── final_output_service.py       # Merge → v0.1-compatible final AnalysisOutput
-│   └── artifact_storage_service.py   # Hybrid storage (inline + disk artifacts, 64KB threshold)
+│   ├── artifact_storage_service.py   # Hybrid storage (inline + disk artifacts, 64KB threshold)
+│   │   # ── v0.3 services ──
+│   ├── epub_parser_service.py  # EPUB text extraction (zipfile + xml.etree + beautifulsoup4)
+│   ├── source_document.py      # SourceDocument / SourceChapter dataclasses (unified TXT/EPUB)
+│   ├── fts_service.py          # FTS5 rebuild/delete/search + CJK keyword fallback
+│   ├── retrieval_service.py    # Hybrid retrieval (FTS + keyword + structured + outputs)
+│   └── embedding_service.py    # EmbeddingProvider skeleton + semantic_rerank stub (disabled)
 ├── prompts/
 │   ├── overview.md, characters.md, relations.md, events.md, causality.md, themes.md
-│   └── v2/                   # v0.2 staged pipeline prompts
-│       ├── local/            # local_extraction prompt
-│       └── merge/            # merge_<type> prompts
-├── tests/                   # 367 passing tests (see test section below)
+│   └── local/
+│       └── local_extraction.md   # v0.2+ local extraction prompt with output size limits
+├── tests/                       # 631 passing tests
 └── scripts/
-    ├── smoke_backend.py     # v0.1 smoke test (safe + --real-llm modes)
-    └── smoke_v2_backend.py  # v0.2 smoke test (safe + --real-llm modes)
+    ├── smoke_backend.py         # v0.1 smoke test (safe + --real-llm modes)
+    └── smoke_v2_backend.py      # v0.2 smoke test (safe + --real-llm modes)
 ```
 
-## Data Model (15 tables: 11 v0.1 + 4 v0.2)
+## Data Model (18 tables: 11 v0.1 + 4 v0.2 + 3 v0.3)
 
 ```
 ModelProvider  ?──*  Topic
@@ -104,8 +114,11 @@ Topic          1──*  AnalysisRun (v2)
 AnalysisRun    1──*  LocalExtraction (v2)
 Topic          1──*  LocalExtraction (v2)
 LocalExtraction1──*  ExtractedAtom (v2)
-Topic          1──*  ExtractedAtom (v2)
 Topic          1──*  AnalysisArtifact (v2)
+Topic          1──*  RetrievalTrace (v0.3)
+ChatSession    1──*  RetrievalTrace (v0.3, optional)
+Chunk          -──-  chunk_fts (v0.3, FTS5 virtual table)
+EmbeddingCache 1──*  Topic (v0.3, optional, skeleton)
 ```
 
 ## Enums (all lowercase StrEnum)
@@ -121,7 +134,7 @@ Topic          1──*  AnalysisArtifact (v2)
 | `DocumentStatus` | `uploaded`, `parsing`, `parsed`, `failed` |
 | `TopicStatus` | `created`, `uploaded`, `parsed`, `analyzing`, `ready`, `failed` |
 
-## API Endpoints (38+ endpoints)
+## API Endpoints (50+)
 
 ### Health
 | Method | Path | Description |
@@ -143,13 +156,13 @@ Topic          1──*  AnalysisArtifact (v2)
 |--------|------|-------------|
 | GET | `/api/provider-presets` | List all provider presets (DeepSeek, OpenAI, Qwen, Moonshot, Custom) |
 | GET | `/api/provider-presets/{key}` | Get one preset by provider_key |
-| GET | `/api/provider-presets/detect?base_url=...` | Detect provider preset by base_url (normalizes trailing slash) |
+| GET | `/api/provider-presets/detect?base_url=...` | Detect provider preset by base_url |
 
 ### Topic Provider Config (`/api/topics/{id}`)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/topics/{id}/provider-config` | Get topic-level config overrides |
-| PUT | `/api/topics/{id}/provider-config` | Upsert topic config overrides (model, tokens, temp, thinking, parallelism) |
+| PUT | `/api/topics/{id}/provider-config` | Upsert topic config (model, tokens, temp, thinking, parallelism) |
 | GET | `/api/topics/{id}/provider-config/effective` | Resolve effective config (topic > provider > preset) |
 | GET | `/api/topics/{id}/analysis/recommendation` | Get model recommendation based on document size |
 | POST | `/api/topics/{id}/provider-config/apply-recommendation` | Apply recommendation to topic config |
@@ -165,22 +178,33 @@ Topic          1──*  AnalysisArtifact (v2)
 ### Documents
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/documents/upload` | Upload .txt (multi-encoding→UTF-8) |
-| GET | `/api/topics/{id}/documents/current` | Get current |
+| POST | `/api/topics/{id}/documents/upload` | Upload .txt or .epub |
+| GET | `/api/topics/{id}/documents/current` | Get current document |
+| GET | `/api/topics/{id}/documents/current/metadata` | Document metadata (v0.3: EPUB parsed metadata) |
 | DELETE | `/api/topics/{id}/documents/current` | Delete (cascades derived data) |
 
 ### Parse
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/parse` | Parse novel (idempotent; ?force=true to re-parse) |
+| POST | `/api/topics/{id}/parse` | Parse novel (idempotent; ?force=true to re-parse; rebuilds FTS index) |
 | GET | `/api/topics/{id}/chapters` | List chapters |
 | GET | `/api/topics/{id}/chunks` | List chunks (?include_text, limit, offset) |
+| GET | `/api/topics/{id}/chunks/meta` | Lightweight chunk statistics (v2) |
 | GET | `/api/topics/{id}/storage` | Storage usage (real chunk/analysis sizes) |
+
+### v0.3 Search & Retrieval
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/topics/{id}/search` | FTS5 + keyword fallback search |
+| POST | `/api/topics/{id}/retrieve` | Hybrid retrieval across all sources + optional trace |
+| GET | `/api/topics/{id}/chunks/{chunk_id}/locator` | Source locator + excerpt |
+| GET | `/api/topics/{id}/entities/{entity_id}/evidence` | Entity evidence (atoms + chunks + outputs) |
+| GET | `/api/topics/{id}/similar-scenes` | Similar scenes by chunk_id or query |
 
 ### Analysis Outputs
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/analysis/run` | Run structured analysis (?pipeline=v1|v2, ?limit_chunks) |
+| POST | `/api/topics/{id}/analysis/run` | Run structured analysis (?pipeline=v1\|v2, ?limit_chunks) |
 | GET | `/api/topics/{id}/analysis/outputs` | List (?output_type, ?run_id, ?latest_only) |
 | DELETE | `/api/topics/{id}/analysis/outputs` | Delete all (?run_id for targeted) |
 
@@ -188,9 +212,8 @@ Topic          1──*  AnalysisArtifact (v2)
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/topics/{id}/analysis/runs` | Create and start v2 staged run (201) |
-| GET | `/api/topics/{id}/analysis/runs` | List runs for topic |
-| GET | `/api/topics/{id}/chunks/meta` | Lightweight chunk statistics |
-| GET | `/api/analysis/runs/{id}` | Run status with extraction/merge/final summaries |
+| GET | `/api/topics/{id}/analysis/runs` | List runs for topic (paginated) |
+| GET | `/api/analysis/runs/{id}` | Run status with extraction/merge/final + usage breakdown |
 | POST | `/api/analysis/runs/{id}/cancel` | Cancel pending/running run |
 | POST | `/api/analysis/runs/{id}/retry-failed` | Retry failed chunks, re-merge, re-final |
 | POST | `/api/analysis/runs/{id}/resume` | Resume interrupted run (?retry_failed=true) |
@@ -200,7 +223,7 @@ Topic          1──*  AnalysisArtifact (v2)
 |--------|------|-------------|
 | POST | `/api/topics/{id}/analysis/jobs` | Create job (?job_type=analysis) |
 | GET | `/api/topics/{id}/analysis/jobs` | List jobs |
-| GET | `/api/topics/{id}/analysis/status` | Status summary |
+| GET | `/api/topics/{id}/analysis/status` | Status summary (includes latest_v2_run) |
 | GET | `/api/analysis/jobs/{id}` | Job detail with items |
 | POST | `/api/analysis/jobs/{id}/cancel` | Cancel job |
 
@@ -222,59 +245,50 @@ Topic          1──*  AnalysisArtifact (v2)
 TopicProviderConfig override  >  ModelProvider default  >  ProviderPreset default
 ```
 
-1. **Providers page** stores credentials and global defaults (base_url, model_name, temperature, etc.).
-2. **Topic page** stores per-novel overrides in `TopicProviderConfig` — model_name, max_output_tokens, temperature, thinking_mode, parallelism.
-3. **Effective config** merges at analysis/chat runtime. Editing a Topic's config does NOT mutate the global Provider.
+### Analysis Modes (v0.2+)
 
-### Analysis Modes
+| Mode | Behavior |
+|------|----------|
+| `preview` | First N chunks. Fast, low cost. |
+| `range` | Specific chunk or chapter index range. |
+| `full` | All chunks in the document. |
+| `incremental` | Only chunks not yet extracted in a previous run. |
 
-| Mode | Condition | Behavior |
-|------|-----------|----------|
-| `preview` | Small/medium text, limit_chunks set | Runs analysis on a subset of chunks. Fast, low cost. |
-| `direct` | Up to ~300k chars | Runs all 6 analysis types on selected chunks via async parallel jobs. |
-| `map_reduce_required` | >1M chars | Disabled in v0.1 — use preview mode or wait for v0.2 map-reduce pipeline. |
-
-**Recommendation engine** (`GET /api/topics/{id}/analysis/recommendation`) inspects document size, chunk count, estimated tokens, and selected provider to recommend: model, max_output_tokens, temperature, thinking_mode, parallelism, limit_chunks, and analysis mode.
-
-### Async Job Flow
+### v0.2 Staged Pipeline
 
 ```
-POST /api/topics/{id}/analysis/jobs  →  202 (job pending)
-Frontend polls GET /api/topics/{id}/analysis/status  →  progress, timings, token usage
-Job: pending → running → succeeded / partial_success / failed / cancelled
+POST /api/topics/{id}/analysis/runs
+  → Stage 1: Local Extraction (per chunk, parallel LLM, adaptive retry)
+  → Stage 2: Deterministic Merge (per type, Python-only, zero LLM cost)
+  → Stage 3: Final Outputs (Python, v0.1-compatible AnalysisOutput)
 ```
 
-- Worker threads call LLM only; main thread writes DB results.
-- Bounded parallelism via `ThreadPoolExecutor(max_workers=1-6, default=3)`.
-- Per-type retry: max 2 attempts, exponential backoff, JSON-length doubling.
-- Partial success: failed types stored in metadata; successful outputs saved.
-- Cancel marks job cancelled; in-flight LLM calls may still complete but results are discarded.
+~4× token savings vs. v0.1 per-type-per-chunk approach.
+Full retry/resume/idempotency support with cumulative token accounting.
 
-### Job Metadata (token usage + timings)
+### v0.3 Token Accounting
 
-```json
-{
-  "parallelism": 3,
-  "model_name": "deepseek-v4-flash",
-  "thinking_mode": "disabled",
-  "type_timings": { "overview": 35.2, "characters": 68.1 },
-  "usage_by_type": {
-    "overview": { "prompt_tokens": 12000, "completion_tokens": 1000, "total_tokens": 13000 }
-  },
-  "failed_types": [{ "output_type": "causality", "error": "JSON parse failed" }]
-}
-```
+**Cumulative across attempts:** Each extraction tracks all LLM attempts, not just the last one.
+Failed retry tokens are summed into the total. `LocalExtraction` stores `reasoning_tokens`,
+`prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, and `usage_unavailable_attempts`.
+Run-level totals are recomputed from extraction rows after retry/resume.
 
-### Performance Recommendations
+**Cost estimate alignment:** `estimate_v2_analysis_cost` uses `max_output_tokens × 0.65`
+per chunk, with thinking mode (1.4× buffer) and mode-based retry multiplier
+(preview/incremental 1.15, full/range 1.25). Merge and final stages are confirmed
+zero LLM cost (deterministic Python).
 
-- **Use fast non-thinking model** for structured extraction (e.g., `deepseek-v4-flash` with thinking disabled). Thinking mode adds latency and cost without benefiting structured JSON extraction.
-- **Set bounded parallelism** (default 3). Higher values (>4) may trigger provider rate limits.
-- **Enable thinking only when quality requires it** — primarily for complex reasoning tasks, not structured extraction.
-- **Large novels (>300k chars)** should use preview mode with limited chunks. Full direct analysis on large texts repeats selected chunks ~6 times, consuming significant API credits.
-- **v0.1 limitation**: Direct structured analysis sends selected chunks once per output_type (6 separate LLM calls with identical prefix).
-- **v0.2 staged pipeline**: Each chunk is sent to the LLM once (local_extraction), then deterministic merge and final stages run without LLM (~4× token savings). Full retry/resume/idempotency support.
+### Adaptive Retry Strategy (v0.3.1)
 
-## Test Summary (367 tests, all passing)
+- Transport errors (`httpx.TransportError`) caught and wrapped as `LLMClientError`.
+- `finish_reason` tracked; truncation detected when `finish_reason == "length"` or
+  `completion_tokens >= max_tokens - 8`.
+- Token escalation: `original → min(original × 2, 16384) → 16384`.
+- Backoff: 429 errors use 15–30s; JSON truncation uses 1.5–3s; transport uses 3–6s.
+- Per-attempt error re-evaluation: if attempt 1 was transport but attempt 2 shows
+  JSON truncation, attempt 3 correctly escalates to `RETRY_MAX_TOKENS`.
+
+## Test Summary (631 tests, all passing)
 
 | File | Tests | Key areas |
 |------|-------|-----------|
@@ -287,40 +301,44 @@ Job: pending → running → succeeded / partial_success / failed / cancelled
 | `test_parse_api.py` | 13 | Parse API, chunks pagination, storage, idempotent |
 | `test_topics.py` | 17 | CRUD, provider FK, topic config, effective config, cascade delete |
 | `test_retrieval_service.py` | 8 | Keyword match, stopwords filter, excerpt position, empty query |
-| `test_llm_client.py` | 8 | Normal/401/network/invalid JSON/empty choices/retry/api_key leak |
+| `test_llm_client.py` | 12 | Normal/401/network/transport/retry/finish_reason/api_key leak |
 | `test_model_provider_test.py` | 4 | Provider test success/404/LLM error/api_key leak |
 | `test_health.py` | 1 | Health endpoint |
-| `test_stable_id.py` (v2) | 26 | Stable ID generation, CJK safety, idempotency |
-| `test_analysis_run.py` (v2) | 15 | AnalysisRun CRUD, migration, status transitions |
-| `test_analysis_runs.py` (v2) | 28 | v2 pipeline, retry, resume, idempotency, error classification |
-| `test_analysis_selection.py` (v2) | 22 | Chunk meta, preview/range/full/incremental selection |
+| `test_analysis_selection.py` (v2) | 29 | Chunk meta, preview/range/full/incremental, cost estimate |
 | `test_atom_normalizer.py` (v2) | 15 | JSON normalization, evidence/confidence contract |
 | `test_v2_prompts.py` (v2) | 28 | v1+v2 prompt loading, JSON parsing, validation |
-| `test_local_extraction_worker.py` (v2) | 13 | Single-chunk extraction, retry, api_key mask |
-| `test_merge_service.py` (v2) | 17 | Deterministic merge (8 types), dedup, per-item fields |
-| `test_final_output_service.py` (v2) | 11 | Merge → v0.1-compatible final outputs |
+| `test_local_extraction_worker.py` (v2/v3) | 29 | Cumulative attempts, truncation, adaptive retry, cache fields, thinking mode |
+| `test_merge_service.py` (v2/v3) | 22 | Deterministic merge (8 types), causality matching strategies |
+| `test_final_output_service.py` (v2/v3) | 13 | Final outputs, warning consolidation, resolved event IDs |
 | `test_artifact_storage.py` (v2) | 6 | Hybrid storage, write/read/delete, threshold |
+| `test_analysis_run.py` (v2) | 15 | AnalysisRun CRUD, migration, status transitions |
+| `test_analysis_runs.py` (v2/v3) | 60 | Pipeline, retry, resume, cumulative tokens, _fail_run, usage breakdown |
+| `test_stable_id.py` (v2) | 26 | Stable ID generation, CJK safety, idempotency |
+| `test_fts_service.py` (v3) | 11 | FTS5 rebuild, search, CJK fallback |
+| `test_retrieval_integration.py` (v3) | 5 | Hybrid retrieval smoke tests |
+| `test_epub_parser.py` (v3) | 26 | EPUB parse, metadata, chapter extraction |
+| `test_search_api.py` (v3) | 8 | Search endpoint, metadata, locator |
 
 All tests mock LLM calls. No real external API calls in CI.
 
 ## Key Design Decisions
 
-- **Provider presets**: Built-in catalog of known providers (DeepSeek, OpenAI, Qwen/Alibaba, Kimi/Moonshot) with base URLs and model metadata. Custom OpenAI-compatible providers also supported. See `provider_presets.py`.
-- **Provider vs. Topic config**: Provider stores credentials and global defaults. `TopicProviderConfig` stores per-Topic overrides (model, tokens, temperature, thinking mode, parallelism). Effective config resolves Topic override > Provider default > Preset default. Editing a Topic's config never mutates the global Provider.
-- **Async parallel jobs**: Analysis runs the 6 output types in parallel via `ThreadPoolExecutor` (bounded 1-6). Worker threads only call LLM; the main thread writes DB results. Status pollable via `GET /api/topics/{id}/analysis/status`.
-- **Prompt-cache-friendly construction**: Shared system instructions and novel chunks form a stable prefix across all 6 output-type LLM calls. Task-specific schema and instructions are appended last, maximizing cache hit rates on providers that support prompt caching.
-- **Per-type token budgets**: Each of the 6 analysis types has a tuned `max_tokens` limit (overview: 1024, characters: 3072, relations: 2048, events: 3072, causality: 2048, themes: 1536). Overridable by effective config.
-- **Retry policy**: Per-type retries (max 2) with exponential backoff for 429/5xx/timeout/rate-limit errors. JSON parse failures retry once with doubled max_tokens.
-- **Thinking mode**: DeepSeek-compatible `extra_body={"thinking": {"type": "enabled/disabled"}}`. Only sent when provider preset supports thinking. Non-thinking (disabled) recommended for structured extraction — faster, cheaper, and temperature has effect.
-- **No file-per-chunk**: v0.1 stores chunk text in SQLite columns. v0.2 adds hybrid storage for merge/final analysis JSON: large content (>64KB) stored on disk under `data/topics/{id}/artifacts/` with `analysis_artifact` table tracking; small JSON stays inline in SQLite. LocalExtraction content remains inline by design.
-- **Batch-map-merge**: For novels with many chunks, analysis uses a two-stage pipeline: partial analysis per batch, then multi-level merge.
-- **api_key safety**: `ModelProvider.masked_api_key` @property; all API responses exclude raw `api_key`; errors use `mask_api_key()` before logging.
-- **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()` instead of string `startswith`.
-- **Keyword retrieval**: Substring + Chinese character overlap (filtered by ~70 stopwords) + English word overlap. No vector DB.
-- **Chat grounding**: Answers must include evidence/uncertainty JSON fields; recent 6 messages included for pronoun resolution.
-- **Chat token tracking**: ChatMessage stores `prompt_tokens`, `completion_tokens`, `total_tokens`, and `model_used` from LLM API responses for per-model usage statistics in the UI.
-- **Chunk text normalization**: Parser collapses excessive blank lines and strips trailing whitespace before storing chunk text, reducing token waste in LLM prompts.
-- **Schema migration**: `init_db()` runs incremental `ALTER TABLE ADD COLUMN` migrations for new fields on existing databases.
+- **Provider presets**: Built-in catalog of known providers (DeepSeek, OpenAI, Qwen/Alibaba, Kimi/Moonshot) with base URLs and model metadata.
+- **Provider vs. Topic config**: Three-layer config resolution (Topic > Provider > Preset). Editing a Topic's config never mutates the global Provider.
+- **Async parallel jobs**: `ThreadPoolExecutor` (bounded 1–6). Worker threads only call LLM; main thread writes DB.
+- **Prompt-cache-friendly**: Stable prefix across LLM calls; task-specific instructions appended last.
+- **Cumulative token accounting**: All LLM attempts tracked, not just the last one. Failed retry tokens summed into totals. `LocalExtraction` stores reasoning/cache/unavailable breakdown.
+- **Adaptive retry**: Transport errors caught and retried. JSON truncation escalates `max_tokens` from original → `min(×2, 16384)` → `16384`. 429 uses 15–30s backoff.
+- **Thinking mode**: `extra_body={"thinking": {"type": "enabled/disabled"}}`. Recommended disabled for structured extraction. Thinking mode inflates cost estimates by 1.4×.
+- **Hybrid storage**: Large analysis JSON (>64KB) stored on disk; small inline in SQLite. `analysis_artifact` table tracks disk artifacts.
+- **Batch-map-merge**: Two-stage pipeline for many chunks: partial per batch, then multi-level merge.
+- **Causality matching**: Multi-strategy: stable_id, title, id_hints, substring containment (min 4 chars). Resolved links emit `resolved_cause_event_id` / `resolved_effect_event_id`.
+- **api_key safety**: `masked_api_key` @property; all API responses exclude raw key; errors mask keys before logging.
+- **Path traversal protection**: `storage._is_safe()` uses `Path.relative_to()`.
+- **Hybrid retrieval (v0.3)**: FTS5 → keyword/CJK fallback → structured atoms → analysis outputs. Dedup by chunk_id, score normalization.
+- **Chat grounding**: Answers include structured evidence_json; recent 6 messages for context.
+- **Chat token tracking**: ChatMessage stores `prompt_tokens`, `completion_tokens`, `total_tokens`, `model_used` from LLM responses.
+- **Schema migration**: `init_db()` runs incremental `ALTER TABLE ADD COLUMN` migrations. v0.3.1 adds cumulative usage columns to `local_extraction`.
 
 ## Dependencies
 
@@ -331,20 +349,23 @@ uvicorn>=0.30.0
 sqlmodel>=0.0.22
 httpx>=0.27.0
 python-multipart>=0.0.12
+beautifulsoup4>=4.12.0
 
 [dev]
 pytest>=8.0
 ruff>=0.8.0
 ```
 
-## Forbidden (v0.1.0)
+## Forbidden (v0.3.0)
 
 - Login/auth/multi-user
 - Cloud sync/remote storage
-- .epub or PDF parsing
+- PDF parsing / OCR / DRM removal
 - Docker/containerization
 - LangChain/LlamaIndex
-- Vector databases (Chroma/Pinecone)
+- Vector databases (Chroma/Pinecone/Qdrant/FAISS)
 - Redis/Celery/PostgreSQL/message queues
 - Plugin systems
 - Multi-novel per Topic
+- Tailwind / MUI / Ant Design / Chakra
+- Redux / Zustand / MobX
