@@ -5,8 +5,6 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from db import get_session
-from models.chapter import Chapter
-from models.chunk import Chunk
 from models.document import Document
 from models.topic import Topic
 from models.work import Work, WorkCreate, WorkRead
@@ -30,21 +28,11 @@ def _check_work(work_id: str, session: Session) -> Work:
 
 
 def _has_data(work_id: str, session: Session) -> bool:
-    """Check if a Work has document, chapters, chunks, or analysis data."""
+    """Check if a Work has any data — a Document alone is non-empty."""
     doc = session.exec(
         select(Document).where(Document.work_id == work_id)
     ).first()
-    if doc is None:
-        return False
-    chapters = session.exec(
-        select(Chapter).where(Chapter.document_id == doc.id)
-    ).first()
-    if chapters is not None:
-        return True
-    chunks = session.exec(
-        select(Chunk).where(Chunk.document_id == doc.id)
-    ).first()
-    return chunks is not None
+    return doc is not None
 
 
 # ── Topic-scoped endpoints ──
@@ -53,6 +41,12 @@ def _has_data(work_id: str, session: Session) -> bool:
 @topic_router.get("")
 def list_works(topic_id: str, session: Session = Depends(get_session)) -> dict:
     _check_topic(topic_id, session)
+
+    # Backfill any legacy Documents without Work
+    from services.work_service import backfill_null_work_ids
+
+    backfill_null_work_ids(topic_id, session)
+
     works = session.exec(
         select(Work)
         .where(Work.topic_id == topic_id)

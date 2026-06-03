@@ -147,3 +147,66 @@ class TestWorkCRUD:
         assert data["description"] is None
         assert data["series_index"] is None
         assert data["status"] == "empty"
+
+    def test_delete_work_with_document_only_409(self, engine, client):
+        """Work with uploaded Document but no chapters → non-empty, delete 409."""
+        from models.document import Document
+        from models.topic import Topic
+        from models.work import Work
+
+        with Session(engine) as session:
+            topic = Topic(name="DocOnlyDel", status="uploaded")
+            session.add(topic); session.flush()
+            work = Work(topic_id=topic.id, title="DocOnly", series_index=1)
+            session.add(work); session.flush()
+            doc = Document(
+                topic_id=topic.id, work_id=work.id,
+                original_filename="just_uploaded.txt",
+                file_size_bytes=100, char_count=50, status="uploaded",
+            )
+            session.add(doc)
+            session.commit()
+            wid = work.id
+            did = doc.id
+
+        r = client.delete(f"/api/works/{wid}")
+        assert r.status_code == 409
+
+        # Verify Work and Document still exist
+        r2 = client.get(f"/api/works/{wid}")
+        assert r2.status_code == 200
+        with Session(engine) as session:
+            doc = session.get(Document, did)
+            assert doc is not None
+            assert doc.work_id == wid
+
+    def test_list_works_backfills_legacy_document(self, engine, client):
+        """Topic with Document but no Work → list_works creates default Work and backfills."""
+        from models.document import Document
+        from models.topic import Topic
+
+        with Session(engine) as session:
+            topic = Topic(name="LegacyList", status="parsed")
+            session.add(topic); session.flush()
+            doc = Document(
+                topic_id=topic.id, original_filename="legacy.txt",
+                file_size_bytes=100, char_count=50, status="parsed",
+                work_id=None,
+            )
+            session.add(doc)
+            session.commit()
+            tid = topic.id
+            did = doc.id
+
+        r = client.get(f"/api/topics/{tid}/works")
+        assert r.status_code == 200
+        works = r.json()["works"]
+        assert len(works) == 1, "legacy Document should trigger default Work creation"
+        assert works[0]["series_index"] == 1
+        assert works[0]["title"] == "legacy"
+
+        # Document should be backfilled
+        with Session(engine) as session:
+            doc = session.get(Document, did)
+            assert doc is not None
+            assert doc.work_id == works[0]["id"]
