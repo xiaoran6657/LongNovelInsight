@@ -62,7 +62,7 @@ class TestTXTUploadRegression:
         data = resp.json()
         assert data["file_type"] == "txt"
         assert data["encoding"] in ("utf-8", "utf-8-sig")
-        assert data["stored_filename"] == "original.txt"
+        assert "original.txt" in data["stored_filename"]
         assert data["char_count"] > 0
         assert data["metadata_json"] is None
 
@@ -97,7 +97,7 @@ class TestEPUBUpload:
         data = resp.json()
         assert data["file_type"] == "epub"
         assert data["encoding"] == "epub"
-        assert data["stored_filename"] == "original.epub"
+        assert "original.epub" in data["stored_filename"]
         assert data["char_count"] == 0  # not parsed yet
         assert data["metadata_json"] is not None
         import json
@@ -152,7 +152,8 @@ class TestEPUBUpload:
         from services.storage import get_source_dir
 
         src_dir = get_source_dir(topic_id)
-        epub_path = src_dir / "original.epub"
+        stored = resp.json()["stored_filename"]
+        epub_path = src_dir / stored
         assert epub_path.exists()
 
         # Delete document

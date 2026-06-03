@@ -42,14 +42,18 @@ def _normalize_name(name: str) -> str:
 
 
 def _parse_aliases(content_json_str: str) -> list[str]:
-    """Extract aliases from an atom's content_json."""
+    """Extract aliases from an atom's content_json.
+
+    Only reads the 'aliases' field — does NOT treat observed_traits as aliases
+    (traits are descriptive, not names, and would cause false merges).
+    """
     try:
         data = json.loads(content_json_str)
     except (json.JSONDecodeError, TypeError):
         return []
     if not isinstance(data, dict):
         return []
-    aliases = data.get("aliases") or data.get("observed_traits") or []
+    aliases = data.get("aliases") or []
     if isinstance(aliases, list):
         return [a for a in aliases if isinstance(a, str) and a.strip()]
     return []
@@ -97,13 +101,13 @@ def build_entity_registry(
         atom_base.order_by(ExtractedAtom.chapter_index, ExtractedAtom.chunk_index)
     ).all()
 
+    # Always clear old registry before building or returning empty
+    _clear_registry(topic_id, session)
+
     if not atoms:
         return {"entity_count": 0, "mention_count": 0, "warnings": []}
 
-    # 2. Clear existing registry for this topic
-    _clear_registry(topic_id, session)
-
-    # 3. Build entity groups by normalized key
+    # 2. Build entity groups by normalized key
     # Phase 1: group by stable_id first
     stable_groups: dict[str, list[ExtractedAtom]] = {}
     for a in atoms:
@@ -136,7 +140,10 @@ def build_entity_registry(
                 for alias in _parse_aliases(a.content_json):
                     if alias not in aliases_list:
                         aliases_list.append(alias)
-            resolved[matched_key]["work_ids"].add(_get_work_id_for_atom(a, session))
+            for a in group:
+                wid = _get_work_id_for_atom(a, session)
+                if wid:
+                    resolved[matched_key]["work_ids"].add(wid)
         else:
             # New entity
             aliases: list[str] = []

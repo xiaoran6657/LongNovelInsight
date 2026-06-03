@@ -58,9 +58,10 @@ def test_upload_gbk_saved_as_utf8(client):
 
     tid = _create_topic(client)
     text = "第一章 风起\n张三走进长安城。\n第二章 雨落\n李四拔剑。"
-    _upload(client, tid, content=text.encode("gbk"))
+    resp = _upload(client, tid, content=text.encode("gbk"))
 
-    saved_path = config.DATA_DIR / "topics" / tid / "source" / "original.txt"
+    stored = resp.json()["stored_filename"]
+    saved_path = config.DATA_DIR / "topics" / tid / "source" / stored
     assert saved_path.exists()
     saved_text = saved_path.read_text(encoding="utf-8")
     assert "第一章" in saved_text

@@ -330,10 +330,16 @@ def list_work_analysis_runs(
 
     work = _check_work(work_id, session)
 
-    # List runs for the topic (existing function), then filter by work-scoped chunks
-    page, total = analysis_run_service.list_analysis_runs(
-        session, work.topic_id, limit=limit, offset=offset
+    # Load all runs for the topic, then filter by work_id in chunk_selection
+    all_runs, _ = analysis_run_service.list_analysis_runs(
+        session, work.topic_id, limit=999999, offset=0
     )
+    filtered = [
+        r for r in all_runs
+        if r.get_chunk_selection().get("work_id") == work_id
+    ]
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
 
     return {
         "runs": [

@@ -37,9 +37,9 @@ CHAPTER_PATTERN = re.compile(
 
 def _txt_to_source_document(topic_id: str, doc: Document) -> SourceDocument:
     """Read a TXT file from disk and build a SourceDocument."""
-    source_path = storage.get_original_txt_path(topic_id)
+    source_path = storage.get_source_file_path(topic_id, doc.stored_filename)
     if not source_path.exists():
-        raise ValueError("Original text file not found on disk")
+        raise ValueError(f"Source file not found: {doc.stored_filename}")
 
     text = source_path.read_text(encoding="utf-8")
     detected = _detect_chapters(text)

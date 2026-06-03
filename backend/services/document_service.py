@@ -72,8 +72,17 @@ def _get_doc_by_work(work_id: str, session: Session) -> Document | None:
     return session.exec(select(Document).where(Document.work_id == work_id)).first()
 
 
-def _delete_document_derived_data(topic_id: str, session: Session) -> None:
-    # Chat messages -> sessions
+def _delete_document_derived_data(
+    topic_id: str, session: Session, document_id: str | None = None
+) -> None:
+    """Delete derived data for a document or the whole topic.
+
+    When document_id is provided, only that document's chapters/chunks and
+    associated atoms/extractions are deleted. Analysis runs/outputs/jobs
+    remain topic-scoped and are deleted only when document_id is None (full
+    topic cleanup).
+    """
+    # Chat messages -> sessions (topic-scoped)
     sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
     for s in sessions:
         messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == s.id)).all()
@@ -81,42 +90,70 @@ def _delete_document_derived_data(topic_id: str, session: Session) -> None:
             session.delete(m)
         session.delete(s)
 
-    # Analysis artifacts
+    # Analysis artifacts (topic-scoped)
     from services.artifact_storage_service import delete_artifacts_for_topic
 
     delete_artifacts_for_topic(session, topic_id)
 
-    # Analysis outputs first (FK to analysis_run)
-    outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)).all()
-    for o in outputs:
-        session.delete(o)
+    # Determine if this is the only document in the topic
+    if document_id is not None:
+        other_docs = session.exec(
+            select(Document).where(
+                Document.topic_id == topic_id,
+                Document.id != document_id,
+            )
+        ).first()
+        is_only_document = other_docs is None
+    else:
+        is_only_document = True
 
-    # v2 analysis artifacts: atoms → extractions → runs
-    atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
-    for a in atoms:
-        session.delete(a)
-    extractions = session.exec(
-        select(LocalExtraction).where(LocalExtraction.topic_id == topic_id)
-    ).all()
-    for e in extractions:
-        session.delete(e)
-    runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
-    for r in runs:
-        session.delete(r)
+    if is_only_document:
+        # Full topic cleanup — no other documents exist
+        outputs = session.exec(
+            select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id)
+        ).all()
+        for o in outputs:
+            session.delete(o)
 
-    # Jobs -> job_items
-    jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()
-    for j in jobs:
-        items = session.exec(select(JobItem).where(JobItem.job_id == j.id)).all()
-        for ji in items:
-            session.delete(ji)
-        session.delete(j)
+        atoms = session.exec(
+            select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)
+        ).all()
+        for a in atoms:
+            session.delete(a)
+        extractions = session.exec(
+            select(LocalExtraction).where(LocalExtraction.topic_id == topic_id)
+        ).all()
+        for e in extractions:
+            session.delete(e)
+        runs = session.exec(
+            select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)
+        ).all()
+        for r in runs:
+            session.delete(r)
 
-    # Chunks -> chapters
-    chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
+        jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()
+        for j in jobs:
+            items = session.exec(select(JobItem).where(JobItem.job_id == j.id)).all()
+            for ji in items:
+                session.delete(ji)
+            session.delete(j)
+    # Else: scoped cleanup — only this document's chunks/chapters are deleted.
+    # Analysis data is preserved for other Works in the topic.
+
+    # Chunks → chapters (scoped by document_id when provided)
+    chunk_query = select(Chunk)
+    chapter_query = select(Chapter)
+    if document_id is not None:
+        chunk_query = chunk_query.where(Chunk.document_id == document_id)
+        chapter_query = chapter_query.where(Chapter.document_id == document_id)
+    else:
+        chunk_query = chunk_query.where(Chunk.topic_id == topic_id)
+        chapter_query = chapter_query.where(Chapter.topic_id == topic_id)
+
+    chunks = session.exec(chunk_query).all()
     for c in chunks:
         session.delete(c)
-    chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
+    chapters = session.exec(chapter_query).all()
     for ch in chapters:
         session.delete(ch)
 
@@ -205,7 +242,8 @@ def _upload_txt(
         raise HTTPException(status_code=422, detail="Document contains no meaningful text content")
 
     source_dir = storage.ensure_topic_dirs(topic_id)
-    dest_path = source_dir / "original.txt"
+    stored_name = f"work_{work_id}_original.txt"
+    dest_path = source_dir / stored_name
     dest_path.write_text(text, encoding="utf-8")
 
     try:
@@ -217,7 +255,7 @@ def _upload_txt(
         topic_id=topic_id,
         work_id=work_id,
         original_filename=file.filename,
-        stored_filename="original.txt",
+        stored_filename=stored_name,
         file_type="txt",
         file_size_bytes=len(content),
         char_count=len(text),
@@ -251,7 +289,8 @@ def _upload_epub(
     _validate_epub_container(content, file.filename or "unknown.epub")
 
     source_dir = storage.ensure_topic_dirs(topic_id)
-    dest_path = source_dir / "original.epub"
+    stored_name = f"work_{work_id}_original.epub"
+    dest_path = source_dir / stored_name
     dest_path.write_bytes(content)
 
     try:
@@ -267,7 +306,7 @@ def _upload_epub(
         topic_id=topic_id,
         work_id=work_id,
         original_filename=file.filename,
-        stored_filename="original.epub",
+        stored_filename=stored_name,
         file_type="epub",
         file_size_bytes=len(content),
         char_count=0,  # set after parse
@@ -324,8 +363,8 @@ def delete_current_document(topic_id: str, session: Session) -> dict:
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded")
 
-    # Delete derived data first (cascade)
-    _delete_document_derived_data(topic_id, session)
+    # Delete derived data for this specific document (not the whole topic)
+    _delete_document_derived_data(topic_id, session, document_id=doc.id)
 
     storage.safe_delete_file(config.DATA_DIR / doc.storage_path)
     storage.safe_delete_empty_dirs(storage.get_source_dir(topic_id))
