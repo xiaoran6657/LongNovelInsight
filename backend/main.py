@@ -37,6 +37,7 @@ from routers import (  # noqa: E402
     search,
     topic_provider_config,
     topics,
+    works,
 )
 
 app.include_router(health.router, prefix="/api")
@@ -56,3 +57,5 @@ app.include_router(chat.topic_router, prefix="/api")
 app.include_router(chat.session_router, prefix="/api")
 app.include_router(analysis_runs.topic_router, prefix="/api")
 app.include_router(analysis_runs.run_router, prefix="/api")
+app.include_router(works.topic_router, prefix="/api")
+app.include_router(works.work_router, prefix="/api")
