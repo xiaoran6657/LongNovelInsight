@@ -110,7 +110,7 @@ def delete_work(work_id: str, session: Session = Depends(get_session)) -> dict:
         raise HTTPException(
             status_code=409,
             detail=(
-                "Deleting analyzed works is not supported in v0.4.0; "
+                "Deleting non-empty works is not supported in v0.4.0; "
                 "remove the Topic or reset data manually."
             ),
         )
