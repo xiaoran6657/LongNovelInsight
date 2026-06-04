@@ -27,7 +27,7 @@ export default function WorkUploadPanel({ workId, hasDocument }: Props) {
       <h4 style={{ margin: "0 0 0.3rem 0" }}>Document</h4>
       {hasDocument ? (
         <p className="text-dim" style={{ fontSize: "0.8rem" }}>
-          Document already uploaded. Use the Overview tab to manage it.
+          Document already uploaded. Details shown above.
         </p>
       ) : (
         <div>

@@ -154,4 +154,41 @@ test.describe("v0.4 Works", () => {
     // Should show error
     await expect(page.locator("text=not supported")).toBeVisible();
   });
+
+  test("create work sends correct POST body", async ({ page }) => {
+    await mockV04Topic(page);
+    let requestBody: Record<string, unknown> = {};
+    await page.route(apiRoute(`/api/topics/${TOPIC_ID}/works`), (route, request) => {
+      if (request.method() === "POST") {
+        requestBody = request.postDataJSON() || {};
+      }
+      route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify({
+          id: "new-work", topic_id: TOPIC_ID, title: requestBody.title || "Untitled",
+          subtitle: null, author: null, series_index: null, description: null,
+          status: "empty", metadata_json: null,
+          created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z",
+        }),
+      });
+    });
+
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.waitForLoadState("networkidle");
+    await page.locator("button", { hasText: "Works" }).click();
+    await page.locator("button", { hasText: "+ New Work" }).click();
+
+    await page.fill('input[placeholder="Title (required)"]', "Test Novel");
+    await page.fill('input[placeholder="Author"]', "Author X");
+    await page.fill('input[placeholder="Series #"]', "1");
+    await page.locator("button", { hasText: "Create Work" }).click();
+
+    // Wait for the mock to be called
+    await page.waitForTimeout(500);
+    expect(requestBody.title).toBe("Test Novel");
+    expect(requestBody.author).toBe("Author X");
+    expect(requestBody.series_index).toBe(1);
+  });
+
 });
+
