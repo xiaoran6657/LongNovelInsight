@@ -12,7 +12,7 @@ npm run typecheck     # TypeScript check
 npm run lint          # ESLint
 npm run build         # Production build → dist/
 npm run check         # All three checks at once
-npm run e2e           # Playwright end-to-end tests (38 tests)
+npm run e2e           # Playwright end-to-end tests (44 tests: 38 v0.3 + 6 v0.4)
 ```
 
 The backend must be running separately:
@@ -133,9 +133,39 @@ frontend/
 | `/` | DashboardPage | Health status + workflow overview |
 | `/providers` | ProvidersPage | LLM provider CRUD |
 | `/topics` | TopicsPage | Topic list + create |
-| `/topics/:topicId` | TopicDetailPage | Document, parse, v2 analysis, search, entity evidence, similar scenes, provider config |
+| `/topics/:topicId` | TopicDetailPage | v0.4: Works, cross-work dashboard, entities, graph, timeline, v2 analysis, search, evidence |
 | `/topics/:topicId/chat` | TopicChatPage | Chat sessions + structured evidence + config/usage right panel + source text viewer |
 | `*` | NotFoundPage | 404 |
+
+## v0.4 Features
+
+### Multi-Work Management
+- Tab navigation: Overview / Works / Entities / Graph / Timeline.
+- Work CRUD: create, list, edit (title/subtitle/author/series_index/description), delete with 409 error display.
+- Work selector: inline switcher when multiple Works exist.
+- Work-scoped upload (TXT/EPUB), parse, and preview analysis buttons.
+- Work detail: document metadata (filename, size, encoding), chapter/chunk counts.
+
+### Cross-Work Dashboard
+- Run/entity stats cards, last run status with error display.
+- Build trigger button with auto-polling (2s interval) until terminal.
+- Auto-detects existing running runs on page load.
+- Terminal state invalidates entities/graph/timeline queries.
+- Warnings display (up to 3, +N more).
+
+### Entity Registry
+- Search by name, filter by type, sort by mentions/name/confidence.
+- Click-to-expand detail drawer: canonical name, aliases, work IDs, confidence, merge strategy.
+- Mentions list with surface text and evidence snippets.
+
+### Character Graph
+- Edge table: source character → relation type → target character, with weight.
+- Node/edge counts, snapshot metadata, empty state with build prompt.
+- Error state for failed loads.
+
+### Timeline
+- Ordered event list: title, summary, participants, time label, sequence index, confidence.
+- Empty state with build prompt, error state for failed loads.
 
 ## v0.3 Features
 
