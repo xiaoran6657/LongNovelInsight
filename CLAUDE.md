@@ -8,11 +8,12 @@ Current version: **v0.4.0-dev**.
 ## Current State
 
 **v0.3 Backend — COMPLETE.** **v0.3 Frontend — COMPLETE.** **v0.3.1 — COMPLETE.**
-**v0.4 Backend — COMPLETE (Steps 1-10 of 10).** **v0.4 Frontend — COMPLETE (Steps 1-8) with known limitations.**
+**v0.4 Backend — COMPLETE (Steps 1-10 of 10).** **v0.4 Frontend — COMPLETE (Steps 1-11 of 11).**
 Multi-Work data model, Work CRUD, Work-scoped upload/parse/analysis, cross-work
 entity registry, character graph, timeline, cross-work run orchestration,
 work-scoped search/retrieve filters. Frontend: tab navigation, Work management,
-cross-work dashboard with polling, entity registry, graph/timeline views.
+cross-work dashboard with polling, entity registry, graph/timeline views,
+work-scoped search + evidence UI.
 
 What each version delivered:
 - **v0.1**: Basic TXT analysis — 6 analysis types per chunk, evidence-grounded chat, keyword retrieval.

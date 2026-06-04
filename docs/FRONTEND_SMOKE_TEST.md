@@ -1,4 +1,4 @@
-# Frontend Smoke Test — LongNovelInsight v0.3.0-dev
+# Frontend Smoke Test — LongNovelInsight v0.4.0-dev
 
 This document describes how to manually verify the full local product workflow from a fresh start. Each step includes what to check and what to do if it fails.
 
@@ -526,3 +526,59 @@ These are already in `.gitignore` — do not use `git add -f` for them.
 3. Verify all buttons have keyboard-operable focus styles
 4. Verify disabled buttons are skipped in tab order or clearly indicated
 5. Verify aria-labels exist on: Retry Failed, Resume, Cancel, Create Run, Delete All buttons
+
+---
+
+## v0.4.0 New Features
+
+### Work Management
+
+1. Open a parsed Topic → confirm tab bar shows Overview / Works / Entities / Graph / Timeline.
+2. Click **Works** tab → confirm Work list renders.
+3. Click **+ New Work** → fill title/subtitle/author/series/description → click Create Work.
+4. Confirm new Work appears in list with status "empty".
+5. Click **Edit** on a Work → update title → click Save → confirm changes persist.
+6. Click **×** on an empty Work → confirm deletion succeeds.
+7. For a Work with a document, click **×** → confirm 409 error message appears.
+
+### Work-Scoped Upload and Parse
+
+1. Click an empty Work to select it → confirm upload input appears.
+2. Upload a .txt file → confirm status changes to "uploaded".
+3. Click **Parse Document** → confirm status changes to "parsed".
+4. Confirm document metadata (filename, size, encoding) and chapter/chunk counts appear.
+
+### Cross-Work Dashboard
+
+1. With parsed Works in the Topic, scroll to Cross-Work Dashboard in the Works tab.
+2. Click **Run Cross-Work Build** → confirm "Build in progress..." message.
+3. Wait for build to complete → confirm status shows "succeeded".
+4. Confirm run/entity stats update.
+5. If warnings are generated, confirm they display in the warnings card.
+
+### Entity Registry
+
+1. After cross-work build, click **Entities** tab.
+2. Confirm entity table appears with entities from the build.
+3. Type in the search field → confirm results filter.
+4. Select a type from the dropdown → confirm results filter.
+5. Click an entity row → confirm detail drawer opens with aliases, works, mentions.
+6. Click **×** on the drawer → confirm it closes.
+
+### Character Graph
+
+1. Click **Graph** tab → confirm character relationship data appears.
+2. If no data, confirm "No graph data yet" message with build prompt.
+3. If data exists, confirm edge table shows source → relation → target.
+
+### Timeline
+
+1. Click **Timeline** tab → confirm event list appears.
+2. If no data, confirm "No timeline events yet" message with build prompt.
+3. If data exists, confirm events display title, summary, participants.
+
+### Work-Scoped Search
+
+1. Select a Work in the WorkSelector.
+2. Use the search panel on the Overview tab → confirm results include work_title badge.
+3. Deselect the Work (no selection) → confirm search returns results from all Works.

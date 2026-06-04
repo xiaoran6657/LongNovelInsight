@@ -3,7 +3,7 @@
 ## Current
 
 - **Version:** v0.4.0-dev
-- **Stage:** v0.4.0-dev. Backend complete (Steps 1-10). Frontend complete (Steps 1-8) with known limitations.
+- **Stage:** v0.4.0-dev. Backend complete (Steps 1-10). Frontend complete (Steps 1-11) with known limitations.
 - **Tests:** Backend 724 pytest + 5 integration. Frontend typecheck/lint/build pass. Frontend 44 Playwright e2e (38 v0.3 + 6 v0.4).
 - **Verdict:** PASS_WITH_KNOWN_LIMITATIONS — no P0 blockers; build & regression tests pass; MVP UI wired.
 - **Performance:** Run history uses SQL-level pagination (limit/offset) + `useInfiniteQuery`. Hybrid retrieval latency ~1ms locally.
@@ -56,6 +56,9 @@
 - [x] Step 7: Timeline view (ordered list, error state)
 - [x] Steps 2-3 e2e: 6 tests (create/edit/delete forms, POST/PATCH body, delete 409/success)
 - [x] Step 8: Documentation update (frontend README, PROJECT_STATUS, CLAUDE.md)
+- [x] Step 9: Work scope in search results + chat evidence (work badges, work_ids filter)
+- [x] Step 10: UX hardening (empty/error states verified, zero-Works/no-run crash safe)
+- [x] Step 11: Final documentation + full regression (44 e2e, typecheck/lint/build clean)
 
 **Known Limitations (v0.4 Frontend):**
 - Step 3 upload/parse/analysis endpoints lack mocked e2e coverage (buttons gated on WorkCard click in mocked env).
