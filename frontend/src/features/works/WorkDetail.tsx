@@ -57,6 +57,7 @@ export default function WorkDetail({ work }: Props) {
       {chunksQuery.data && (
         <p>
           <strong>Chunks:</strong> {chunksQuery.data.chunks.length}
+          {chunksQuery.data.chunks.length >= 100 && " (showing first 100)"}
         </p>
       )}
 

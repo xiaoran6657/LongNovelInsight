@@ -21,6 +21,8 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
   const [newTitle, setNewTitle] = useState("");
   const [newIndex, setNewIndex] = useState("");
   const [newAuthor, setNewAuthor] = useState("");
+  const [newSubtitle, setNewSubtitle] = useState("");
+  const [newDesc, setNewDesc] = useState("");
 
   const worksQuery = useQuery({
     queryKey: ["works", topicId],
@@ -31,15 +33,16 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
     mutationFn: () =>
       createWork(topicId, {
         title: newTitle,
+        subtitle: newSubtitle || null,
         series_index: newIndex ? Number(newIndex) : null,
         author: newAuthor || null,
+        description: newDesc || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["works", topicId] });
       setShowCreate(false);
-      setNewTitle("");
-      setNewIndex("");
-      setNewAuthor("");
+      setNewTitle(""); setNewIndex(""); setNewAuthor("");
+      setNewSubtitle(""); setNewDesc("");
     },
   });
 
@@ -47,6 +50,9 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
   const [editTitle, setEditTitle] = useState("");
   const [editAuthor, setEditAuthor] = useState("");
   const [editIndex, setEditIndex] = useState("");
+  const [editSubtitle, setEditSubtitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editError, setEditError] = useState("");
   const [deleteError, setDeleteError] = useState("");
 
   const deleteMut = useMutation({
@@ -62,9 +68,11 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
       updateWork(id, body),
     onSuccess: () => {
+      setEditError("");
       setEditingId(null);
       queryClient.invalidateQueries({ queryKey: ["works", topicId] });
     },
+    onError: (e: Error) => setEditError(e.message),
   });
 
   if (worksQuery.isLoading) return <LoadingBlock text="Loading works..." />;
@@ -109,6 +117,20 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
               style={{ width: "70%" }}
             />
           </div>
+          <input
+            type="text"
+            placeholder="Subtitle (optional)"
+            value={newSubtitle}
+            onChange={(e) => setNewSubtitle(e.target.value)}
+            style={{ width: "100%", marginBottom: "0.3rem" }}
+          />
+          <input
+            type="text"
+            placeholder="Description (optional)"
+            value={newDesc}
+            onChange={(e) => setNewDesc(e.target.value)}
+            style={{ width: "100%", marginBottom: "0.3rem" }}
+          />
           <button
             onClick={() => createMut.mutate()}
             disabled={!newTitle.trim() || createMut.isPending}
@@ -147,9 +169,12 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
                   setEditingId(null);
                 } else {
                   setEditingId(w.id);
+                  setEditError("");
                   setEditTitle(w.title);
                   setEditAuthor(w.author || "");
                   setEditIndex(w.series_index != null ? String(w.series_index) : "");
+                  setEditSubtitle(w.subtitle || "");
+                  setEditDesc(w.description || "");
                 }
               }}
               style={{ fontSize: "0.68rem", padding: "0.15em 0.4em" }}
@@ -188,6 +213,14 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
                   style={{ width: "70%", fontSize: "0.8rem" }}
                 />
               </div>
+              <input type="text" placeholder="Subtitle" value={editSubtitle}
+                onChange={(e) => setEditSubtitle(e.target.value)}
+                style={{ width: "100%", marginBottom: "0.3rem", fontSize: "0.8rem" }}
+              />
+              <input type="text" placeholder="Description" value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                style={{ width: "100%", marginBottom: "0.3rem", fontSize: "0.8rem" }}
+              />
               <button
                 onClick={() =>
                   updateMut.mutate({
@@ -196,6 +229,8 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
                       title: editTitle,
                       author: editAuthor || null,
                       series_index: editIndex ? Number(editIndex) : null,
+                      subtitle: editSubtitle || null,
+                      description: editDesc || null,
                     },
                   })
                 }
@@ -204,6 +239,11 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
               >
                 {updateMut.isPending ? "Saving..." : "Save"}
               </button>
+              {editError && (
+                <p style={{ color: "#c62828", fontSize: "0.75rem", marginTop: "0.3rem" }}>
+                  {editError}
+                </p>
+              )}
             </div>
           )}
         </div>
