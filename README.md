@@ -47,9 +47,9 @@ work-scoped search/retrieve filters. All v0.3 APIs remain backward-compatible.
 | Similar Scenes | `GET /similar-scenes?chunk_id=...&query=...` |
 | Chat (upgraded) | Structured evidence_json, RetrievalTrace per message, empty-retrieval guard |
 
-### What It Does NOT Do (v0.3.0-dev)
+### What It Does NOT Do (v0.4.0-dev)
 
-- No PDF/OCR parsing, no DRM removal, no multi-book Topic, no cross-work analysis, no vector DB (Qdrant/Chroma/FAISS), no Docker, no LangChain/LlamaIndex, no graph visualization, no cloud sync/auth.
+- No PDF/OCR parsing, no DRM removal, no vector DB (Qdrant/Chroma/FAISS), no Docker, no LangChain/LlamaIndex, no cloud sync/auth, no multiple source documents per Work.
 
 ### You Bring Your Own API Key
 

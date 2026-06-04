@@ -132,6 +132,9 @@ def _execute_impl(run_id: str, engine) -> None:
         if run is None:
             return
         run.status = "failed" if has_failure else "succeeded"
+        if has_failure:
+            failed_stages = [k for k, v in stats.items() if "error" in v]
+            run.error = f"Failed: {', '.join(failed_stages)}" if failed_stages else "Build failed"
         run.completed_at = _now()
         run.stats_json = json.dumps(stats, ensure_ascii=False)
         run.warnings_json = json.dumps(all_warnings[:20], ensure_ascii=False)

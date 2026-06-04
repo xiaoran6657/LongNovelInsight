@@ -12,6 +12,7 @@ from models.chunk import Chunk
 from models.document import Document
 from models.enums import AtomType
 from models.extracted_atom import ExtractedAtom
+from models.global_entity import GlobalEntity
 from models.timeline_item import TimelineItem
 
 
@@ -95,13 +96,17 @@ def build_timeline(
                     if d:
                         work_id = d.work_id
 
-        # Sequence: work_series * 1_000_000 + chapter * 1000 + chunk + sub_index
-        ws = work_series.get(doc_id or "", 1)
-        ci, chi = chunk_info.get(atom.chunk_id or "", (0, 0))
-        cid = atom.chunk_id or ""
-        sub_idx = chunk_event_index.get(cid, 0)
-        chunk_event_index[cid] = sub_idx + 1
-        sequence = ws * 1_000_000 + ci * 1000 + chi + sub_idx * 0.001
+        # Sequence: explicit order/sequence > work_series + chapter + chunk + sub_index
+        explicit_order = content.get("order") or content.get("sequence")
+        if explicit_order is not None and isinstance(explicit_order, (int, float)):
+            sequence = float(explicit_order)
+        else:
+            ws = work_series.get(doc_id or "", 1)
+            ci, chi = chunk_info.get(atom.chunk_id or "", (0, 0))
+            cid = atom.chunk_id or ""
+            sub_idx = chunk_event_index.get(cid, 0)
+            chunk_event_index[cid] = sub_idx + 1
+            sequence = ws * 1_000_000 + ci * 1000 + chi + sub_idx * 0.001
 
         evidence_list = _parse_json_list(atom.evidence_quotes)
         evidence_payload = [
@@ -155,8 +160,13 @@ def get_timeline(
     if min_confidence is not None:
         base = base.where(TimelineItem.confidence >= min_confidence)
     if participant_entity_id:
+        # Resolve entity name from GlobalEntity for text-based filter
+        entity = session.get(GlobalEntity, participant_entity_id)
+        search_term = participant_entity_id
+        if entity is not None:
+            search_term = entity.canonical_name
         base = base.where(
-            TimelineItem.participants_json.contains(participant_entity_id)  # type: ignore[arg-type]
+            TimelineItem.participants_json.contains(search_term)  # type: ignore[arg-type]
         )
 
     total = len(session.exec(base).all())

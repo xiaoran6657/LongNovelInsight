@@ -170,12 +170,39 @@ def _build_structured_evidence(candidates: list[dict]) -> list[dict]:
             "method": c["method"],
             "score": c["score"],
             "locator": c.get("source_locator"),
+            "work_id": c.get("work_id"),
+            "work_title": c.get("work_title"),
+            "series_index": c.get("series_index"),
         }
         for c in candidates
     ]
 
 
-def send_user_message(session_id: str, content: str, session: Session) -> ChatMessage:
+def _annotate_candidates_work_meta(candidates: list[dict], session: Session) -> None:
+    """Annotate candidates with work_id/work_title from chunk → document → work."""
+    from models.chunk import Chunk as ChunkModel
+    from models.document import Document as DocumentModel
+    from models.work import Work as WorkModel
+
+    for c in candidates:
+        cid = c.get("chunk_id")
+        if not cid:
+            continue
+        chunk = session.get(ChunkModel, cid)
+        if chunk is None:
+            continue
+        doc = session.get(DocumentModel, chunk.document_id)
+        if doc is not None and doc.work_id:
+            c["work_id"] = doc.work_id
+            work = session.get(WorkModel, doc.work_id)
+            if work is not None:
+                c["work_title"] = work.title
+                c["series_index"] = work.series_index
+
+
+def send_user_message(
+    session_id: str, content: str, session: Session, work_ids: list[str] | None = None
+) -> ChatMessage:
     chat_session = session.get(ChatSession, session_id)
     if chat_session is None:
         raise ValueError("Chat session not found")
@@ -204,6 +231,8 @@ def send_user_message(session_id: str, content: str, session: Session) -> ChatMe
         session=session,
         top_k=DEFAULT_TOP_K,
     )
+    # Annotate with work metadata for structured evidence
+    _annotate_candidates_work_meta(candidates, session)
 
     # Fall back to legacy fuzzy scoring when hybrid returns nothing
     # (hybrid is precise; long natural-language CJK queries may need fuzzier matching)

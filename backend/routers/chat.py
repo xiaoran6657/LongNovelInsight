@@ -74,8 +74,12 @@ def send_message(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    work_ids = body.get("work_ids") if isinstance(body, dict) else None
+
     try:
-        assistant_msg = chat_service.send_user_message(session_id, msg.content, session)
+        assistant_msg = chat_service.send_user_message(
+            session_id, msg.content, session, work_ids=work_ids
+        )
     except ValueError as e:
         msg_str = str(e)
         if "no provider" in msg_str.lower():

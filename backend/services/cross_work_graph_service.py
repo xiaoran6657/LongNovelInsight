@@ -34,7 +34,30 @@ def build_character_graph(
         )
     ).all()
 
+    # Clear old snapshots first (even if empty — prevents stale reads)
+    old_snapshots = session.exec(
+        select(GraphSnapshot).where(
+            GraphSnapshot.topic_id == topic_id,
+            GraphSnapshot.graph_type == "character_relationship",
+        )
+    ).all()
+    for old in old_snapshots:
+        session.delete(old)
+    session.flush()
+
     if not entities:
+        # Persist an empty snapshot so GET returns empty, not stale
+        snapshot = GraphSnapshot(
+            topic_id=topic_id,
+            graph_type="character_relationship",
+            version=1,
+            scope_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
+            nodes_json="[]",
+            edges_json="[]",
+            stats_json=json.dumps({"node_count": 0, "edge_count": 0}, ensure_ascii=False),
+        )
+        session.add(snapshot)
+        session.commit()
         return _empty_graph(topic_id, session)
 
     # Build entity lookup: stable_id → global_entity_id
@@ -300,6 +323,13 @@ def _build_cooccurrence_edges(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type == AtomType.EVENT,
     )
+    if work_ids:
+        chunk_ids_subq = (
+            select(Chunk.id)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Document.work_id.in_(work_ids))
+        )
+        event_base = event_base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
     event_atoms = session.exec(event_base).all()
 
     edges: dict[str, dict] = {}
