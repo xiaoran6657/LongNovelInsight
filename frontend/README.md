@@ -65,10 +65,10 @@ frontend/
     │   ├── search.ts         # v0.3: POST /search
     │   ├── retrieve.ts       # v0.3: POST /retrieve
     │   ├── entities.ts       # v0.3: GET entity evidence + similar scenes
-    │   │   ├── works.ts          # v0.4: Work CRUD + upload/parse/analysis
-    │   │   ├── crossWork.ts      # v0.4: cross-work runs + entity registry
-    │   │   ├── graphs.ts         # v0.4: character graph
-    │   │   └── timeline.ts       # v0.4: timeline
+    │   ├── works.ts          # v0.4: Work CRUD + upload/parse/analysis
+    │   ├── crossWork.ts      # v0.4: cross-work runs + entity registry
+    │   ├── graphs.ts         # v0.4: character graph
+    │   └── timeline.ts       # v0.4: timeline
     ├── features/             # Feature-based UI components + hooks
     │   ├── analysis/         # v0.2+ analysis run UI: mode selector, run panel, history, outputs
     │   │   ├── AnalysisRunPanel.tsx       # Active run detail with token breakdown
@@ -106,6 +106,8 @@ frontend/
     │   │   ├── SourceLocatorBadge.tsx      # v0.3: inline source badge for chunks
     │   │   └── StoragePanel.tsx
     │   ├── provider/         # Provider config components
+    │   │       ├── ProviderConfigForm.tsx
+    │   │       └── EffectiveProviderConfigCard.tsx
     │   ├── works/            # v0.4: Work management
     │   │   ├── WorkList.tsx
     │   │   ├── WorkCard.tsx
@@ -121,8 +123,6 @@ frontend/
     │   │   └── CharacterGraph.tsx
     │   ├── timeline/         # v0.4: timeline
     │   │   └── TimelineView.tsx
-    │       ├── ProviderConfigForm.tsx
-    │       └── EffectiveProviderConfigCard.tsx
     ├── utils/                # Shared utilities
     │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
     ├── components/           # Shared UI components
