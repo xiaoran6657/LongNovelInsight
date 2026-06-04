@@ -58,7 +58,7 @@
 
 **Known Limitations (v0.4 Frontend):**
 - Step 3 upload/parse/analysis endpoints lack mocked e2e coverage (buttons gated on WorkCard click in mocked env).
-- Graph tab uses edge table MVP, not Cytoscape visualization (per audit doc, deferred to v0.4.1).
+- Graph tab currently renders edge table (Cytoscape visualization was planned per audit doc but not yet integrated).
 - Timeline tab uses fixed limit:100 list, no pagination/evidence expand controls.
 
 ## v0.3.0 — Complete (2026-05-31)
@@ -197,7 +197,7 @@ v0.4 turns LongNovelInsight from a single-novel analyzer into a multi-work story
 - **Retry attempt_usage_json not merged:** New retries replace old attempt history (totals are correct via `+=`).
 - **v0.4 Frontend known limitations:**
   - Upload/parse/analysis e2e not mocked (buttons require WorkCard selection in mocked Playwright env).
-  - Character graph is edge table MVP, not Cytoscape visualization (deferred to v0.4.1).
+  - Character graph renders edge table (Cytoscape visualization planned per audit doc, not yet integrated).
   - Timeline is fixed-limit list without pagination or evidence expand controls.
 
 ## Release Info

@@ -39,14 +39,15 @@ frontend/
 ├── index.html
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
-├── playwright.config.ts      # Playwright e2e config (38 tests)
+├── playwright.config.ts      # Playwright e2e config (44 tests)
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
 ├── eslint.config.js          # typescript-eslint + recommended
 ├── .env.example              # VITE_API_BASE_URL template
 ├── e2e/                      # Playwright end-to-end tests
 │   ├── basic.spec.ts         # Basic smoke tests
 │   ├── analysis-v2.spec.ts   # v0.2 analysis pipeline tests
-│   └── v0.3-features.spec.ts # v0.3 EPUB/search/evidence tests (11 tests)
+│   ├── v0.3-features.spec.ts # v0.3 EPUB/search/evidence tests (11 tests)
+│   └── v0.4-features.spec.ts # v0.4 Work CRUD + form body tests (6 tests)
 └── src/
     ├── vite-env.d.ts         # ImportMetaEnv type definitions
     ├── main.tsx              # React root render (QueryClient + Router)
@@ -117,7 +118,7 @@ frontend/
     │   ├── DashboardPage.tsx
     │   ├── ProvidersPage.tsx
     │   ├── TopicsPage.tsx
-    │   ├── TopicDetailPage.tsx  # Document, parse, v2 analysis, search, evidence, provider config
+    │   ├── TopicDetailPage.tsx  # v0.4 tabs: Works, Dashboard, Entities, Graph, Timeline + Overview
     │   ├── TopicChatPage.tsx    # Chat sessions + structured evidence + config/usage right panel
     │   └── NotFoundPage.tsx
     ├── layouts/
@@ -232,7 +233,7 @@ v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministi
 | `typecheck` | `tsc --noEmit` | TypeScript check only |
 | `lint` | `eslint src/` | Lint source files |
 | `check` | `npm run typecheck && npm run lint && npm run build` | All checks |
-| `e2e` | `playwright test` | Run Playwright e2e tests (38 total) |
+| `e2e` | `playwright test` | Run Playwright e2e tests (44 total) |
 | `e2e:ui` | `playwright test --ui` | Run Playwright in UI mode |
 
 ## Dependencies
@@ -248,7 +249,7 @@ v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministi
 
 Dev: `typescript`, `vite`, `@vitejs/plugin-react`, `eslint`, `typescript-eslint`, `@types/react`, `@types/react-dom`, `@playwright/test`.
 
-## Forbidden (v0.3.0)
+## Forbidden (v0.4.0)
 
 - Tailwind CSS or UI component libraries (MUI, Ant Design, Chakra)
 - Redux, Zustand, MobX, or other state management beyond React Context + TanStack Query
