@@ -64,7 +64,16 @@ export default function CrossWorkDashboard({ topicId }: Props) {
 
   const runList = runsQuery.isSuccess ? runsQuery.data : null;
   const lastRun = runList?.runs?.[0];
-  const runWarnings: string[] = activeRunQuery.data?.warnings ?? lastRun?.warnings ?? [];
+
+  // Fetch last run detail separately for warnings (list API doesn't return warnings)
+  const lastRunDetailQuery = useQuery({
+    queryKey: ["cross-work-run", topicId, lastRun?.id],
+    queryFn: () => lastRun ? getCrossWorkRun(topicId, lastRun.id) : null,
+    enabled: !!lastRun && !pollId,
+  });
+
+  const runWarnings: string[] =
+    activeRunQuery.data?.warnings ?? lastRunDetailQuery.data?.warnings ?? [];
 
   return (
     <div>
