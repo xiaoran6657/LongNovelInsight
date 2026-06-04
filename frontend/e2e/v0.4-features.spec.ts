@@ -13,7 +13,6 @@ function apiRoute(pathPattern: string | RegExp) {
 }
 
 async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
-  // Topic
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}`), (route) => {
     route.fulfill({
       status: 200, contentType: "application/json",
@@ -26,12 +25,10 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
     });
   });
 
-  // Topics list
   await page.route(apiRoute("/api/topics"), (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ topics: [] }) });
   });
 
-  // Providers
   await page.route(apiRoute("/api/providers"), (route) => {
     route.fulfill({
       status: 200, contentType: "application/json",
@@ -39,7 +36,6 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
     });
   });
 
-  // Works list
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}/works`), (route) => {
     route.fulfill({
       status: 200, contentType: "application/json",
@@ -52,17 +48,14 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
     });
   });
 
-  // Document (default — none)
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}/documents/current`), (route) => {
     route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "No document uploaded" }) });
   });
 
-  // Provider presets
   await page.route(apiRoute("/api/provider-presets"), (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ presets: [] }) });
   });
 
-  // Effective config
   await page.route((url) => url.origin === API_HOST && url.pathname.includes("/provider-config/effective"), (route) => {
     route.fulfill({
       status: 200, contentType: "application/json",
@@ -75,29 +68,23 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
     });
   });
 
-  // Topic provider config
   await page.route((url) => url.origin === API_HOST && url.pathname.includes("/provider-config") && !url.pathname.includes("effective"), (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
   });
 
-  // Chunks meta
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}/chunks/meta`), (route) => {
     route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: "Document is not parsed" }) });
   });
 }
 
 test.describe("v0.4 Works", () => {
-  test("create work form", async ({ page }) => {
+  test("create work form opens and closes", async ({ page }) => {
     await mockV04Topic(page);
     await page.goto(`/topics/${TOPIC_ID}`);
     await page.waitForLoadState("networkidle");
     await page.locator("button", { hasText: "Works" }).click();
-
-    // Open create form
     await page.locator("button", { hasText: "+ New Work" }).click();
     await expect(page.locator('input[placeholder="Title (required)"]')).toBeVisible();
-
-    // Cancel closes form
     await page.locator("button", { hasText: "Cancel" }).click();
     await expect(page.locator('input[placeholder="Title (required)"]')).not.toBeVisible();
   });
@@ -107,20 +94,14 @@ test.describe("v0.4 Works", () => {
     await page.goto(`/topics/${TOPIC_ID}`);
     await page.waitForLoadState("networkidle");
     await page.locator("button", { hasText: "Works" }).click();
-
-    // Click Edit on first work
-    const editBtns = page.locator("button", { hasText: "Edit" });
-    await editBtns.first().click();
+    await page.locator("button", { hasText: "Edit" }).first().click();
     await expect(page.locator('input[placeholder="Title"]')).toBeVisible();
-
-    // Cancel closes
     await page.locator("button", { hasText: "Cancel" }).click();
     await expect(page.locator('input[placeholder="Title"]')).not.toBeVisible();
   });
 
   test("delete non-empty work shows 409", async ({ page }) => {
     await mockV04Topic(page);
-    // Override works to have a parsed work (non-empty)
     await page.route(apiRoute(`/api/topics/${TOPIC_ID}/works`), (route) => {
       route.fulfill({
         status: 200, contentType: "application/json",
@@ -131,7 +112,6 @@ test.describe("v0.4 Works", () => {
         }),
       });
     });
-    // Mock delete 409
     await page.route(apiRoute(`/api/works/${WORK_ID}`), (route) => {
       if (route.request().method() === "DELETE") {
         route.fulfill({
@@ -146,12 +126,8 @@ test.describe("v0.4 Works", () => {
     await page.goto(`/topics/${TOPIC_ID}`);
     await page.waitForLoadState("networkidle");
     await page.locator("button", { hasText: "Works" }).click();
-
-    // Click delete
     page.on("dialog", (dialog) => dialog.accept());
     await page.locator("button", { hasText: "×" }).first().click();
-
-    // Should show error
     await expect(page.locator("text=not supported")).toBeVisible();
   });
 
@@ -177,18 +153,66 @@ test.describe("v0.4 Works", () => {
     await page.waitForLoadState("networkidle");
     await page.locator("button", { hasText: "Works" }).click();
     await page.locator("button", { hasText: "+ New Work" }).click();
-
     await page.fill('input[placeholder="Title (required)"]', "Test Novel");
     await page.fill('input[placeholder="Author"]', "Author X");
     await page.fill('input[placeholder="Series #"]', "1");
     await page.locator("button", { hasText: "Create Work" }).click();
-
-    // Wait for the mock to be called
     await page.waitForTimeout(500);
+
     expect(requestBody.title).toBe("Test Novel");
     expect(requestBody.author).toBe("Author X");
     expect(requestBody.series_index).toBe(1);
   });
 
-});
+  test("edit work sends PATCH with correct body", async ({ page }) => {
+    await mockV04Topic(page);
+    let patchBody: Record<string, unknown> = {};
+    await page.route(apiRoute(`/api/works/${WORK_ID}`), (route, request) => {
+      if (request.method() === "PATCH") {
+        patchBody = request.postDataJSON() || {};
+      }
+      route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          id: WORK_ID, topic_id: TOPIC_ID, title: "Updated", subtitle: null, author: null,
+          series_index: null, description: null, status: "empty", metadata_json: null,
+          created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z",
+        }),
+      });
+    });
 
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.waitForLoadState("networkidle");
+    await page.locator("button", { hasText: "Works" }).click();
+    await page.locator("button", { hasText: "Edit" }).first().click();
+    await page.fill('input[placeholder="Title"]', "Updated Title");
+    await page.fill('input[placeholder="Author"]', "New Author");
+    await page.locator("button", { hasText: "Save" }).click();
+    await page.waitForTimeout(500);
+
+    expect(patchBody.title).toBe("Updated Title");
+    expect(patchBody.author).toBe("New Author");
+  });
+
+  test("delete empty work calls DELETE and succeeds", async ({ page }) => {
+    await mockV04Topic(page);
+    let deleteCalled = false;
+    await page.route(apiRoute(`/api/works/${WORK_ID}`), (route, request) => {
+      if (request.method() === "DELETE") {
+        deleteCalled = true;
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ deleted: true }) });
+      } else {
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
+      }
+    });
+
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.waitForLoadState("networkidle");
+    await page.locator("button", { hasText: "Works" }).click();
+    page.on("dialog", (dialog) => dialog.accept());
+    await page.locator("button", { hasText: "×" }).first().click();
+    await page.waitForTimeout(500);
+
+    expect(deleteCalled).toBe(true);
+  });
+});
