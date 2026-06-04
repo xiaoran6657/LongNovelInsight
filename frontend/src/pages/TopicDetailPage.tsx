@@ -33,10 +33,16 @@ import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
 import EntityEvidencePanel from "../features/evidence/EntityEvidencePanel";
 import SimilarScenesPanel from "../features/evidence/SimilarScenesPanel";
 import { useActiveRunPersistence } from "../features/analysis/useActiveRunPersistence";
+import WorkSelector from "../features/works/WorkSelector";
+import WorkList from "../features/works/WorkList";
+
+type TabId = "overview" | "works" | "entities" | "graph" | "timeline";
 
 export default function TopicDetailPage() {
   const { topicId } = useParams<{ topicId: string }>();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeWorkId, setActiveWorkId] = useState<string | null>(null);
   const [showChunkText, setShowChunkText] = useState(false);
   const [chunkRange, setChunkRange] = useState<ChunkRange>({ mode: "chunk", start: null, end: null });
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("preview");
@@ -231,6 +237,71 @@ export default function TopicDetailPage() {
     <div>
       <TopicHeader topic={topic} />
 
+      {/* ── v0.4 Tab navigation ── */}
+      <div style={{
+        display: "flex", gap: "0.15rem", marginBottom: "0.6rem",
+        borderBottom: "2px solid #e0e0e0", paddingBottom: 0, flexWrap: "wrap",
+      }}>
+        {(["overview", "works", "entities", "graph", "timeline"] as TabId[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              fontSize: "0.82rem",
+              padding: "0.3em 0.8em",
+              border: "none",
+              borderBottom: activeTab === tab ? "2px solid #1976d2" : "2px solid transparent",
+              background: "none",
+              color: activeTab === tab ? "#1976d2" : "#666",
+              fontWeight: activeTab === tab ? 600 : 400,
+              cursor: "pointer",
+              marginBottom: -2,
+            }}
+          >
+            {tab === "overview" && "Overview"}
+            {tab === "works" && "Works"}
+            {tab === "entities" && "Entities"}
+            {tab === "graph" && "Graph"}
+            {tab === "timeline" && "Timeline"}
+          </button>
+        ))}
+      </div>
+
+      <WorkSelector
+        topicId={topic.id}
+        activeWorkId={activeWorkId}
+        onSelectWork={(id) => setActiveWorkId(id)}
+      />
+
+      {activeTab === "works" && (
+        <div className="card">
+          <WorkList
+            topicId={topic.id}
+            activeWorkId={activeWorkId}
+            onSelectWork={(id) => setActiveWorkId(id)}
+          />
+        </div>
+      )}
+
+      {activeTab === "entities" && (
+        <div className="card">
+          <p className="text-dim">Entity registry — coming soon.</p>
+        </div>
+      )}
+
+      {activeTab === "graph" && (
+        <div className="card">
+          <p className="text-dim">Character graph — coming soon.</p>
+        </div>
+      )}
+
+      {activeTab === "timeline" && (
+        <div className="card">
+          <p className="text-dim">Timeline — coming soon.</p>
+        </div>
+      )}
+
+      {activeTab === "overview" && <>
       <ProviderBindingPanel
         providers={providers}
         effectiveConfig={effectiveConfig}
@@ -348,6 +419,7 @@ export default function TopicDetailPage() {
         <h3>Chat</h3>
         <p><Link to={`/topics/${topic.id}/chat`}>Open chat &rarr;</Link></p>
       </div>
+      </>}
     </div>
   );
 }
