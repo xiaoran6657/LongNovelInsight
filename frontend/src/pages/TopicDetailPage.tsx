@@ -35,6 +35,10 @@ import SimilarScenesPanel from "../features/evidence/SimilarScenesPanel";
 import { useActiveRunPersistence } from "../features/analysis/useActiveRunPersistence";
 import WorkSelector from "../features/works/WorkSelector";
 import WorkList from "../features/works/WorkList";
+import CrossWorkDashboard from "../features/crossWork/CrossWorkDashboard";
+import EntityRegistryTable from "../features/entities/EntityRegistryTable";
+import CharacterGraph from "../features/graphs/CharacterGraph";
+import TimelineView from "../features/timeline/TimelineView";
 
 type TabId = "overview" | "works" | "entities" | "graph" | "timeline";
 
@@ -280,24 +284,27 @@ export default function TopicDetailPage() {
             activeWorkId={activeWorkId}
             onSelectWork={(id) => setActiveWorkId(id)}
           />
+          <div style={{ marginTop: "1rem", borderTop: "1px solid #e0e0e0", paddingTop: "0.8rem" }}>
+            <CrossWorkDashboard topicId={topic.id} />
+          </div>
         </div>
       )}
 
       {activeTab === "entities" && (
         <div className="card">
-          <p className="text-dim">Entity registry — coming soon.</p>
+          <EntityRegistryTable topicId={topic.id} />
         </div>
       )}
 
       {activeTab === "graph" && (
         <div className="card">
-          <p className="text-dim">Character graph — coming soon.</p>
+          <CharacterGraph topicId={topic.id} />
         </div>
       )}
 
       {activeTab === "timeline" && (
         <div className="card">
-          <p className="text-dim">Timeline — coming soon.</p>
+          <TimelineView topicId={topic.id} />
         </div>
       )}
 
