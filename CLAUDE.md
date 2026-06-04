@@ -8,7 +8,7 @@ Current version: **v0.4.0-dev**.
 ## Current State
 
 **v0.3 Backend — COMPLETE.** **v0.3 Frontend — COMPLETE.** **v0.3.1 — COMPLETE.**
-**v0.4 Backend — COMPLETE (Steps 1-10 of 10).** **v0.4 Frontend — COMPLETE (Steps 1-7) with known limitations.**
+**v0.4 Backend — COMPLETE (Steps 1-10 of 10).** **v0.4 Frontend — COMPLETE (Steps 1-8) with known limitations.**
 Multi-Work data model, Work CRUD, Work-scoped upload/parse/analysis, cross-work
 entity registry, character graph, timeline, cross-work run orchestration,
 work-scoped search/retrieve filters. Frontend: tab navigation, Work management,
