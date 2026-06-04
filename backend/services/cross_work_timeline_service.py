@@ -97,7 +97,9 @@ def build_timeline(
                         work_id = d.work_id
 
         # Sequence: explicit order/sequence > work_series + chapter + chunk + sub_index
-        explicit_order = content.get("order") or content.get("sequence")
+        explicit_order = content.get("order")
+        if explicit_order is None:
+            explicit_order = content.get("sequence")
         if explicit_order is not None and isinstance(explicit_order, (int, float)):
             sequence = float(explicit_order)
         else:
@@ -160,10 +162,9 @@ def get_timeline(
     if min_confidence is not None:
         base = base.where(TimelineItem.confidence >= min_confidence)
     if participant_entity_id:
-        # Resolve entity name from GlobalEntity for text-based filter
         entity = session.get(GlobalEntity, participant_entity_id)
         search_term = participant_entity_id
-        if entity is not None:
+        if entity is not None and entity.topic_id == topic_id:
             search_term = entity.canonical_name
         base = base.where(
             TimelineItem.participants_json.contains(search_term)  # type: ignore[arg-type]

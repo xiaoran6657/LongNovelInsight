@@ -106,7 +106,7 @@ def retrieve_evidence(
             detail="At least one retrieval method is required alongside semantic_rerank",
         )
 
-    fetch_k = max(body.top_k * 3, body.top_k + 50) if body.work_ids else body.top_k
+    fetch_k = max(body.top_k * 5, 100) if body.work_ids else body.top_k
 
     results = hybrid_retrieve(
         topic_id=topic_id,

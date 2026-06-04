@@ -225,14 +225,17 @@ def send_user_message(
     provider = _select_provider(topic, session)
 
     # ── v0.3: Hybrid retrieval instead of legacy keyword-only ──
+    fetch_k = max(DEFAULT_TOP_K * 3, DEFAULT_TOP_K + 30) if work_ids else DEFAULT_TOP_K
     candidates = hybrid_retrieve(
         topic_id=topic.id,
         query=trimmed,
         session=session,
-        top_k=DEFAULT_TOP_K,
+        top_k=fetch_k,
     )
-    # Annotate with work metadata for structured evidence
+    # Annotate and filter by work_ids
     _annotate_candidates_work_meta(candidates, session)
+    if work_ids:
+        candidates = [c for c in candidates if c.get("work_id") in work_ids]
 
     # Fall back to legacy fuzzy scoring when hybrid returns nothing
     # (hybrid is precise; long natural-language CJK queries may need fuzzier matching)
@@ -304,6 +307,7 @@ def send_user_message(
         session_id=session_id,
         message_id=user_msg.id,
         method="hybrid",
+        work_ids=work_ids,
     )
 
     # When no evidence was found, skip the LLM call entirely and return

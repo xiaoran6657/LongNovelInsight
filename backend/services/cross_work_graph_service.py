@@ -58,7 +58,7 @@ def build_character_graph(
         )
         session.add(snapshot)
         session.commit()
-        return _empty_graph(topic_id, session)
+        return _empty_graph(topic_id, session, snapshot_id=snapshot.id)
 
     # Build entity lookup: stable_id → global_entity_id
     # First collect all mention metadata to map atoms → entities
@@ -382,13 +382,13 @@ def _get_entity(
     return None
 
 
-def _empty_graph(topic_id: str, session: Session) -> dict:
+def _empty_graph(topic_id: str, session: Session, snapshot_id: str | None = None) -> dict:
     return {
         "graph_type": "character_relationship",
         "nodes": [],
         "edges": [],
         "stats": {"node_count": 0, "edge_count": 0},
-        "snapshot_id": None,
+        "snapshot_id": snapshot_id,
         "generated_at": None,
     }
 

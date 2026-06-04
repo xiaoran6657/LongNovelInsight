@@ -107,7 +107,7 @@ def search_topic_chunks(
     results: list[dict] = []
 
     # Overfetch when work_ids filter is active to avoid limit-before-filter
-    fetch_limit = max(body.limit * 3, body.limit + 50) if body.work_ids else body.limit
+    fetch_limit = max(body.limit * 5, 100) if body.work_ids else body.limit
 
     if "fts" in body.methods:
         for r in search_chunks_fts(topic_id, body.query, session, fetch_limit):
