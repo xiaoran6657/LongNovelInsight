@@ -3,6 +3,8 @@ import { useState } from "react";
 import { listWorks, createWork, deleteWork } from "../../api/works";
 import type { WorkItem } from "../../api/types";
 import WorkCard from "./WorkCard";
+import WorkUploadPanel from "./WorkUploadPanel";
+import WorkAnalysisPanel from "./WorkAnalysisPanel";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 
@@ -133,6 +135,19 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
           )}
         </div>
       ))}
+
+      {/* Upload/Parse/Analysis for selected Work */}
+      {activeWorkId && (() => {
+        const selected = works.find((w) => w.id === activeWorkId);
+        if (!selected) return null;
+        const hasDoc = selected.status !== "empty";
+        return (
+          <div style={{ marginTop: "0.8rem", borderTop: "1px solid #e0e0e0", paddingTop: "0.6rem" }}>
+            <WorkUploadPanel workId={activeWorkId} hasDocument={hasDoc} />
+            {hasDoc && <WorkAnalysisPanel work={selected} />}
+          </div>
+        );
+      })()}
     </div>
   );
 }
