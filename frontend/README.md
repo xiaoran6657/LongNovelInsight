@@ -106,8 +106,8 @@ frontend/
     │   │   ├── SourceLocatorBadge.tsx      # v0.3: inline source badge for chunks
     │   │   └── StoragePanel.tsx
     │   ├── provider/         # Provider config components
-    │   │       ├── ProviderConfigForm.tsx
-    │   │       └── EffectiveProviderConfigCard.tsx
+    │   │   ├── ProviderConfigForm.tsx
+    │   │   └── EffectiveProviderConfigCard.tsx
     │   ├── works/            # v0.4: Work management
     │   │   ├── WorkList.tsx
     │   │   ├── WorkCard.tsx
@@ -121,8 +121,8 @@ frontend/
     │   │   └── EntityRegistryTable.tsx
     │   ├── graphs/           # v0.4: character graph
     │   │   └── CharacterGraph.tsx
-    │   ├── timeline/         # v0.4: timeline
-    │   │   └── TimelineView.tsx
+    │   └── timeline/         # v0.4: timeline
+        │       └── TimelineView.tsx
     ├── utils/                # Shared utilities
     │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
     ├── components/           # Shared UI components
