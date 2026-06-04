@@ -428,7 +428,7 @@ backend/
 | `/api/topics/{id}/entities/{entity_id}/evidence` | GET | Entity evidence (atoms + chunks + outputs) |
 | `/api/topics/{id}/similar-scenes` | GET | Similar scenes by chunk_id or query |
 
-## Technology Boundaries (v0.3.0)
+## Technology Boundaries (v0.4.0)
 
 | Technology | Status |
 | ---------- | ------ |
@@ -436,11 +436,14 @@ backend/
 | React + TypeScript + Vite | Included |
 | beautifulsoup4 (EPUB XHTML) | Added in v0.3 |
 | SQLite FTS5 | Added in v0.3 |
+| Multi-Work (v0.4) | Added in v0.4 |
+| Cross-work entity registry (v0.4) | Added in v0.4 |
+| Graph snapshots + timeline (v0.4) | Added in v0.4 |
 | LangChain / LlamaIndex | Forbidden |
 | Docker | Forbidden |
 | Redis / Celery / PostgreSQL | Forbidden |
 | Qdrant / Chroma / FAISS | Forbidden |
 | PDF / OCR / DRM removal | Forbidden |
-| Multi-book Topic / Cross-work analysis | Forbidden (v0.4) |
-| Graph visualization | Forbidden (v0.4) |
+| Cytoscape.js (planned v0.4.1) | Deferred |
 | Cloud sync / Auth | Forbidden |
+| Multiple source documents per Work | Forbidden |

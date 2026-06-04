@@ -4,10 +4,19 @@ LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.t
 
 ## v0.4.0-dev (current)
 
-**Backend v0.4 is complete (Steps 1–10).** Frontend v0.4 is pending.
+**Backend v0.4 is complete (Steps 1–10).** **Frontend v0.4 is complete (Steps 1–11).**
 v0.4 adds multi-Work support (Topic 1→* Work, Work-scoped upload/parse/analysis),
 cross-work entity registry, character relationship graph, timeline, and
 work-scoped search/retrieve filters. All v0.3 APIs remain backward-compatible.
+
+### What's New in v0.4
+
+- **Multi-Work**: Topic can contain multiple Works (novels/volumes). Each Work has its own document, chapters, chunks, and analysis. Legacy single-document Topics auto-migrate to a default Work.
+- **Cross-Work Entity Registry**: Deterministic merge of characters across Works — stable_id, exact name, alias, and normalized matching. Type-conflict guards prevent false merges.
+- **Character Relationship Graph**: Edges from relation atoms (primary) or event co-occurrence (fallback). Filterable by work_id, confidence, relation_type.
+- **Cross-Work Timeline**: Ordered event timeline from event atoms. Sort by work series_index → chapter → chunk.
+- **Cross-Work Dashboard**: Build trigger with auto-polling, run stats, and warnings display.
+- **Work-Scoped Search/Retrieve**: Optional `work_ids` filter in search and retrieve APIs. Results annotated with `work_title` and `series_index`.
 
 ### What's New in v0.3 Backend
 

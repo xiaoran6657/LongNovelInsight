@@ -55,16 +55,24 @@ Non-goals:
 
 ## v0.4.x — Multi-Book & Visualization
 
-Goal: support novel series and visual analysis.
+Goal: support novel series and visual analysis. **Backend (10 steps) and Frontend (11 steps) complete.**
 
-- One Topic contains multiple Works.
-- Cross-work entity registry.
-- Cross-work relationship matching.
-- Cross-work timeline.
-- Character relationship network.
-- Event timeline visualization.
-- Causal chain diagram.
-- Evidence-linked graph nodes/edges.
+**Status: COMPLETE (2026-06-04)**
+
+- [x] One Topic contains multiple Works.
+- [x] Cross-work entity registry (deterministic merge, no new LLM calls).
+- [x] Cross-work relationship matching (relation atoms → graph edges + event co-occurrence fallback).
+- [x] Cross-work timeline (ordered by work series_index → chapter → chunk).
+- [x] Character relationship network (edge table frontend; Cytoscape planned for v0.4.1).
+- [x] Event timeline visualization (ordered list frontend).
+- [x] Cross-work dashboard with auto-polling and build orchestration.
+- [x] Work-scoped search/retrieve/chat evidence filters.
+- [x] Evidence-linked graph nodes (node → work_ids, edge → evidence).
+
+Known limitations:
+- Graph uses edge table MVP; Cytoscape visualization deferred to v0.4.1.
+- Timeline uses fixed-limit list; pagination/evidence controls deferred.
+- Upload/parse/analysis e2e tests not mocked (WorkCard click dependency in Playwright env).
 
 Non-goals:
 - Plugin marketplace.

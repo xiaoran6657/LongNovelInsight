@@ -1,15 +1,16 @@
-# LongNovelInsight v0.3.0-dev — Data Model
+# LongNovelInsight v0.4.0-dev — Data Model
 
-All models are SQLModel classes backed by SQLite. v0.2 added hybrid storage for large analysis artifacts; v0.3 adds source locator fields, retrieval tracing, and FTS5 full-text search.
+All models are SQLModel classes backed by SQLite. v0.2 added hybrid storage for large analysis artifacts; v0.3 adds source locator fields, retrieval tracing, and FTS5 full-text search; v0.4 adds multi-Work support with cross-work entity registry, graph snapshots, and timeline.
 
-> **Storage note:** v0.2 added disk-based artifact storage for large analysis JSON (>64KB). v0.3 adds FTS5 virtual tables (not managed by SQLModel) and source locator metadata.
+> **Storage note:** v0.4 adds Work-scoped source file storage and a document table rebuild to support multi-Work Topics.
 
 ## Entity-Relationship Summary
 
 ```
 ModelProvider  ?──*  Topic
 Topic          1──1  TopicProviderConfig
-Topic          1──1  Document
+Topic          1──*  Work (v0.4)
+Work           1──0..1 Document
 Document       1──*  Chapter
 Chapter        1──*  Chunk
 Topic          1──*  AnalysisOutput
@@ -17,9 +18,19 @@ Topic          1──*  ChatSession
 ChatSession    1──*  ChatMessage
 Topic          1──*  Job
 Job            1──*  JobItem
+Topic          1──*  AnalysisRun (v2)
+AnalysisRun    1──*  LocalExtraction (v2)
+Topic          1──*  LocalExtraction (v2)
+LocalExtraction1──*  ExtractedAtom (v2)
+Topic          1──*  AnalysisArtifact (v2)
 Topic          1──*  RetrievalTrace
 ChatSession    1──*  RetrievalTrace  (optional, nullable)
 Chunk          -──-  chunk_fts        (FTS5 virtual table, no FK)
+Topic          1──*  GlobalEntity (v0.4)
+Topic          1──*  EntityMention (v0.4)
+Topic          1──*  CrossWorkRun (v0.4)
+Topic          1──*  GraphSnapshot (v0.4)
+Topic          1──*  TimelineItem (v0.4)
 ```
 
 ## Enums (backend/models/enums.py)
