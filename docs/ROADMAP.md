@@ -37,7 +37,7 @@ Non-goals:
 
 ## v0.3.x — Source Formats & Retrieval
 
-Status: Backend complete (Steps 1-12). Frontend pending (12 steps).
+Status: Backend complete (Steps 1-12). Frontend complete (Steps 1-12).
 
 - EPUB parsing and metadata extraction.
 - Unified TXT/EPUB source abstraction.
@@ -66,7 +66,7 @@ Goal: support novel series and visual analysis. **Backend (10 steps) and Fronten
 - [x] Character relationship network (edge table frontend; Cytoscape planned for v0.4.1).
 - [x] Event timeline visualization (ordered list frontend).
 - [x] Cross-work dashboard with auto-polling and build orchestration.
-- [x] Work-scoped search/retrieve/chat evidence filters.
+- [x] Work-scoped search/retrieve filters + chat evidence work badge.
 - [x] Evidence-linked graph nodes (node → work_ids, edge → evidence).
 
 Known limitations:

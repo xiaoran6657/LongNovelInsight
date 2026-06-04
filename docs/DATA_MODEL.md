@@ -107,9 +107,10 @@ Per-Topic provider configuration overrides. Does NOT mutate the global Provider.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `id` | UUID (PK) | Unique document ID (independent of topic_id) |
-| `topic_id` | FK → topic (unique) | Owning topic (one-to-one in v0.1.0) |
+| `topic_id` | FK → topic | Owning topic |
+| `work_id` | FK → work | optional | v0.4: owning Work (nullable, unique per non-NULL via partial index) |
 | `original_filename` | str | Original uploaded filename |
-| `stored_filename` | str | `original.txt` or `original.epub` |
+| `stored_filename` | str | `work_{id}_original.txt` or `work_{id}_original.epub` (v0.4: Work-scoped) |
 | `file_type` | str | `txt` or `epub` |
 | `content_type` | str | optional | MIME type from upload |
 | `encoding` | str | Source encoding; `"epub"` for EPUB documents |
