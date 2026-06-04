@@ -3,8 +3,9 @@
 ## Current
 
 - **Version:** v0.4.0-dev
-- **Stage:** v0.4.0-dev. Backend complete (Steps 1-10). Frontend pending (8 steps).
-- **Tests:** Backend 724 pytest + 5 integration. Frontend typecheck/lint/build pass. Frontend 38 Playwright e2e.
+- **Stage:** v0.4.0-dev. Backend complete (Steps 1-10). Frontend complete (Steps 1-7) with known limitations.
+- **Tests:** Backend 724 pytest + 5 integration. Frontend typecheck/lint/build pass. Frontend 44 Playwright e2e (38 v0.3 + 6 v0.4).
+- **Verdict:** PASS_WITH_KNOWN_LIMITATIONS — no P0 blockers; build & regression tests pass; MVP UI wired.
 - **Performance:** Run history uses SQL-level pagination (limit/offset) + `useInfiniteQuery`. Hybrid retrieval latency ~1ms locally.
 - **Release:** `v0.3.0` tagged. `v0.3.1` changes committed (not yet tagged).
 
@@ -42,6 +43,23 @@
 - [x] Step 8: Cross-work run orchestration
 - [x] Step 9: Search/retrieve work-scope filters + docs update
 - [x] Step 10: Documentation update (README, CLAUDE, PROJECT_STATUS, NEXT_ACTIONS)
+
+## v0.4 Frontend — Complete with Known Limitations (2026-06-04)
+
+- [x] Step 0: Audit & plan (`docs/v0.4/frontend-step0-audit.md`)
+- [x] Step 1: API types + 4 client modules (works, crossWork, graphs, timeline)
+- [x] Step 2: Work list/create/edit/delete + tab navigation in TopicDetailPage
+- [x] Step 3: Work upload/parse/analysis entry points + WorkDetail
+- [x] Step 4: Cross-work dashboard (run polling, warnings, stats, build trigger)
+- [x] Step 5: Entity registry table (search/filter/sort, detail drawer with mentions)
+- [x] Step 6: Character graph (edge table MVP, error state)
+- [x] Step 7: Timeline view (ordered list, error state)
+- [x] Steps 2-3 e2e: 6 tests (create/edit/delete forms, POST/PATCH body, delete 409/success)
+
+**Known Limitations (v0.4 Frontend):**
+- Step 3 upload/parse/analysis endpoints lack mocked e2e coverage (buttons gated on WorkCard click in mocked env).
+- Graph tab uses edge table MVP, not Cytoscape visualization (per audit doc, deferred to v0.4.1).
+- Timeline tab uses fixed limit:100 list, no pagination/evidence expand controls.
 
 ## v0.3.0 — Complete (2026-05-31)
 
@@ -177,6 +195,10 @@ v0.4 turns LongNovelInsight from a single-novel analyzer into a multi-work story
 - **Multi-Work (v0.4):** One Topic can contain multiple Works, each with one Document.
 - **No embeddings/vector search:** FTS5 + keyword + structured retrieval only.
 - **Retry attempt_usage_json not merged:** New retries replace old attempt history (totals are correct via `+=`).
+- **v0.4 Frontend known limitations:**
+  - Upload/parse/analysis e2e not mocked (buttons require WorkCard selection in mocked Playwright env).
+  - Character graph is edge table MVP, not Cytoscape visualization (deferred to v0.4.1).
+  - Timeline is fixed-limit list without pagination or evidence expand controls.
 
 ## Release Info
 
