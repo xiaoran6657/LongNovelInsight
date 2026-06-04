@@ -105,7 +105,7 @@ frontend/
     │   │   ├── EpubChapterTree.tsx        # v0.3: collapsible EPUB chapter tree
     │   │   ├── SourceLocatorBadge.tsx      # v0.3: inline source badge for chunks
     │   │   └── StoragePanel.tsx
-    │   └── provider/         # Provider config components
+    │   ├── provider/         # Provider config components
     │   ├── works/            # v0.4: Work management
     │   │   ├── WorkList.tsx
     │   │   ├── WorkCard.tsx
