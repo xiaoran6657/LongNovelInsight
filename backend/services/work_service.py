@@ -47,9 +47,7 @@ def get_or_create_default_work(topic_id: str, session: Session) -> Work:
         return work
 
     # No Work exists — check for legacy Document
-    doc = session.exec(
-        select(Document).where(Document.topic_id == topic_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
     if doc is None:
         raise HTTPException(status_code=404, detail="No Work or Document found for this Topic")
@@ -88,9 +86,7 @@ def ensure_default_work(topic_id: str, session: Session) -> Work:
     if work is not None:
         return work
 
-    doc = session.exec(
-        select(Document).where(Document.topic_id == topic_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
 
     title = _derive_work_title(doc) if doc else topic.name
     work = Work(
@@ -157,9 +153,7 @@ def backfill_all_null_work_ids(session: Session) -> int:
     return count
 
 
-def _find_or_create_work_for_topic(
-    topic_id: str, doc: Document, session: Session
-) -> Work:
+def _find_or_create_work_for_topic(topic_id: str, doc: Document, session: Session) -> Work:
     """Find existing Work for topic or create a default one."""
     work = session.exec(
         select(Work)

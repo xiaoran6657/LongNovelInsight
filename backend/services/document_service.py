@@ -99,13 +99,9 @@ def _delete_document_derived_data(
         # ── Full topic cleanup ──
 
         # Chat messages → sessions
-        sessions = session.exec(
-            select(ChatSession).where(ChatSession.topic_id == topic_id)
-        ).all()
+        sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
         for s in sessions:
-            messages = session.exec(
-                select(ChatMessage).where(ChatMessage.session_id == s.id)
-            ).all()
+            messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == s.id)).all()
             for m in messages:
                 session.delete(m)
             session.delete(s)
@@ -123,9 +119,7 @@ def _delete_document_derived_data(
             session.delete(o)
 
         # v2 analysis: atoms → extractions → runs
-        atoms = session.exec(
-            select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)
-        ).all()
+        atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
         for a in atoms:
             session.delete(a)
         extractions = session.exec(
@@ -133,9 +127,7 @@ def _delete_document_derived_data(
         ).all()
         for e in extractions:
             session.delete(e)
-        runs = session.exec(
-            select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)
-        ).all()
+        runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
         for r in runs:
             session.delete(r)
 
@@ -148,14 +140,10 @@ def _delete_document_derived_data(
             session.delete(j)
 
         # All chapters and chunks for the topic
-        chunks = session.exec(
-            select(Chunk).where(Chunk.topic_id == topic_id)
-        ).all()
+        chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
         for c in chunks:
             session.delete(c)
-        chapters = session.exec(
-            select(Chapter).where(Chapter.topic_id == topic_id)
-        ).all()
+        chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
         for ch in chapters:
             session.delete(ch)
 
@@ -170,9 +158,7 @@ def _delete_document_derived_data(
         # Get chunk IDs for this document (before deleting chunks, to clean up
         # analysis rows that reference them)
         doc_chunk_ids = list(
-            session.exec(
-                select(Chunk.id).where(Chunk.document_id == document_id)
-            ).all()
+            session.exec(select(Chunk.id).where(Chunk.document_id == document_id)).all()
         )
 
         if doc_chunk_ids:
@@ -187,26 +173,34 @@ def _delete_document_derived_data(
             )
             if atom_ids:
                 session.exec(
-                    __import__("sqlmodel").delete(ExtractedAtom).where(
+                    __import__("sqlmodel")
+                    .delete(ExtractedAtom)
+                    .where(
                         ExtractedAtom.id.in_(atom_ids)  # noqa: E711
                     )
                 )
 
             # Delete local extractions referencing these chunks
             session.exec(
-                __import__("sqlmodel").delete(LocalExt).where(
+                __import__("sqlmodel")
+                .delete(LocalExt)
+                .where(
                     LocalExt.chunk_id.in_(doc_chunk_ids)  # noqa: E711
                 )
             )
 
         # Delete chunks and chapters for this document only
         session.exec(
-            __import__("sqlmodel").delete(Chunk).where(
+            __import__("sqlmodel")
+            .delete(Chunk)
+            .where(
                 Chunk.document_id == document_id  # type: ignore[arg-type]
             )
         )
         session.exec(
-            __import__("sqlmodel").delete(Chapter).where(
+            __import__("sqlmodel")
+            .delete(Chapter)
+            .where(
                 Chapter.document_id == document_id  # type: ignore[arg-type]
             )
         )

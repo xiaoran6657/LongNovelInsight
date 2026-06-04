@@ -62,15 +62,24 @@ def test_legacy_topic_gets_default_work(engine):
     # Setup: Topic + Document without explicit Work
     with Session(engine) as session:
         prov = ModelProvider(
-            name="MigProv", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="MigProv",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="MigrationTest", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="novel.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="novel.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)
@@ -80,6 +89,7 @@ def test_legacy_topic_gets_default_work(engine):
 
     # Run migration directly on the test engine
     from db import _migrate_v04_work_tables
+
     _migrate_v04_work_tables(_engine=engine)
 
     # Verify
@@ -101,15 +111,24 @@ def test_migration_idempotent(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="IdemP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="IdemP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="IdemTopic", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="book.epub",
-            file_size_bytes=200, char_count=100, status="parsed",
+            topic_id=topic.id,
+            original_filename="book.epub",
+            file_size_bytes=200,
+            char_count=100,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)
@@ -140,6 +159,7 @@ def test_topic_without_document_no_work_created(engine):
         tid = topic.id
 
     from db import _migrate_v04_work_tables
+
     _migrate_v04_work_tables(_engine=engine)
 
     with Session(engine) as session:
@@ -153,15 +173,23 @@ def test_document_can_have_null_work_id(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="NullWIdP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="NullWIdP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="NullWId", provider_id=prov.id, status="uploaded")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="test.txt",
-            file_size_bytes=10, char_count=10,
+            topic_id=topic.id,
+            original_filename="test.txt",
+            file_size_bytes=10,
+            char_count=10,
             work_id=None,
         )
         session.add(doc)
@@ -182,9 +210,7 @@ def test_topic_id_unique_constraint_removed(engine):
     insp = sa_inspect(engine)
     indexes = list(insp.get_indexes("document"))
     topic_id_uniques = [
-        i
-        for i in indexes
-        if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
+        i for i in indexes if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
     ]
     assert len(topic_id_uniques) == 0, (
         f"topic_id UNIQUE constraint still present: {topic_id_uniques}"
@@ -200,26 +226,43 @@ def test_two_works_can_each_have_document_same_topic(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="MultiDocP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="MultiDocP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="MultiDoc", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
 
         w1 = Work(topic_id=topic.id, title="Book 1", series_index=1, status="parsed")
         w2 = Work(topic_id=topic.id, title="Book 2", series_index=2, status="parsed")
-        session.add(w1); session.add(w2); session.flush()
+        session.add(w1)
+        session.add(w2)
+        session.flush()
 
         d1 = Document(
-            topic_id=topic.id, work_id=w1.id, original_filename="book1.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            work_id=w1.id,
+            original_filename="book1.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
         )
         d2 = Document(
-            topic_id=topic.id, work_id=w2.id, original_filename="book2.epub",
-            file_size_bytes=200, char_count=100, status="parsed",
+            topic_id=topic.id,
+            work_id=w2.id,
+            original_filename="book2.epub",
+            file_size_bytes=200,
+            char_count=100,
+            status="parsed",
         )
-        session.add(d1); session.add(d2)
+        session.add(d1)
+        session.add(d2)
         session.commit()
 
         assert d1.id is not None
@@ -237,32 +280,50 @@ def test_same_work_second_document_rejected(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="DupWorkDocP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="DupWorkDocP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="DupWorkDoc", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         work = Work(topic_id=topic.id, title="Only Book", series_index=1)
-        session.add(work); session.flush()
+        session.add(work)
+        session.flush()
 
         d1 = Document(
-            topic_id=topic.id, work_id=work.id, original_filename="book.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            work_id=work.id,
+            original_filename="book.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
         )
-        session.add(d1); session.commit()
+        session.add(d1)
+        session.commit()
 
         # Second document with same work_id should violate the partial unique index
         import pytest
 
         d2 = Document(
-            topic_id=topic.id, work_id=work.id, original_filename="book2.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            work_id=work.id,
+            original_filename="book2.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
         )
         session.add(d2)
         with pytest.raises(Exception) as exc_info:
             session.commit()
-        assert "UNIQUE" in str(exc_info.value).upper() or "ix_document_work_id" in str(exc_info.value)
+        assert "UNIQUE" in str(exc_info.value).upper() or "ix_document_work_id" in str(
+            exc_info.value
+        )
 
 
 def test_fk_integrity_after_migration(engine):
@@ -274,17 +335,28 @@ def test_fk_integrity_after_migration(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="FKCheckP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="FKCheckP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="FKCheck", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         work = Work(topic_id=topic.id, title="FK Book", series_index=1)
-        session.add(work); session.flush()
+        session.add(work)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, work_id=work.id, original_filename="fk.txt",
-            file_size_bytes=10, char_count=10, status="parsed",
+            topic_id=topic.id,
+            work_id=work.id,
+            original_filename="fk.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
         )
         session.add(doc)
         session.commit()
@@ -309,9 +381,7 @@ def test_broken_state_repair(engine):
         raw = conn.connection.dbapi_connection
         # Create a unique index mimicking the old topic_id UNIQUE
         try:
-            raw.execute(
-                "CREATE UNIQUE INDEX broken_topic_id_unique ON document(topic_id)"
-            )
+            raw.execute("CREATE UNIQUE INDEX broken_topic_id_unique ON document(topic_id)")
         except Exception:
             pass  # may already exist in some form
 
@@ -321,9 +391,7 @@ def test_broken_state_repair(engine):
     insp = sa_inspect(engine)
     indexes = list(insp.get_indexes("document"))
     topic_id_uniques = [
-        i
-        for i in indexes
-        if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
+        i for i in indexes if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
     ]
     assert len(topic_id_uniques) > 0, "test setup: should have topic_id UNIQUE"
 
@@ -334,9 +402,7 @@ def test_broken_state_repair(engine):
     insp = sa_inspect(engine)
     indexes = list(insp.get_indexes("document"))
     topic_id_uniques = [
-        i
-        for i in indexes
-        if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
+        i for i in indexes if "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
     ]
     assert len(topic_id_uniques) == 0, "broken state should be repaired"
 
@@ -351,18 +417,27 @@ def test_backfill_after_schema_migrated(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="LateBackfillP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="LateBackfillP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="LateBackfill", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
 
         # Insert a Document with work_id=NULL (simulating a document that predates
         # Work creation, or was created without a Work)
         doc = Document(
-            topic_id=topic.id, original_filename="late.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="late.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)
@@ -386,15 +461,24 @@ def test_get_or_create_default_work_creates_work(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="HelperP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="HelperP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="HelperTopic", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="helper_novel.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="helper_novel.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)
@@ -420,15 +504,24 @@ def test_get_or_create_default_work_idempotent(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="IdemHelperP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="IdemHelperP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="IdemHelper", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="idem_novel.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="idem_novel.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)
@@ -470,19 +563,29 @@ def test_existing_work_backfills_null_work_id_document(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="ExistWBackfillP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="ExistWBackfillP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="ExistWBackfill", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         work = Work(topic_id=topic.id, title="Existing Work", series_index=1)
-        session.add(work); session.flush()
+        session.add(work)
+        session.flush()
 
         # Document created without work_id (legacy scenario)
         doc = Document(
-            topic_id=topic.id, original_filename="orphan.txt",
-            file_size_bytes=100, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="orphan.txt",
+            file_size_bytes=100,
+            char_count=50,
+            status="parsed",
             work_id=None,
         )
         session.add(doc)

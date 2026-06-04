@@ -426,16 +426,16 @@ pytest>=8.0
 ruff>=0.8.0
 ```
 
-## Forbidden (v0.3.0)
+## Forbidden (v0.4.0)
 
 - Login/auth/multi-user
 - Cloud sync/remote storage
+- Multiple source documents per Work
 - PDF parsing / OCR / DRM removal
 - Docker/containerization
 - LangChain/LlamaIndex
 - Vector databases (Chroma/Pinecone/Qdrant/FAISS)
 - Redis/Celery/PostgreSQL/message queues
 - Plugin systems
-- Multi-novel per Topic
 - Tailwind / MUI / Ant Design / Chakra
 - Redux / Zustand / MobX

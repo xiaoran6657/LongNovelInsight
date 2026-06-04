@@ -106,14 +106,17 @@ def search_topic_chunks(
     seen: set[str] = set()
     results: list[dict] = []
 
+    # Overfetch when work_ids filter is active to avoid limit-before-filter
+    fetch_limit = max(body.limit * 3, body.limit + 50) if body.work_ids else body.limit
+
     if "fts" in body.methods:
-        for r in search_chunks_fts(topic_id, body.query, session, body.limit):
+        for r in search_chunks_fts(topic_id, body.query, session, fetch_limit):
             if r["chunk_id"] not in seen:
                 seen.add(r["chunk_id"])
                 results.append(r)
 
     if "keyword_fallback" in body.methods:
-        for r in search_chunks_keyword_fallback(topic_id, body.query, session, body.limit):
+        for r in search_chunks_keyword_fallback(topic_id, body.query, session, fetch_limit):
             if r["chunk_id"] not in seen:
                 seen.add(r["chunk_id"])
                 results.append(r)

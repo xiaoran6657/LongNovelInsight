@@ -29,9 +29,7 @@ def _check_work(work_id: str, session: Session) -> Work:
 
 def _has_data(work_id: str, session: Session) -> bool:
     """Check if a Work has any data — a Document alone is non-empty."""
-    doc = session.exec(
-        select(Document).where(Document.work_id == work_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
     return doc is not None
 
 
@@ -137,14 +135,10 @@ def upload_document_endpoint(
 
 
 @doc_router.get("/documents/current")
-def get_work_document(
-    work_id: str, session: Session = Depends(get_session)
-):
+def get_work_document(work_id: str, session: Session = Depends(get_session)):
     from models.document import Document, DocumentRead
 
-    doc = session.exec(
-        select(Document).where(Document.work_id == work_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
     if doc is None:
         raise HTTPException(status_code=404, detail="No document uploaded to this Work")
     return DocumentRead.model_validate(doc)
@@ -165,22 +159,16 @@ def parse_work(
 
 
 @doc_router.get("/chapters")
-def list_work_chapters(
-    work_id: str, session: Session = Depends(get_session)
-):
+def list_work_chapters(work_id: str, session: Session = Depends(get_session)):
     from models.chapter import Chapter, ChapterRead
     from models.document import Document
 
-    doc = session.exec(
-        select(Document).where(Document.work_id == work_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
     if doc is None:
         return {"chapters": []}
 
     chapters = session.exec(
-        select(Chapter)
-        .where(Chapter.document_id == doc.id)
-        .order_by(Chapter.chapter_index)
+        select(Chapter).where(Chapter.document_id == doc.id).order_by(Chapter.chapter_index)
     ).all()
     return {"chapters": [ChapterRead.model_validate(c).model_dump() for c in chapters]}
 
@@ -196,9 +184,7 @@ def list_work_chunks(
     from models.chunk import Chunk, ChunkRead
     from models.document import Document
 
-    doc = session.exec(
-        select(Document).where(Document.work_id == work_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
     if doc is None:
         return {"chunks": []}
 
@@ -221,16 +207,12 @@ def list_work_chunks(
 
 
 @doc_router.get("/metadata")
-def get_work_metadata(
-    work_id: str, session: Session = Depends(get_session)
-):
+def get_work_metadata(work_id: str, session: Session = Depends(get_session)):
     import json
 
     from models.document import Document
 
-    doc = session.exec(
-        select(Document).where(Document.work_id == work_id)
-    ).first()
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
     if doc is None:
         raise HTTPException(status_code=404, detail="No document found for this Work")
 
@@ -297,8 +279,12 @@ def create_work_analysis_run(
     except ValueError as e:
         msg = str(e)
         conflict_keywords = (
-            "no provider", "no chunks", "not parsed",
-            "parse document", "already running", "no document",
+            "no provider",
+            "no chunks",
+            "not parsed",
+            "parse document",
+            "already running",
+            "no document",
         )
         if any(kw in msg.lower() for kw in conflict_keywords):
             raise HTTPException(status_code=409, detail=msg)
@@ -334,12 +320,9 @@ def list_work_analysis_runs(
     all_runs, _ = analysis_run_service.list_analysis_runs(
         session, work.topic_id, limit=999999, offset=0
     )
-    filtered = [
-        r for r in all_runs
-        if r.get_chunk_selection().get("work_id") == work_id
-    ]
+    filtered = [r for r in all_runs if r.get_chunk_selection().get("work_id") == work_id]
     total = len(filtered)
-    page = filtered[offset:offset + limit]
+    page = filtered[offset : offset + limit]
 
     return {
         "runs": [
@@ -375,13 +358,8 @@ def list_work_analysis_outputs(
     work = _check_work(work_id, session)
 
     # Find runs that belong to this Work (via chunk_selection.work_id)
-    all_runs = session.exec(
-        select(AnalysisRun).where(AnalysisRun.topic_id == work.topic_id)
-    ).all()
-    work_run_ids = {
-        r.id for r in all_runs
-        if r.get_chunk_selection().get("work_id") == work_id
-    }
+    all_runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == work.topic_id)).all()
+    work_run_ids = {r.id for r in all_runs if r.get_chunk_selection().get("work_id") == work_id}
 
     all_outputs = session.exec(
         select(AnalysisOutput)
@@ -397,14 +375,16 @@ def list_work_analysis_outputs(
         # Exclude topic-level outputs (run_id=None) and other Works' runs.
         if o.run_id is None or o.run_id not in work_run_ids:
             continue
-        result.append({
-            "id": o.id,
-            "topic_id": o.topic_id,
-            "run_id": o.run_id,
-            "output_type": o.output_type,
-            "title": o.title,
-            "confidence": o.confidence,
-            "created_at": o.created_at.isoformat() if o.created_at else None,
-        })
+        result.append(
+            {
+                "id": o.id,
+                "topic_id": o.topic_id,
+                "run_id": o.run_id,
+                "output_type": o.output_type,
+                "title": o.title,
+                "confidence": o.confidence,
+                "created_at": o.created_at.isoformat() if o.created_at else None,
+            }
+        )
 
     return {"outputs": result, "total": len(result)}

@@ -9,6 +9,8 @@ from sqlmodel import Session, select
 
 from models.cross_work_run import CrossWorkRun
 
+VALID_MODES = {"full", "entities_only", "graph_only", "timeline_only"}
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -20,12 +22,14 @@ def create_cross_work_run(
     mode: str = "full",
     work_ids: list[str] | None = None,
 ) -> CrossWorkRun:
-    """Create a CrossWorkRun row and persist it."""
+    if mode not in VALID_MODES:
+        raise ValueError(f"Invalid mode '{mode}'. Must be: {sorted(VALID_MODES)}")
+
     run = CrossWorkRun(
         topic_id=topic_id,
         status="pending",
         mode=mode,
-        stats_json="{}",
+        stats_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
         warnings_json="[]",
     )
     session.add(run)
@@ -35,7 +39,6 @@ def create_cross_work_run(
 
 
 def execute_cross_work_run(run_id: str, engine=None) -> None:
-    """Execute a cross-work run synchronously. Updates status, stats, warnings."""
     if engine is None:
         from db import engine as db_engine
 
@@ -48,7 +51,6 @@ def execute_cross_work_run(run_id: str, engine=None) -> None:
 
 
 def _execute_impl(run_id: str, engine) -> None:
-    # Use a single session for the entire execution to avoid SQLite lock contention
     with Session(engine) as session:
         run = session.get(CrossWorkRun, run_id)
         if run is None:
@@ -59,80 +61,77 @@ def _execute_impl(run_id: str, engine) -> None:
         session.commit()
         topic_id = run.topic_id
         mode = run.mode
-
-    # Builders run with their own sessions, but we must ensure all outer
-    # sessions are closed before calling them (SQLite single-writer constraint).
-    # The session above is committed and closed (context manager exit).
+        work_ids = json.loads(run.stats_json).get("work_ids")
 
     all_warnings: list[str] = []
     stats: dict = {}
+    has_failure = False
 
-    # Entities
     if mode in ("full", "entities_only"):
         start = time.monotonic()
         try:
             from services.cross_work_entity_service import build_entity_registry
 
             with Session(engine) as s:
-                result = build_entity_registry(topic_id, s)
+                result = build_entity_registry(topic_id, s, work_ids=work_ids)
             stats["entities"] = {
                 "entity_count": result.get("entity_count", 0),
                 "mention_count": result.get("mention_count", 0),
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
             all_warnings.extend(result.get("warnings", []))
-        except Exception as e:
+        except Exception:
             stats["entities"] = {
-                "error": str(e)[:500],
+                "error": "Entity build failed",
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
-            all_warnings.append(f"Entity build failed: {e}")
+            all_warnings.append("Entity build failed")
+            has_failure = True
 
-    # Graph
     if mode in ("full", "graph_only"):
         start = time.monotonic()
         try:
             from services.cross_work_graph_service import build_character_graph
 
             with Session(engine) as s:
-                result = build_character_graph(topic_id, s)
+                result = build_character_graph(topic_id, s, work_ids=work_ids)
             stats["graph"] = {
                 "node_count": len(result.get("nodes", [])),
                 "edge_count": len(result.get("edges", [])),
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
-        except Exception as e:
+        except Exception:
             stats["graph"] = {
-                "error": str(e)[:500],
+                "error": "Graph build failed",
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
-            all_warnings.append(f"Graph build failed: {e}")
+            all_warnings.append("Graph build failed")
+            has_failure = True
 
-    # Timeline
     if mode in ("full", "timeline_only"):
         start = time.monotonic()
         try:
             from services.cross_work_timeline_service import build_timeline
 
             with Session(engine) as s:
-                result = build_timeline(topic_id, s)
+                result = build_timeline(topic_id, s, work_ids=work_ids)
             stats["timeline"] = {
                 "item_count": result.get("item_count", 0),
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
-        except Exception as e:
+        except Exception:
             stats["timeline"] = {
-                "error": str(e)[:500],
+                "error": "Timeline build failed",
                 "duration_seconds": round(time.monotonic() - start, 3),
             }
-            all_warnings.append(f"Timeline build failed: {e}")
+            all_warnings.append("Timeline build failed")
+            has_failure = True
 
-    # Finalize with a fresh session (previous builder sessions are closed)
     with Session(engine) as session:
         run = session.get(CrossWorkRun, run_id)
         if run is None:
             return
-        run.status = "succeeded"
+        run.status = "failed" if has_failure else "succeeded"
         run.completed_at = _now()
         run.stats_json = json.dumps(stats, ensure_ascii=False)
         run.warnings_json = json.dumps(all_warnings[:20], ensure_ascii=False)
@@ -187,7 +186,6 @@ def list_cross_work_runs(
 
 
 def start_cross_work_run(run_id: str) -> None:
-    """Start a background thread to execute a cross-work run."""
     thread = threading.Thread(
         target=execute_cross_work_run,
         args=(run_id,),

@@ -418,18 +418,34 @@ class TestMergeCausality:
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_sword", {"title": "Sword Drawn"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_sword",
+                {"title": "Sword Drawn"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_battle", {"title": "Battle Begins"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_battle",
+                {"title": "Battle Begins"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.CAUSAL_LINK,
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
                 "caus_sword_battle",
                 {"cause_hint": "Sword Drawn", "effect_hint": "Battle Begins"},
-                cid, confidence=0.85,
+                cid,
+                confidence=0.85,
             )
             session.commit()
             summary = merge_causality(session, rid)
@@ -441,18 +457,34 @@ class TestMergeCausality:
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_battle", {"title": "Great Battle"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_battle",
+                {"title": "Great Battle"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_flee", {"title": "Fleeing"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_flee",
+                {"title": "Fleeing"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.CAUSAL_LINK,
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
                 "caus_battle_flee",
                 {"cause_hint": "the Great Battle at dawn", "effect_hint": "army Fleeing south"},
-                cid, confidence=0.85,
+                cid,
+                confidence=0.85,
             )
             session.commit()
             summary = merge_causality(session, rid)
@@ -463,14 +495,24 @@ class TestMergeCausality:
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_a", {"title": "A"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_a",
+                {"title": "A"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.CAUSAL_LINK,
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
                 "caus_short",
                 {"cause_hint": "a", "effect_hint": "b"},
-                cid, confidence=0.5,
+                cid,
+                confidence=0.5,
             )
             session.commit()
             summary = merge_causality(session, rid)
@@ -482,18 +524,34 @@ class TestMergeCausality:
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_cause", {"title": "Earthquake"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_cause",
+                {"title": "Earthquake"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_effect", {"title": "Tsunami"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_effect",
+                {"title": "Tsunami"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.CAUSAL_LINK,
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
                 "caus_eq_tsunami",
                 {"cause_hint": "Earthquake", "effect_hint": "Tsunami"},
-                cid, confidence=0.85,
+                cid,
+                confidence=0.85,
             )
             session.commit()
             merge_causality(session, rid)

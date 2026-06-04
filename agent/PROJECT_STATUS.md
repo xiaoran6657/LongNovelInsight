@@ -174,7 +174,7 @@ v0.4 turns LongNovelInsight from a single-novel analyzer into a multi-work story
 
 - **Semantic rerank disabled:** `ENABLE_SEMANTIC_RERANK=False` by default.
 - **Final outputs:** v0.2 produces the same 6 output types as v0.1 (overview, characters, relations, events, causality, themes). Worldbuilding and foreshadowing have merge support but no final output builders. Timeline and character_arcs not yet implemented.
-- **Single-document only (until v0.4):** One Topic = one Document (TXT or EPUB).
+- **Multi-Work (v0.4):** One Topic can contain multiple Works, each with one Document.
 - **No embeddings/vector search:** FTS5 + keyword + structured retrieval only.
 - **Retry attempt_usage_json not merged:** New retries replace old attempt history (totals are correct via `+=`).
 

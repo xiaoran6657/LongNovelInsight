@@ -2237,15 +2237,25 @@ def test_fail_run_does_not_overwrite_partial_success(engine):
         ch = Chapter(
             topic_id=topic.id,
             document_id=doc.id,
-            chapter_index=0, title="Ch1",
-            start_char=0, end_char=10, char_count=10,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
         )
         session.add(ch)
         session.flush()
         ck = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="t",
-            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
         )
         session.add(ck)
         session.commit()
@@ -2287,7 +2297,10 @@ def test_fail_run_does_not_overwrite_succeeded(engine):
         prov = ModelProvider(
             name="FailRunSucc P",
             provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
         session.add(prov)
         session.flush()
@@ -2295,21 +2308,36 @@ def test_fail_run_does_not_overwrite_succeeded(engine):
         session.add(topic)
         session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="t.txt",
-            file_size_bytes=10, char_count=10, status="parsed",
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
         )
         session.add(doc)
         session.flush()
         ch = Chapter(
-            topic_id=topic.id, document_id=doc.id, chapter_index=0,
-            title="Ch1", start_char=0, end_char=10, char_count=10,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
         )
         session.add(ch)
         session.flush()
         ck = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="t",
-            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
         )
         session.add(ck)
         session.commit()
@@ -2348,7 +2376,10 @@ def test_fail_run_does_not_overwrite_completed_metadata(engine):
         prov = ModelProvider(
             name="FailRunMeta P",
             provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
         session.add(prov)
         session.flush()
@@ -2356,21 +2387,36 @@ def test_fail_run_does_not_overwrite_completed_metadata(engine):
         session.add(topic)
         session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="t.txt",
-            file_size_bytes=10, char_count=10, status="parsed",
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
         )
         session.add(doc)
         session.flush()
         ch = Chapter(
-            topic_id=topic.id, document_id=doc.id, chapter_index=0,
-            title="Ch1", start_char=0, end_char=10, char_count=10,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
         )
         session.add(ch)
         session.flush()
         ck = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="t",
-            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
         )
         session.add(ck)
         session.commit()
@@ -2413,8 +2459,12 @@ def test_cumulative_tokens_persisted_in_local_extraction(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="Cumulative P", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="Cumulative P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
         session.add(prov)
         session.flush()
@@ -2422,21 +2472,36 @@ def test_cumulative_tokens_persisted_in_local_extraction(engine):
         session.add(topic)
         session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="t.txt",
-            file_size_bytes=10, char_count=10, status="parsed",
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
         )
         session.add(doc)
         session.flush()
         ch = Chapter(
-            topic_id=topic.id, document_id=doc.id, chapter_index=0,
-            title="Ch1", start_char=0, end_char=10, char_count=10,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
         )
         session.add(ch)
         session.flush()
         ck = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="t",
-            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
         )
         session.add(ck)
         session.commit()
@@ -2448,7 +2513,7 @@ def test_cumulative_tokens_persisted_in_local_extraction(engine):
         content_json = MOCK_EXTRACTION_JSON
         parsed_json = json.loads(MOCK_EXTRACTION_JSON)
         error = None
-        prompt_tokens = 900   # cumulative: 500 (fail) + 400 (success)
+        prompt_tokens = 900  # cumulative: 500 (fail) + 400 (success)
         completion_tokens = 5090  # cumulative: 4090 (fail) + 1000 (success)
         total_tokens = 5990  # cumulative
         model_used = "mock-v4-flash"
@@ -2462,14 +2527,30 @@ def test_cumulative_tokens_persisted_in_local_extraction(engine):
         cumulative_prompt_cache_miss_tokens = 100
         usage_unavailable_attempts = 0
         attempts = [
-            {"attempt_index": 0, "ok": False, "max_tokens": 4096,
-             "prompt_tokens": 500, "completion_tokens": 4090, "total_tokens": 4590,
-             "reasoning_tokens": 2000, "prompt_cache_hit_tokens": 500,
-             "prompt_cache_miss_tokens": 0, "usage_available": True},
-            {"attempt_index": 1, "ok": True, "max_tokens": 16384,
-             "prompt_tokens": 400, "completion_tokens": 1000, "total_tokens": 1400,
-             "reasoning_tokens": 0, "prompt_cache_hit_tokens": 0,
-             "prompt_cache_miss_tokens": 100, "usage_available": True},
+            {
+                "attempt_index": 0,
+                "ok": False,
+                "max_tokens": 4096,
+                "prompt_tokens": 500,
+                "completion_tokens": 4090,
+                "total_tokens": 4590,
+                "reasoning_tokens": 2000,
+                "prompt_cache_hit_tokens": 500,
+                "prompt_cache_miss_tokens": 0,
+                "usage_available": True,
+            },
+            {
+                "attempt_index": 1,
+                "ok": True,
+                "max_tokens": 16384,
+                "prompt_tokens": 400,
+                "completion_tokens": 1000,
+                "total_tokens": 1400,
+                "reasoning_tokens": 0,
+                "prompt_cache_hit_tokens": 0,
+                "prompt_cache_miss_tokens": 100,
+                "usage_available": True,
+            },
         ]
 
     with patch(
@@ -2482,9 +2563,7 @@ def test_cumulative_tokens_persisted_in_local_extraction(engine):
         _execute_run(run_id, engine=engine)
 
     with Session(engine) as session:
-        exts = session.exec(
-            select(LocalExtraction).where(LocalExtraction.run_id == run_id)
-        ).all()
+        exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
         assert len(exts) == 1
         ext = exts[0]
         assert ext.total_tokens == 5990
@@ -2516,26 +2595,49 @@ def test_retry_persists_usage_fields(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="RetryUsage P", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="RetryUsage P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="RetryUsage", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="t.txt",
-            file_size_bytes=10, char_count=10, status="parsed",
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
         )
-        session.add(doc); session.flush()
+        session.add(doc)
+        session.flush()
         ch = Chapter(
-            topic_id=topic.id, document_id=doc.id, chapter_index=0,
-            title="Ch1", start_char=0, end_char=10, char_count=10,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=10,
+            char_count=10,
         )
-        session.add(ch); session.flush()
+        session.add(ch)
+        session.flush()
         ck = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="t",
-            start_char=0, end_char=1, char_count=1, estimated_tokens=1,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="t",
+            start_char=0,
+            end_char=1,
+            char_count=1,
+            estimated_tokens=1,
         )
         session.add(ck)
         session.commit()
@@ -2547,9 +2649,15 @@ def test_retry_persists_usage_fields(engine):
         run = create_analysis_run(session, tid, mode="preview", limit_chunks=1)
         rid = run.id
         ext = LocalExtraction(
-            run_id=rid, topic_id=tid, chunk_id=cid,
-            status="failed", attempt_count=1, confidence=0.0,
-            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            run_id=rid,
+            topic_id=tid,
+            chunk_id=cid,
+            status="failed",
+            attempt_count=1,
+            confidence=0.0,
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
         )
         session.add(ext)
         run.status = "partial_success"
@@ -2574,11 +2682,21 @@ def test_retry_persists_usage_fields(engine):
         finish_reason = "stop"
         warnings = []
         attempts = [
-            {"attempt_index": 0, "ok": True, "max_tokens": 8192,
-             "prompt_tokens": 300, "completion_tokens": 200, "total_tokens": 500,
-             "reasoning_tokens": 100, "prompt_cache_hit_tokens": 50,
-             "prompt_cache_miss_tokens": 250, "finish_reason": "stop",
-             "status_code": None, "error": None, "usage_available": True},
+            {
+                "attempt_index": 0,
+                "ok": True,
+                "max_tokens": 8192,
+                "prompt_tokens": 300,
+                "completion_tokens": 200,
+                "total_tokens": 500,
+                "reasoning_tokens": 100,
+                "prompt_cache_hit_tokens": 50,
+                "prompt_cache_miss_tokens": 250,
+                "finish_reason": "stop",
+                "status_code": None,
+                "error": None,
+                "usage_available": True,
+            },
         ]
         cumulative_prompt_tokens = 300
         cumulative_completion_tokens = 200
@@ -2596,9 +2714,7 @@ def test_retry_persists_usage_fields(engine):
             retry_failed_extractions(session, rid)
 
     with Session(engine) as session:
-        exts = session.exec(
-            select(LocalExtraction).where(LocalExtraction.run_id == rid)
-        ).all()
+        exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == rid)).all()
         assert len(exts) == 1
         ext = exts[0]
         assert ext.status == "succeeded"
@@ -2628,32 +2744,63 @@ def test_resume_updates_run_usage_breakdown(engine):
 
     with Session(engine) as session:
         prov = ModelProvider(
-            name="ResumeUsage P", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="ResumeUsage P",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="ResumeUsage", provider_id=prov.id, status="parsed")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         doc = Document(
-            topic_id=topic.id, original_filename="t.txt",
-            file_size_bytes=50, char_count=50, status="parsed",
+            topic_id=topic.id,
+            original_filename="t.txt",
+            file_size_bytes=50,
+            char_count=50,
+            status="parsed",
         )
-        session.add(doc); session.flush()
+        session.add(doc)
+        session.flush()
         ch = Chapter(
-            topic_id=topic.id, document_id=doc.id, chapter_index=0,
-            title="Ch1", start_char=0, end_char=50, char_count=50,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_index=0,
+            title="Ch1",
+            start_char=0,
+            end_char=50,
+            char_count=50,
         )
-        session.add(ch); session.flush()
+        session.add(ch)
+        session.flush()
         c0 = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=0, text="chunk0",
-            start_char=0, end_char=25, char_count=25, estimated_tokens=17,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=0,
+            text="chunk0",
+            start_char=0,
+            end_char=25,
+            char_count=25,
+            estimated_tokens=17,
         )
-        session.add(c0); session.flush()
+        session.add(c0)
+        session.flush()
         c1 = Chunk(
-            topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-            chapter_index=0, chunk_index=1, text="chunk1",
-            start_char=25, end_char=50, char_count=25, estimated_tokens=17,
+            topic_id=topic.id,
+            document_id=doc.id,
+            chapter_id=ch.id,
+            chapter_index=0,
+            chunk_index=1,
+            text="chunk1",
+            start_char=25,
+            end_char=50,
+            char_count=25,
+            estimated_tokens=17,
         )
         session.add(c1)
         session.commit()
@@ -2665,11 +2812,18 @@ def test_resume_updates_run_usage_breakdown(engine):
         rid = run.id
         # c0 succeeded with some tokens
         ext0 = LocalExtraction(
-            run_id=rid, topic_id=tid, chunk_id=c0_id,
-            status="succeeded", attempt_count=1,
-            prompt_tokens=200, completion_tokens=100, total_tokens=300,
-            reasoning_tokens=0, prompt_cache_hit_tokens=0,
-            prompt_cache_miss_tokens=200, usage_unavailable_attempts=0,
+            run_id=rid,
+            topic_id=tid,
+            chunk_id=c0_id,
+            status="succeeded",
+            attempt_count=1,
+            prompt_tokens=200,
+            completion_tokens=100,
+            total_tokens=300,
+            reasoning_tokens=0,
+            prompt_cache_hit_tokens=0,
+            prompt_cache_miss_tokens=200,
+            usage_unavailable_attempts=0,
         )
         session.add(ext0)
         # c1 has no extraction (missing)
@@ -2690,11 +2844,21 @@ def test_resume_updates_run_usage_breakdown(engine):
         finish_reason = "stop"
         warnings = []
         attempts = [
-            {"attempt_index": 0, "ok": True, "max_tokens": 4096,
-             "prompt_tokens": 150, "completion_tokens": 80, "total_tokens": 230,
-             "reasoning_tokens": 0, "prompt_cache_hit_tokens": 0,
-             "prompt_cache_miss_tokens": 150, "finish_reason": "stop",
-             "status_code": None, "error": None, "usage_available": True},
+            {
+                "attempt_index": 0,
+                "ok": True,
+                "max_tokens": 4096,
+                "prompt_tokens": 150,
+                "completion_tokens": 80,
+                "total_tokens": 230,
+                "reasoning_tokens": 0,
+                "prompt_cache_hit_tokens": 0,
+                "prompt_cache_miss_tokens": 150,
+                "finish_reason": "stop",
+                "status_code": None,
+                "error": None,
+                "usage_available": True,
+            },
         ]
         cumulative_prompt_tokens = 150
         cumulative_completion_tokens = 80

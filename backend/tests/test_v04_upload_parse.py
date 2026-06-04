@@ -13,12 +13,18 @@ def _setup_work(engine, client) -> str:
     """Create a topic, provider, and Work. Return work_id."""
     with Session(engine) as session:
         prov = ModelProvider(
-            name="WUpP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="WUpP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="WUpTopic", provider_id=prov.id, status="created")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         work = Work(topic_id=topic.id, title="Test Work", series_index=1)
         session.add(work)
         session.commit()
@@ -82,7 +88,13 @@ class TestWorkParse:
         wid = _setup_work(engine, client)
         client.post(
             f"/api/works/{wid}/documents/upload",
-            files={"file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n第二章 更多\n内容。\n".encode()), "text/plain")},
+            files={
+                "file": (
+                    "novel.txt",
+                    io.BytesIO("第一章 测试\n内容。\n第二章 更多\n内容。\n".encode()),
+                    "text/plain",
+                )
+            },
         )
         r = client.post(f"/api/works/{wid}/parse")
         assert r.status_code == 200
@@ -94,7 +106,9 @@ class TestWorkParse:
         wid = _setup_work(engine, client)
         client.post(
             f"/api/works/{wid}/documents/upload",
-            files={"file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")},
+            files={
+                "file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")
+            },
         )
         client.post(f"/api/works/{wid}/parse")
         r = client.get(f"/api/works/{wid}/chapters")
@@ -105,7 +119,9 @@ class TestWorkParse:
         wid = _setup_work(engine, client)
         client.post(
             f"/api/works/{wid}/documents/upload",
-            files={"file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")},
+            files={
+                "file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")
+            },
         )
         client.post(f"/api/works/{wid}/parse")
         r = client.get(f"/api/works/{wid}/chunks")
@@ -131,10 +147,15 @@ class TestLegacyCompatibility:
         # Create a topic directly (no Work)
         with Session(engine) as session:
             prov = ModelProvider(
-                name="LegacyUpP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="LegacyUpP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="LegacyUpload", provider_id=prov.id, status="created")
             session.add(topic)
             session.commit()
@@ -154,10 +175,15 @@ class TestLegacyCompatibility:
 
         with Session(engine) as session:
             prov = ModelProvider(
-                name="LegacyParseP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="LegacyParseP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="LegacyParse", provider_id=prov.id, status="created")
             session.add(topic)
             session.commit()
@@ -165,7 +191,9 @@ class TestLegacyCompatibility:
 
         client.post(
             f"/api/topics/{tid}/documents/upload",
-            files={"file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")},
+            files={
+                "file": ("novel.txt", io.BytesIO("第一章 测试\n内容。\n".encode()), "text/plain")
+            },
         )
         r = client.post(f"/api/topics/{tid}/parse")
         assert r.status_code == 200
@@ -178,10 +206,15 @@ class TestLegacyCompatibility:
 
         with Session(engine) as session:
             prov = ModelProvider(
-                name="LegacyGetP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="LegacyGetP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="LegacyGet", provider_id=prov.id, status="created")
             session.add(topic)
             session.commit()

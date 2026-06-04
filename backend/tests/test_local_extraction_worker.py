@@ -362,7 +362,8 @@ def test_finish_reason_length_truncation_detected():
     with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.return_value = MockResponseWithFinish(
-            "not valid json {{{", finish_reason="length",
+            "not valid json {{{",
+            finish_reason="length",
             usage={"completion_tokens": 8192, "prompt_tokens": 500, "total_tokens": 8692},
         )
 
@@ -389,7 +390,8 @@ def test_completion_tokens_near_max_truncation_detected():
         # Retries use higher max_tokens, so the 2nd/3rd attempts won't show truncated,
         # but the first attempt's error (with truncation) is captured in finish_reason.
         mock_client.chat.return_value = MockResponseWithFinish(
-            "not json {{{", finish_reason="stop",
+            "not json {{{",
+            finish_reason="stop",
             usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
         )
 
@@ -417,7 +419,8 @@ def test_json_parse_truncation_escalates_to_16384():
         # First call: truncation detected (completion_tokens near max)
         mock_client.chat.side_effect = [
             MockResponseWithFinish(
-                "bad json", finish_reason="length",
+                "bad json",
+                finish_reason="length",
                 usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
             ),
             MockResponse(VALID_EXTRACTION_JSON),
@@ -448,11 +451,13 @@ def test_default_4096_json_truncation_two_retries_escalate_to_16384():
         # All 3 calls return truncated JSON → should use 4096, 8192, 16384
         mock_client.chat.side_effect = [
             MockResponseWithFinish(
-                "bad json", finish_reason="length",
+                "bad json",
+                finish_reason="length",
                 usage={"completion_tokens": 4090, "prompt_tokens": 500, "total_tokens": 4590},
             ),
             MockResponseWithFinish(
-                "bad json 2", finish_reason="length",
+                "bad json 2",
+                finish_reason="length",
                 usage={"completion_tokens": 8188, "prompt_tokens": 500, "total_tokens": 8688},
             ),
             MockResponse(VALID_EXTRACTION_JSON),
@@ -486,7 +491,8 @@ def test_transport_error_then_json_truncation_escalates():
         mock_client.chat.side_effect = [
             LLMClientError("Transport error: peer closed connection"),
             MockResponseWithFinish(
-                "bad json", finish_reason="length",
+                "bad json",
+                finish_reason="length",
                 usage={"completion_tokens": 4090, "prompt_tokens": 500, "total_tokens": 4590},
             ),
             MockResponse(VALID_EXTRACTION_JSON),
@@ -584,7 +590,8 @@ def test_cumulative_tokens_two_attempts_summed():
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = [
             MockResponseWithFinish(
-                "bad json", finish_reason="length",
+                "bad json",
+                finish_reason="length",
                 usage={"prompt_tokens": 500, "completion_tokens": 4090, "total_tokens": 4590},
             ),
             MockResponse(
@@ -617,9 +624,16 @@ def test_cumulative_three_attempts_all_have_usage():
     with patch("services.local_extraction_worker.OpenAICompatibleLLMClient") as mock_client_class:
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = [
-            MockResponse("bad1", usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300}),
-            MockResponse("bad2", usage={"prompt_tokens": 110, "completion_tokens": 210, "total_tokens": 320}),
-            MockResponse(VALID_EXTRACTION_JSON, usage={"prompt_tokens": 120, "completion_tokens": 500, "total_tokens": 620}),
+            MockResponse(
+                "bad1", usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300}
+            ),
+            MockResponse(
+                "bad2", usage={"prompt_tokens": 110, "completion_tokens": 210, "total_tokens": 320}
+            ),
+            MockResponse(
+                VALID_EXTRACTION_JSON,
+                usage={"prompt_tokens": 120, "completion_tokens": 500, "total_tokens": 620},
+            ),
         ]
         with patch("services.local_extraction_worker.time.sleep", return_value=None):
             result = run_local_extraction_for_chunk(
@@ -646,7 +660,10 @@ def test_transport_error_no_usage_then_success():
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = [
             LLMClientError("Transport error: peer closed connection"),
-            MockResponse(VALID_EXTRACTION_JSON, usage={"prompt_tokens": 300, "completion_tokens": 400, "total_tokens": 700}),
+            MockResponse(
+                VALID_EXTRACTION_JSON,
+                usage={"prompt_tokens": 300, "completion_tokens": 400, "total_tokens": 700},
+            ),
         ]
         with patch("services.local_extraction_worker.time.sleep", return_value=None):
             result = run_local_extraction_for_chunk(
@@ -679,14 +696,19 @@ def test_reasoning_tokens_cumulated():
         mock_client = mock_client_class.return_value
         mock_client.chat.side_effect = [
             MockResponseWithFinish(
-                "bad json", finish_reason="length", usage=usage_with_reasoning,
+                "bad json",
+                finish_reason="length",
+                usage=usage_with_reasoning,
             ),
-            MockResponse(VALID_EXTRACTION_JSON, usage={
-                "prompt_tokens": 400,
-                "completion_tokens": 800,
-                "total_tokens": 1200,
-                "completion_tokens_details": {"reasoning_tokens": 0},
-            }),
+            MockResponse(
+                VALID_EXTRACTION_JSON,
+                usage={
+                    "prompt_tokens": 400,
+                    "completion_tokens": 800,
+                    "total_tokens": 1200,
+                    "completion_tokens_details": {"reasoning_tokens": 0},
+                },
+            ),
         ]
         with patch("services.local_extraction_worker.time.sleep", return_value=None):
             result = run_local_extraction_for_chunk(

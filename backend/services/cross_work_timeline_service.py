@@ -33,6 +33,8 @@ def build_timeline(
     session.flush()
 
     # Load event atoms
+    from models.chunk import Chunk as ChunkModel
+
     base = select(ExtractedAtom).where(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type == AtomType.EVENT,
@@ -40,8 +42,8 @@ def build_timeline(
 
     if work_ids:
         chunk_ids_subq = (
-            select(Chunk.id)
-            .join(Document, Chunk.document_id == Document.id)
+            select(ChunkModel.id)
+            .join(Document, ChunkModel.document_id == Document.id)
             .where(Document.work_id.in_(work_ids))
         )
         base = base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
@@ -69,6 +71,9 @@ def build_timeline(
     for c in chunks:
         chunk_info[c.id] = (c.chapter_index or 0, c.chunk_index or 0)
 
+    # Stable sub-index for events in the same chunk
+    chunk_event_index: dict[str, int] = {}
+
     # Compute sequence_index and create TimelineItems
     items_created = 0
     for atom in event_atoms:
@@ -90,12 +95,19 @@ def build_timeline(
                     if d:
                         work_id = d.work_id
 
-        # Sequence: work_series * 1_000_000 + chapter * 1000 + chunk
+        # Sequence: work_series * 1_000_000 + chapter * 1000 + chunk + sub_index
         ws = work_series.get(doc_id or "", 1)
         ci, chi = chunk_info.get(atom.chunk_id or "", (0, 0))
-        sequence = ws * 1_000_000 + ci * 1000 + chi
+        cid = atom.chunk_id or ""
+        sub_idx = chunk_event_index.get(cid, 0)
+        chunk_event_index[cid] = sub_idx + 1
+        sequence = ws * 1_000_000 + ci * 1000 + chi + sub_idx * 0.001
 
         evidence_list = _parse_json_list(atom.evidence_quotes)
+        evidence_payload = [
+            {"chunk_id": atom.chunk_id, "text": q}
+            for q in (evidence_list[:3] if evidence_list else [])
+        ]
 
         item = TimelineItem(
             topic_id=topic_id,
@@ -115,10 +127,7 @@ def build_timeline(
             ),
             causes_json=json.dumps([], ensure_ascii=False),
             effects_json=json.dumps([], ensure_ascii=False),
-            evidence_json=json.dumps(
-                evidence_list[:3] if evidence_list else [],
-                ensure_ascii=False,
-            ),
+            evidence_json=json.dumps(evidence_payload, ensure_ascii=False),
             confidence=atom.confidence,
         )
         session.add(item)

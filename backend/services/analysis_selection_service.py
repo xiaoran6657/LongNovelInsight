@@ -17,9 +17,7 @@ def get_chunks_meta(session: Session, topic_id: str, document_id: str | None = N
     base = select(Chunk).where(Chunk.topic_id == topic_id)
     if document_id is not None:
         base = base.where(Chunk.document_id == document_id)
-    chunks = session.exec(
-        base.order_by(Chunk.chapter_index, Chunk.chunk_index)
-    ).all()
+    chunks = session.exec(base.order_by(Chunk.chapter_index, Chunk.chunk_index)).all()
 
     doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
     document_id = doc.id if doc else None
@@ -104,9 +102,7 @@ def select_chunks_for_analysis(
     base = select(Chunk).where(Chunk.topic_id == topic_id)
     if document_id is not None:
         base = base.where(Chunk.document_id == document_id)
-    all_chunks = session.exec(
-        base.order_by(Chunk.chapter_index, Chunk.chunk_index)
-    ).all()
+    all_chunks = session.exec(base.order_by(Chunk.chapter_index, Chunk.chunk_index)).all()
 
     if not all_chunks:
         return [], {"mode": mode, "selected": 0, "reason": "no_chunks"}

@@ -10,7 +10,8 @@ class TestCrossWorkRun:
     def test_create_run_full(self, engine):
         with Session(engine) as session:
             topic = Topic(name="CWRTopic", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         from services.cross_work_run_service import (
@@ -33,7 +34,8 @@ class TestCrossWorkRun:
     def test_create_run_entities_only(self, engine):
         with Session(engine) as session:
             topic = Topic(name="CWREntities", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         from services.cross_work_run_service import (
@@ -53,7 +55,8 @@ class TestCrossWorkRun:
     def test_list_runs(self, engine):
         with Session(engine) as session:
             topic = Topic(name="CWRList", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         from services.cross_work_run_service import (
@@ -75,7 +78,8 @@ class TestCrossWorkRun:
     def test_get_run_status(self, engine):
         with Session(engine) as session:
             topic = Topic(name="CWRStatus", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         from services.cross_work_run_service import (
@@ -98,7 +102,8 @@ class TestCrossWorkRun:
     def test_create_run_api(self, engine, client):
         with Session(engine) as session:
             topic = Topic(name="CWRAPI", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         r = client.post(
@@ -113,7 +118,8 @@ class TestCrossWorkRun:
     def test_list_runs_api(self, engine, client):
         with Session(engine) as session:
             topic = Topic(name="CWRListAPI", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         client.post(
@@ -127,7 +133,8 @@ class TestCrossWorkRun:
     def test_get_run_api(self, engine, client):
         with Session(engine) as session:
             topic = Topic(name="CWRGetAPI", status="created")
-            session.add(topic); session.commit()
+            session.add(topic)
+            session.commit()
             tid = topic.id
 
         r_create = client.post(

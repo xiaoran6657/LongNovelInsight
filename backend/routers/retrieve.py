@@ -106,11 +106,13 @@ def retrieve_evidence(
             detail="At least one retrieval method is required alongside semantic_rerank",
         )
 
+    fetch_k = max(body.top_k * 3, body.top_k + 50) if body.work_ids else body.top_k
+
     results = hybrid_retrieve(
         topic_id=topic_id,
         query=body.query.strip(),
         session=session,
-        top_k=body.top_k,
+        top_k=fetch_k,
         methods=retrieval_methods,
     )
 
@@ -128,12 +130,14 @@ def retrieve_evidence(
                     doc = session.get(Document, chunk.document_id)
                     if doc is not None and doc.work_id in body.work_ids:
                         filtered.append(r)
-            else:
-                filtered.append(r)
+                        continue
+                # chunk_id exists but can't resolve to work_id → exclude
+            # else: no chunk_id → exclude (can't confirm work membership)
         results = filtered
 
     # Annotate with work metadata
     from routers.search import _annotate_work_meta
+
     _annotate_work_meta(results, session)
 
     warning: str | None = None
@@ -148,6 +152,7 @@ def retrieve_evidence(
             results=results,
             session=session,
             method="hybrid",
+            work_ids=body.work_ids,
         )
 
     return RetrieveResponse(

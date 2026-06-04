@@ -318,12 +318,17 @@ def test_cost_estimate_no_chunks():
 
 def _make_test_chunks(n: int) -> list:
     from models.chunk import Chunk
+
     return [
         Chunk(
-            topic_id="t1", document_id="d1", chunk_index=i,
+            topic_id="t1",
+            document_id="d1",
+            chunk_index=i,
             text="test text here",
-            start_char=i * 100, end_char=(i + 1) * 100,
-            char_count=2000, estimated_tokens=1333,
+            start_char=i * 100,
+            end_char=(i + 1) * 100,
+            char_count=2000,
+            estimated_tokens=1333,
         )
         for i in range(n)
     ]
@@ -349,7 +354,9 @@ def test_cost_estimate_thinking_mode_increases_output():
     chunks = _make_test_chunks(3)
     est_disabled = estimate_v2_analysis_cost(chunks, thinking_mode="disabled")
     est_enabled = estimate_v2_analysis_cost(chunks, thinking_mode="enabled")
-    assert est_enabled["estimated_total_output_tokens"] > est_disabled["estimated_total_output_tokens"]
+    assert (
+        est_enabled["estimated_total_output_tokens"] > est_disabled["estimated_total_output_tokens"]
+    )
 
 
 def test_cost_estimate_retry_multiplier_affects_output():
@@ -357,7 +364,10 @@ def test_cost_estimate_retry_multiplier_affects_output():
     chunks = _make_test_chunks(1)
     est_no_retry = estimate_v2_analysis_cost(chunks, retry_multiplier=1.0)
     est_with_retry = estimate_v2_analysis_cost(chunks, retry_multiplier=1.5)
-    assert est_with_retry["estimated_total_output_tokens"] > est_no_retry["estimated_total_output_tokens"]
+    assert (
+        est_with_retry["estimated_total_output_tokens"]
+        > est_no_retry["estimated_total_output_tokens"]
+    )
 
 
 def test_cost_estimate_final_stages_zero_llm_cost():
@@ -383,7 +393,10 @@ def test_cost_estimate_incremental_same_as_preview():
     chunks = _make_test_chunks(3)
     est_preview = estimate_v2_analysis_cost(chunks, mode="preview")
     est_incremental = estimate_v2_analysis_cost(chunks, mode="incremental")
-    assert est_preview["estimated_total_output_tokens"] == est_incremental["estimated_total_output_tokens"]
+    assert (
+        est_preview["estimated_total_output_tokens"]
+        == est_incremental["estimated_total_output_tokens"]
+    )
 
 
 def test_no_chunks_returns_empty_list(client, engine):

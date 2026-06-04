@@ -8,8 +8,11 @@ def _create_provider_and_topic(client) -> str:
     r = client.post(
         "/api/providers",
         json={
-            "name": "WorkP", "provider_type": "openai_compatible",
-            "base_url": "http://mock", "api_key": "sk-m", "model_name": "m",
+            "name": "WorkP",
+            "provider_type": "openai_compatible",
+            "base_url": "http://mock",
+            "api_key": "sk-m",
+            "model_name": "m",
         },
     )
     # 200 or 409 if already exists from another test
@@ -108,19 +111,29 @@ class TestWorkCRUD:
 
         with Session(engine) as session:
             topic = Topic(name="DeleteWork", status="parsed")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
             work = Work(topic_id=topic.id, title="HasDoc", series_index=1)
-            session.add(work); session.flush()
+            session.add(work)
+            session.flush()
             doc = Document(
-                topic_id=topic.id, work_id=work.id,
-                original_filename="test.txt", file_size_bytes=100,
-                char_count=50, status="parsed",
+                topic_id=topic.id,
+                work_id=work.id,
+                original_filename="test.txt",
+                file_size_bytes=100,
+                char_count=50,
+                status="parsed",
             )
-            session.add(doc); session.flush()
+            session.add(doc)
+            session.flush()
             ch = Chapter(
-                topic_id=topic.id, document_id=doc.id,
-                chapter_index=0, title="Ch1",
-                start_char=0, end_char=50, char_count=50,
+                topic_id=topic.id,
+                document_id=doc.id,
+                chapter_index=0,
+                title="Ch1",
+                start_char=0,
+                end_char=50,
+                char_count=50,
             )
             session.add(ch)
             session.commit()
@@ -156,13 +169,18 @@ class TestWorkCRUD:
 
         with Session(engine) as session:
             topic = Topic(name="DocOnlyDel", status="uploaded")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
             work = Work(topic_id=topic.id, title="DocOnly", series_index=1)
-            session.add(work); session.flush()
+            session.add(work)
+            session.flush()
             doc = Document(
-                topic_id=topic.id, work_id=work.id,
+                topic_id=topic.id,
+                work_id=work.id,
                 original_filename="just_uploaded.txt",
-                file_size_bytes=100, char_count=50, status="uploaded",
+                file_size_bytes=100,
+                char_count=50,
+                status="uploaded",
             )
             session.add(doc)
             session.commit()
@@ -187,10 +205,14 @@ class TestWorkCRUD:
 
         with Session(engine) as session:
             topic = Topic(name="LegacyList", status="parsed")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
             doc = Document(
-                topic_id=topic.id, original_filename="legacy.txt",
-                file_size_bytes=100, char_count=50, status="parsed",
+                topic_id=topic.id,
+                original_filename="legacy.txt",
+                file_size_bytes=100,
+                char_count=50,
+                status="parsed",
                 work_id=None,
             )
             session.add(doc)

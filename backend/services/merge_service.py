@@ -392,9 +392,7 @@ def _normalize_match_key(s: str) -> str:
     return " ".join(s.lower().split())
 
 
-def _build_event_index(
-    session: Session, run_id: str
-) -> dict[str, list[dict]]:
+def _build_event_index(session: Session, run_id: str) -> dict[str, list[dict]]:
     """Build lookup index from event atoms: stable_id → [{field: value}].
 
     Each entry has: stable_id, title, summary, id_hints (from content_json).
@@ -423,9 +421,7 @@ def _build_event_index(
     return index
 
 
-def _match_causal_side(
-    raw: str, event_index: dict[str, list[dict]]
-) -> tuple[bool, str | None]:
+def _match_causal_side(raw: str, event_index: dict[str, list[dict]]) -> tuple[bool, str | None]:
     """Try to match a cause/effect string to an event stable_id.
 
     Returns (resolved, stable_id_or_None).

@@ -13,15 +13,22 @@ def _setup_topic_with_two_works(engine, client):
     """Create topic + 2 Works with parsed documents. Returns (topic_id, w1_id, w2_id)."""
     with Session(engine) as session:
         prov = ModelProvider(
-            name="SearchFlP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="SearchFlP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="SearchFlTopic", provider_id=prov.id, status="created")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         w1 = Work(topic_id=topic.id, title="Red Book", series_index=1)
         w2 = Work(topic_id=topic.id, title="Blue Book", series_index=2)
-        session.add(w1); session.add(w2)
+        session.add(w1)
+        session.add(w2)
         session.commit()
         tid = topic.id
         w1_id = w1.id
@@ -33,14 +40,26 @@ def _setup_topic_with_two_works(engine, client):
     # Upload + parse Work 1
     client.post(
         f"/api/works/{w1_id}/documents/upload",
-        files={"file": ("w1.txt", io.BytesIO("第一章 红色书籍\n这是关于红色的故事。\n".encode()), "text/plain")},
+        files={
+            "file": (
+                "w1.txt",
+                io.BytesIO("第一章 红色书籍\n这是关于红色的故事。\n".encode()),
+                "text/plain",
+            )
+        },
     )
     client.post(f"/api/works/{w1_id}/parse")
 
     # Upload + parse Work 2
     client.post(
         f"/api/works/{w2_id}/documents/upload",
-        files={"file": ("w2.txt", io.BytesIO("第一章 蓝色书籍\n这是关于蓝色的故事。\n".encode()), "text/plain")},
+        files={
+            "file": (
+                "w2.txt",
+                io.BytesIO("第一章 蓝色书籍\n这是关于蓝色的故事。\n".encode()),
+                "text/plain",
+            )
+        },
     )
     client.post(f"/api/works/{w2_id}/parse")
 

@@ -288,14 +288,26 @@ def create_cross_work_run(
     _check_topic(topic_id, session)
 
     from services.cross_work_run_service import (
+        VALID_MODES,
+    )
+    from services.cross_work_run_service import (
         create_cross_work_run as svc_create,
     )
     from services.cross_work_run_service import (
         start_cross_work_run as svc_start,
     )
 
-    run = svc_create(session, topic_id, mode=body.mode, work_ids=body.work_ids)
-    # Start background execution — caller polls GET /runs/{id} for status
+    if body.mode not in VALID_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid mode '{body.mode}'. Must be: {sorted(VALID_MODES)}",
+        )
+
+    try:
+        run = svc_create(session, topic_id, mode=body.mode, work_ids=body.work_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     svc_start(run.id)
 
     return {

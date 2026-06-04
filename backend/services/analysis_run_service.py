@@ -61,9 +61,7 @@ def create_analysis_run(
     if work_id is not None:
         from models.document import Document
 
-        doc = session.exec(
-            select(Document).where(Document.work_id == work_id)
-        ).first()
+        doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
         if doc is None:
             raise ValueError("No document found for this Work")
         document_id = doc.id
@@ -889,9 +887,7 @@ def _recalculate_run_usage_from_extractions(session: Session, run_id: str) -> No
     if run is None:
         return
 
-    all_exts = session.exec(
-        select(LocalExtraction).where(LocalExtraction.run_id == run_id)
-    ).all()
+    all_exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
     total_prompt = sum(e.prompt_tokens or 0 for e in all_exts)
     total_completion = sum(e.completion_tokens or 0 for e in all_exts)
     total_all = sum(e.total_tokens or 0 for e in all_exts)
@@ -1024,9 +1020,15 @@ def retry_failed_extractions(
         ext.model_used = result.model_used
         ext.finished_at = _now()
         ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
-        ext.prompt_cache_hit_tokens = (ext.prompt_cache_hit_tokens or 0) + result.cumulative_prompt_cache_hit_tokens
-        ext.prompt_cache_miss_tokens = (ext.prompt_cache_miss_tokens or 0) + result.cumulative_prompt_cache_miss_tokens
-        ext.usage_unavailable_attempts = (ext.usage_unavailable_attempts or 0) + result.usage_unavailable_attempts
+        ext.prompt_cache_hit_tokens = (
+            ext.prompt_cache_hit_tokens or 0
+        ) + result.cumulative_prompt_cache_hit_tokens
+        ext.prompt_cache_miss_tokens = (
+            ext.prompt_cache_miss_tokens or 0
+        ) + result.cumulative_prompt_cache_miss_tokens
+        ext.usage_unavailable_attempts = (
+            ext.usage_unavailable_attempts or 0
+        ) + result.usage_unavailable_attempts
         ext.attempt_usage_json = _serialize_attempts(result.attempts)
         session.add(ext)
         session.flush()
@@ -1247,9 +1249,15 @@ def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True
         ext.model_used = result.model_used
         ext.finished_at = _now()
         ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
-        ext.prompt_cache_hit_tokens = (ext.prompt_cache_hit_tokens or 0) + result.cumulative_prompt_cache_hit_tokens
-        ext.prompt_cache_miss_tokens = (ext.prompt_cache_miss_tokens or 0) + result.cumulative_prompt_cache_miss_tokens
-        ext.usage_unavailable_attempts = (ext.usage_unavailable_attempts or 0) + result.usage_unavailable_attempts
+        ext.prompt_cache_hit_tokens = (
+            ext.prompt_cache_hit_tokens or 0
+        ) + result.cumulative_prompt_cache_hit_tokens
+        ext.prompt_cache_miss_tokens = (
+            ext.prompt_cache_miss_tokens or 0
+        ) + result.cumulative_prompt_cache_miss_tokens
+        ext.usage_unavailable_attempts = (
+            ext.usage_unavailable_attempts or 0
+        ) + result.usage_unavailable_attempts
         ext.attempt_usage_json = _serialize_attempts(result.attempts)
         session.add(ext)
         session.flush()

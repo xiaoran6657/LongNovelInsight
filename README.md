@@ -2,9 +2,12 @@
 
 LongNovelInsight is a local-first tool that uses LLMs to analyze long novels (.txt and .epub) and produce structured insights — character profiles, relationship maps, key events, causal chains, and thematic analysis — all stored on your own machine.
 
-## v0.3.0-dev (current)
+## v0.4.0-dev (current)
 
-Backend v0.3 is complete (Steps 1–12). Frontend v0.3 is complete (Steps 1–12). v0.3 adds EPUB support, SQLite FTS5 full-text search, hybrid retrieval across chunks/atoms/outputs, structured chat evidence, entity evidence explorer, similar scenes, optional semantic rerank skeleton, and retrieval trace debugging.
+**Backend v0.4 is complete (Steps 1–10).** Frontend v0.4 is pending.
+v0.4 adds multi-Work support (Topic 1→* Work, Work-scoped upload/parse/analysis),
+cross-work entity registry, character relationship graph, timeline, and
+work-scoped search/retrieve filters. All v0.3 APIs remain backward-compatible.
 
 ### What's New in v0.3 Backend
 

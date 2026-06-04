@@ -166,9 +166,7 @@ def _migrate_v04_work_tables(_engine=None) -> None:
             "still present — redoing table rebuild"
         )
         with eng.connect() as conn:
-            conn.connection.dbapi_connection.execute(
-                "DROP INDEX IF EXISTS ix_document_work_id"
-            )
+            conn.connection.dbapi_connection.execute("DROP INDEX IF EXISTS ix_document_work_id")
         schema_ok = False
 
     # ── Table rebuild (only if schema not yet migrated) ──
@@ -228,9 +226,7 @@ def _migrate_v04_work_tables(_engine=None) -> None:
             if fk_result:
                 violations = "; ".join(str(r) for r in fk_result[:10])
                 logger.error("v0.4 migration FK violations: %s", violations)
-                raise RuntimeError(
-                    f"v0.4 migration failed: {len(fk_result)} FK violations"
-                )
+                raise RuntimeError(f"v0.4 migration failed: {len(fk_result)} FK violations")
 
     # ── Always: ensure work table + remaining tables exist ──
     from models.work import Work

@@ -328,16 +328,26 @@ class TestBuildFinalCausalityWarnings:
             # Create 20 events with unique stable_ids
             for i in range(20):
                 _create_atom(
-                    session, rid, tid, AtomType.EVENT,
-                    f"evt_{i}", {"title": f"Event_{i}"}, cid, confidence=0.9,
+                    session,
+                    rid,
+                    tid,
+                    AtomType.EVENT,
+                    f"evt_{i}",
+                    {"title": f"Event_{i}"},
+                    cid,
+                    confidence=0.9,
                 )
             # Create 15 causal links, none matching any event (all unresolved)
             for i in range(15):
                 _create_atom(
-                    session, rid, tid, AtomType.CAUSAL_LINK,
+                    session,
+                    rid,
+                    tid,
+                    AtomType.CAUSAL_LINK,
                     f"caus_{i}",
                     {"cause_hint": f"Unknown_X_{i}", "effect_hint": f"Unknown_Y_{i}"},
-                    cid, confidence=0.5,
+                    cid,
+                    confidence=0.5,
                 )
             session.commit()
             merge_causality(session, rid)
@@ -353,18 +363,34 @@ class TestBuildFinalCausalityWarnings:
         tid, rid, cid = _setup_run(engine)
         with Session(engine) as session:
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_sunrise", {"title": "Sunrise"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_sunrise",
+                {"title": "Sunrise"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.EVENT,
-                "evt_departure", {"title": "Departure"}, cid, confidence=0.9,
+                session,
+                rid,
+                tid,
+                AtomType.EVENT,
+                "evt_departure",
+                {"title": "Departure"},
+                cid,
+                confidence=0.9,
             )
             _create_atom(
-                session, rid, tid, AtomType.CAUSAL_LINK,
+                session,
+                rid,
+                tid,
+                AtomType.CAUSAL_LINK,
                 "caus_sun_dep",
                 {"cause_hint": "Sunrise", "effect_hint": "Departure"},
-                cid, confidence=0.85,
+                cid,
+                confidence=0.85,
             )
             session.commit()
             merge_causality(session, rid)

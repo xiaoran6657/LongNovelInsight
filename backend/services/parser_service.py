@@ -272,9 +272,7 @@ def parse_novel_for_work(work_id: str, session: Session, force: bool = False) ->
     return _do_parse(work.topic_id, doc, session, force, work)
 
 
-def _do_parse(
-    topic_id: str, doc: Document, session: Session, force: bool, work=None
-) -> dict:
+def _do_parse(topic_id: str, doc: Document, session: Session, force: bool, work=None) -> dict:
 
     available_types = {"txt", "epub"}
     if doc.file_type not in available_types:
@@ -286,9 +284,7 @@ def _do_parse(
         raise ValueError(f"Source file not found on disk: {doc.stored_filename}")
 
     # Check if already parsed (scoped to this document)
-    existing_chunk = session.exec(
-        select(Chunk).where(Chunk.document_id == doc.id).limit(1)
-    ).first()
+    existing_chunk = session.exec(select(Chunk).where(Chunk.document_id == doc.id).limit(1)).first()
     has_outputs = (
         session.exec(
             select(AnalysisOutput).where(AnalysisOutput.topic_id == topic_id).limit(1)
@@ -297,12 +293,8 @@ def _do_parse(
     )
 
     if existing_chunk and not force:
-        chapters = session.exec(
-            select(Chapter).where(Chapter.document_id == doc.id)
-        ).all()
-        chunks = session.exec(
-            select(Chunk).where(Chunk.document_id == doc.id)
-        ).all()
+        chapters = session.exec(select(Chapter).where(Chapter.document_id == doc.id)).all()
+        chunks = session.exec(select(Chunk).where(Chunk.document_id == doc.id)).all()
         return {
             "already_parsed": True,
             "chapter_count": len(chapters),

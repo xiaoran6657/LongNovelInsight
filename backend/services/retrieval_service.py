@@ -468,6 +468,7 @@ def save_retrieval_trace(
     session_id: str | None = None,
     message_id: str | None = None,
     method: str = "hybrid",
+    work_ids: list[str] | None = None,
 ) -> str:
     """Persist a RetrievalTrace and return its ID.
 
@@ -488,12 +489,16 @@ def save_retrieval_trace(
             }
         )
 
+    trace_method = method
+    if work_ids:
+        trace_method = f"{method} (work_ids={len(work_ids)})"
+
     trace = RetrievalTrace(
         topic_id=topic_id,
         session_id=session_id,
         message_id=message_id,
         query=query,
-        method=method,
+        method=trace_method,
         results_json=json.dumps(trace_results, ensure_ascii=False),
     )
     session.add(trace)

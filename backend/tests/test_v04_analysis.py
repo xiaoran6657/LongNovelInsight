@@ -57,12 +57,18 @@ def _setup_parsed_work(engine, client) -> tuple[str, str]:
     """Create a topic with parsed Work. Returns (topic_id, work_id)."""
     with Session(engine) as session:
         prov = ModelProvider(
-            name="AnaP", provider_type="openai_compatible",
-            base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+            name="AnaP",
+            provider_type="openai_compatible",
+            base_url="http://mock",
+            api_key="sk-m",
+            model_name="m",
+            is_default=True,
         )
-        session.add(prov); session.flush()
+        session.add(prov)
+        session.flush()
         topic = Topic(name="AnaTopic", provider_id=prov.id, status="created")
-        session.add(topic); session.flush()
+        session.add(topic)
+        session.flush()
         work = Work(topic_id=topic.id, title="Analysis Work", series_index=1)
         session.add(work)
         session.commit()
@@ -103,12 +109,18 @@ class TestWorkAnalysis:
         """Work without parsed document → 409."""
         with Session(engine) as session:
             prov = ModelProvider(
-                name="NoDocAnaP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="NoDocAnaP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="NoDocAna", provider_id=prov.id, status="created")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
             work = Work(topic_id=topic.id, title="No Doc Work", series_index=1)
             session.add(work)
             session.commit()
@@ -154,8 +166,11 @@ class TestWorkAnalysis:
                 )
 
                 run = create_analysis_run(
-                    session, tid, mode="preview",
-                    limit_chunks=1, work_id=wid,
+                    session,
+                    tid,
+                    mode="preview",
+                    limit_chunks=1,
+                    work_id=wid,
                 )
                 rid = run.id
             _execute_run(rid, engine=engine)
@@ -174,52 +189,93 @@ class TestWorkAnalysis:
 
         with Session(engine) as session:
             prov = ModelProvider(
-                name="TwoWorkP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="TwoWorkP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="TwoWorkTopic", provider_id=prov.id, status="created")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
 
             w1 = Work(topic_id=topic.id, title="Work 1", series_index=1)
             w2 = Work(topic_id=topic.id, title="Work 2", series_index=2)
-            session.add(w1); session.add(w2); session.flush()
+            session.add(w1)
+            session.add(w2)
+            session.flush()
 
             d1 = Document(
-                topic_id=topic.id, work_id=w1.id,
-                original_filename="w1.txt", file_size_bytes=100,
-                char_count=50, status="parsed",
+                topic_id=topic.id,
+                work_id=w1.id,
+                original_filename="w1.txt",
+                file_size_bytes=100,
+                char_count=50,
+                status="parsed",
             )
             d2 = Document(
-                topic_id=topic.id, work_id=w2.id,
-                original_filename="w2.txt", file_size_bytes=100,
-                char_count=50, status="parsed",
+                topic_id=topic.id,
+                work_id=w2.id,
+                original_filename="w2.txt",
+                file_size_bytes=100,
+                char_count=50,
+                status="parsed",
             )
-            session.add(d1); session.add(d2); session.flush()
+            session.add(d1)
+            session.add(d2)
+            session.flush()
 
             ch1 = Chapter(
-                topic_id=topic.id, document_id=d1.id,
-                chapter_index=0, title="Ch1",
-                start_char=0, end_char=50, char_count=50,
+                topic_id=topic.id,
+                document_id=d1.id,
+                chapter_index=0,
+                title="Ch1",
+                start_char=0,
+                end_char=50,
+                char_count=50,
             )
             ch2 = Chapter(
-                topic_id=topic.id, document_id=d2.id,
-                chapter_index=0, title="Ch1",
-                start_char=0, end_char=50, char_count=50,
+                topic_id=topic.id,
+                document_id=d2.id,
+                chapter_index=0,
+                title="Ch1",
+                start_char=0,
+                end_char=50,
+                char_count=50,
             )
-            session.add(ch1); session.add(ch2); session.flush()
+            session.add(ch1)
+            session.add(ch2)
+            session.flush()
 
             ck1 = Chunk(
-                topic_id=topic.id, document_id=d1.id, chapter_id=ch1.id,
-                chapter_index=0, chunk_index=0, text="work1 text here",
-                start_char=0, end_char=50, char_count=50, estimated_tokens=34,
+                topic_id=topic.id,
+                document_id=d1.id,
+                chapter_id=ch1.id,
+                chapter_index=0,
+                chunk_index=0,
+                text="work1 text here",
+                start_char=0,
+                end_char=50,
+                char_count=50,
+                estimated_tokens=34,
             )
             ck2 = Chunk(
-                topic_id=topic.id, document_id=d2.id, chapter_id=ch2.id,
-                chapter_index=0, chunk_index=0, text="work2 text here",
-                start_char=0, end_char=50, char_count=50, estimated_tokens=34,
+                topic_id=topic.id,
+                document_id=d2.id,
+                chapter_id=ch2.id,
+                chapter_index=0,
+                chunk_index=0,
+                text="work2 text here",
+                start_char=0,
+                end_char=50,
+                char_count=50,
+                estimated_tokens=34,
             )
-            session.add(ck1); session.add(ck2)
+            session.add(ck1)
+            session.add(ck2)
             session.flush()
             ck1_id = ck1.id
             ck2_id = ck2.id
@@ -245,7 +301,10 @@ class TestWorkAnalysis:
                 )
 
                 run = create_analysis_run(
-                    session, tid, mode="full", work_id=w1_id,
+                    session,
+                    tid,
+                    mode="full",
+                    work_id=w1_id,
                 )
                 rid = run.id
             _execute_run(rid, engine=engine)
@@ -261,30 +320,53 @@ class TestWorkAnalysis:
 
         with Session(engine) as session:
             prov = ModelProvider(
-                name="WidStatusP", provider_type="openai_compatible",
-                base_url="http://mock", api_key="sk-m", model_name="m", is_default=True,
+                name="WidStatusP",
+                provider_type="openai_compatible",
+                base_url="http://mock",
+                api_key="sk-m",
+                model_name="m",
+                is_default=True,
             )
-            session.add(prov); session.flush()
+            session.add(prov)
+            session.flush()
             topic = Topic(name="WidStatus", provider_id=prov.id, status="parsed")
-            session.add(topic); session.flush()
+            session.add(topic)
+            session.flush()
             work = Work(topic_id=topic.id, title="Wid Work", series_index=1)
-            session.add(work); session.flush()
+            session.add(work)
+            session.flush()
             doc = Document(
-                topic_id=topic.id, work_id=work.id,
-                original_filename="w.txt", file_size_bytes=100,
-                char_count=50, status="parsed",
+                topic_id=topic.id,
+                work_id=work.id,
+                original_filename="w.txt",
+                file_size_bytes=100,
+                char_count=50,
+                status="parsed",
             )
-            session.add(doc); session.flush()
+            session.add(doc)
+            session.flush()
             ch = Chapter(
-                topic_id=topic.id, document_id=doc.id,
-                chapter_index=0, title="Ch1",
-                start_char=0, end_char=50, char_count=50,
+                topic_id=topic.id,
+                document_id=doc.id,
+                chapter_index=0,
+                title="Ch1",
+                start_char=0,
+                end_char=50,
+                char_count=50,
             )
-            session.add(ch); session.flush()
+            session.add(ch)
+            session.flush()
             ck = Chunk(
-                topic_id=topic.id, document_id=doc.id, chapter_id=ch.id,
-                chapter_index=0, chunk_index=0, text="test",
-                start_char=0, end_char=50, char_count=50, estimated_tokens=34,
+                topic_id=topic.id,
+                document_id=doc.id,
+                chapter_id=ch.id,
+                chapter_index=0,
+                chunk_index=0,
+                text="test",
+                start_char=0,
+                end_char=50,
+                char_count=50,
+                estimated_tokens=34,
             )
             session.add(ck)
             session.commit()
@@ -304,7 +386,10 @@ class TestWorkAnalysis:
                 )
 
                 run = create_analysis_run(
-                    session, tid, mode="full", work_id=wid,
+                    session,
+                    tid,
+                    mode="full",
+                    work_id=wid,
                 )
                 rid = run.id
             _execute_run(rid, engine=engine)

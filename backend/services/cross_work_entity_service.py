@@ -203,9 +203,7 @@ def build_entity_registry(
             aliases_json=json.dumps(info["aliases"], ensure_ascii=False),
             work_ids_json=json.dumps(sorted(info["work_ids"]), ensure_ascii=False),
             mention_count=len(group_atoms),
-            evidence_count=sum(
-                1 for a in group_atoms if _parse_json_list(a.evidence_quotes)
-            ),
+            evidence_count=sum(1 for a in group_atoms if _parse_json_list(a.evidence_quotes)),
             confidence=confidence,
             merge_strategy=merge_strategy,
         )

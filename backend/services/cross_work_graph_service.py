@@ -9,6 +9,8 @@ import json
 
 from sqlmodel import Session, select
 
+from models.chunk import Chunk
+from models.document import Document
 from models.enums import AtomType
 from models.extracted_atom import ExtractedAtom
 from models.global_entity import GlobalEntity
@@ -50,9 +52,7 @@ def build_character_graph(
         from models.entity_mention import EntityMention
 
         mentions = session.exec(
-            select(EntityMention).where(
-                EntityMention.global_entity_id == e.id
-            )
+            select(EntityMention).where(EntityMention.global_entity_id == e.id)
         ).all()
         for m in mentions:
             meta = _parse_json_dict(m.metadata_json)
@@ -60,11 +60,18 @@ def build_character_graph(
             if sid:
                 entity_by_stable[sid] = e.id
 
-    # Load relation atoms
+    # Load relation atoms (filtered by work_ids if provided)
     rel_base = select(ExtractedAtom).where(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type == AtomType.RELATION,
     )
+    if work_ids:
+        chunk_ids_subq = (
+            select(Chunk.id)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Document.work_id.in_(work_ids))
+        )
+        rel_base = rel_base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
     relation_atoms = session.exec(rel_base).all()
 
     # Build edges from relation atoms
@@ -86,10 +93,12 @@ def build_character_graph(
             edges[key]["weight"] += 1
             edges[key]["confidence"] = max(edges[key]["confidence"], atom.confidence)
             edges[key]["relation_type"] = rel_type
-            edges[key]["evidence"].append({
-                "chunk_id": atom.chunk_id,
-                "text": (content.get("evidence") or ""),
-            })
+            edges[key]["evidence"].append(
+                {
+                    "chunk_id": atom.chunk_id,
+                    "text": (content.get("evidence") or ""),
+                }
+            )
         else:
             edges[key] = {
                 "source": src_id,
@@ -98,10 +107,12 @@ def build_character_graph(
                 "weight": 1,
                 "confidence": atom.confidence,
                 "work_ids": set(),
-                "evidence": [{
-                    "chunk_id": atom.chunk_id,
-                    "text": (content.get("evidence") or ""),
-                }],
+                "evidence": [
+                    {
+                        "chunk_id": atom.chunk_id,
+                        "text": (content.get("evidence") or ""),
+                    }
+                ],
             }
 
     # If no relation atoms, fall back to event co-occurrence
@@ -110,12 +121,18 @@ def build_character_graph(
             topic_id, session, entity_by_name, entity_by_stable, work_ids
         )
 
-    # Collect work_ids for edges
+    # Collect work_ids for edges from evidence atom's chunk → document.work_id
     for key, edge in edges.items():
-        src_entity = _get_entity(entity_by_name, key, session)
-        if src_entity:
-            wid_list = _parse_json_list(src_entity.work_ids_json)
-            edge["work_ids"] = sorted(set(wid_list))
+        wids = set()
+        for ev in edge.get("evidence", []):
+            cid = ev.get("chunk_id")
+            if cid:
+                chunk = session.get(Chunk, cid)
+                if chunk:
+                    doc = session.get(Document, chunk.document_id)
+                    if doc and doc.work_id:
+                        wids.add(doc.work_id)
+        edge["work_ids"] = sorted(wids)
 
     # Build nodes
     entity_ids_in_graph = set()
@@ -126,15 +143,17 @@ def build_character_graph(
     nodes = []
     for e in entities:
         if e.id in entity_ids_in_graph:
-            nodes.append({
-                "id": e.id,
-                "label": e.canonical_name,
-                "type": e.entity_type,
-                "work_ids": _parse_json_list(e.work_ids_json),
-                "mention_count": e.mention_count,
-                "evidence_count": e.evidence_count,
-                "confidence": e.confidence,
-            })
+            nodes.append(
+                {
+                    "id": e.id,
+                    "label": e.canonical_name,
+                    "type": e.entity_type,
+                    "work_ids": _parse_json_list(e.work_ids_json),
+                    "mention_count": e.mention_count,
+                    "evidence_count": e.evidence_count,
+                    "confidence": e.confidence,
+                }
+            )
 
     # Persist snapshot
     edge_list = [
@@ -151,13 +170,21 @@ def build_character_graph(
         for i, (key, e) in enumerate(edges.items())
     ]
 
+    # Clear old snapshots for this topic+type before persisting new one
+    old_snapshots = session.exec(
+        select(GraphSnapshot).where(
+            GraphSnapshot.topic_id == topic_id,
+            GraphSnapshot.graph_type == "character_relationship",
+        )
+    ).all()
+    for old in old_snapshots:
+        session.delete(old)
+
     snapshot = GraphSnapshot(
         topic_id=topic_id,
         graph_type="character_relationship",
         version=1,
-        scope_json=json.dumps(
-            {"work_ids": work_ids} if work_ids else {}, ensure_ascii=False
-        ),
+        scope_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
         nodes_json=json.dumps(nodes, ensure_ascii=False),
         edges_json=json.dumps(edge_list, ensure_ascii=False),
         stats_json=json.dumps(
@@ -302,10 +329,12 @@ def _build_cooccurrence_edges(
                         "weight": 1,
                         "confidence": atom.confidence * 0.5,
                         "work_ids": set(),
-                        "evidence": [{
-                            "chunk_id": atom.chunk_id,
-                            "text": "",
-                        }],
+                        "evidence": [
+                            {
+                                "chunk_id": atom.chunk_id,
+                                "text": "",
+                            }
+                        ],
                     }
 
     return edges
