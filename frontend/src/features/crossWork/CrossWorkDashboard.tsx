@@ -1,8 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  listCrossWorkRuns,
-  createCrossWorkRun,
-} from "../../api/crossWork";
+import { useEffect, useState } from "react";
+import { listCrossWorkRuns, createCrossWorkRun, getCrossWorkRun } from "../../api/crossWork";
 import { listEntities } from "../../api/crossWork";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
@@ -13,6 +11,7 @@ interface Props {
 
 export default function CrossWorkDashboard({ topicId }: Props) {
   const queryClient = useQueryClient();
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const runsQuery = useQuery({
     queryKey: ["cross-work-runs", topicId],
@@ -24,11 +23,34 @@ export default function CrossWorkDashboard({ topicId }: Props) {
     queryFn: () => listEntities(topicId, { limit: 1 }),
   });
 
-  const buildMut = useMutation({
-    mutationFn: () => createCrossWorkRun(topicId, { mode: "full" }),
-    onSuccess: () => {
+  // Poll active run until terminal
+  const activeRunQuery = useQuery({
+    queryKey: ["cross-work-run", topicId, activeRunId],
+    queryFn: () => activeRunId ? getCrossWorkRun(topicId, activeRunId) : null,
+    enabled: !!activeRunId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "succeeded" || status === "failed" ? false : 2000;
+    },
+  });
+
+  // Watch for terminal state
+  useEffect(() => {
+    const status = activeRunQuery.data?.status;
+    if (status === "succeeded" || status === "failed") {
+      setActiveRunId(null);
       queryClient.invalidateQueries({ queryKey: ["cross-work-runs", topicId] });
       queryClient.invalidateQueries({ queryKey: ["entities", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["graph", topicId] });
+      queryClient.invalidateQueries({ queryKey: ["timeline", topicId] });
+    }
+  }, [activeRunQuery.data?.status, queryClient, topicId]);
+
+  const buildMut = useMutation({
+    mutationFn: () => createCrossWorkRun(topicId, { mode: "full" }),
+    onSuccess: (data) => {
+      setActiveRunId(data.id);
+      queryClient.invalidateQueries({ queryKey: ["cross-work-runs", topicId] });
     },
   });
 
@@ -41,10 +63,10 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         <h3 style={{ margin: 0 }}>Cross-Work Dashboard</h3>
         <button
           onClick={() => buildMut.mutate()}
-          disabled={buildMut.isPending}
+          disabled={buildMut.isPending || !!activeRunId}
           style={{ fontSize: "0.8rem" }}
         >
-          {buildMut.isPending ? "Building..." : "Run Cross-Work Build"}
+          {buildMut.isPending || activeRunId ? "Building..." : "Run Cross-Work Build"}
         </button>
       </div>
 
@@ -52,10 +74,16 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         <ErrorBlock message={(buildMut.error as Error)?.message || "Build failed"} />
       )}
 
+      {activeRunId && (
+        <p className="text-dim" style={{ fontSize: "0.78rem", marginBottom: "0.4rem" }}>
+          Build in progress... {activeRunQuery.data?.status && `(${activeRunQuery.data.status})`}
+        </p>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.6rem" }}>
         <div className="card" style={{ textAlign: "center" }}>
           <p style={{ fontSize: "1.4rem", fontWeight: 700, margin: 0 }}>
-            {runList?.runs?.length ?? "—"}
+            {runList?.total ?? "—"}
           </p>
           <p className="text-dim" style={{ fontSize: "0.75rem", margin: "0.2rem 0 0 0" }}>Cross-Work Runs</p>
         </div>
@@ -82,7 +110,7 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         </div>
       )}
 
-      {runsQuery.isSuccess && runsQuery.data.runs.length === 0 && !buildMut.isPending && (
+      {runsQuery.isSuccess && runsQuery.data.runs.length === 0 && !buildMut.isPending && !activeRunId && (
         <p className="text-dim" style={{ fontSize: "0.8rem" }}>
           No cross-work runs yet. Click "Run Cross-Work Build" to analyze relationships across Works.
         </p>

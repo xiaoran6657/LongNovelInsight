@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCharacterGraph } from "../../api/graphs";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
 
 interface Props {
   topicId: string;
@@ -13,6 +14,7 @@ export default function CharacterGraph({ topicId }: Props) {
   });
 
   if (graphQuery.isLoading) return <LoadingBlock text="Loading graph..." />;
+  if (graphQuery.isError) return <ErrorBlock message="Failed to load character graph" />;
 
   const data = graphQuery.data;
   const nodeCount = data?.nodes?.length ?? 0;

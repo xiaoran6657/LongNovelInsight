@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getTimeline } from "../../api/timeline";
 import type { TimelineItem } from "../../api/types";
 import LoadingBlock from "../../components/LoadingBlock";
+import ErrorBlock from "../../components/ErrorBlock";
 
 interface Props {
   topicId: string;
@@ -14,6 +15,7 @@ export default function TimelineView({ topicId }: Props) {
   });
 
   if (timelineQuery.isLoading) return <LoadingBlock text="Loading timeline..." />;
+  if (timelineQuery.isError) return <ErrorBlock message="Failed to load timeline" />;
 
   const items: TimelineItem[] = timelineQuery.data?.items ?? [];
 
