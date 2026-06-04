@@ -261,7 +261,7 @@ export default function ChatEvidenceList({
                   {item.method && (
                     <RetrievalMethodBadge method={item.method} />
                   )}
-                  {(item as any).work_title && (
+                  {item.work_title && (
                     <span
                       style={{
                         display: "inline-block",
@@ -273,8 +273,8 @@ export default function ChatEvidenceList({
                         border: "1px solid #ffe0b2",
                       }}
                     >
-                      {(item as any).series_index != null && `${(item as any).series_index}. `}
-                      {(item as any).work_title}
+                      {item.series_index != null && `${item.series_index}. `}
+                      {item.work_title}
                     </span>
                   )}
                   {item.score != null && (

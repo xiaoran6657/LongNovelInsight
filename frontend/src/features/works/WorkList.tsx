@@ -12,7 +12,7 @@ import ErrorBlock from "../../components/ErrorBlock";
 interface Props {
   topicId: string;
   activeWorkId: string | null;
-  onSelectWork: (id: string) => void;
+  onSelectWork: (id: string | null) => void;
 }
 
 export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props) {
@@ -57,8 +57,9 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
 
   const deleteMut = useMutation({
     mutationFn: (workId: string) => deleteWork(workId),
-    onSuccess: () => {
+    onSuccess: (_data, workId) => {
       setDeleteError("");
+      if (workId === activeWorkId) onSelectWork(null);
       queryClient.invalidateQueries({ queryKey: ["works", topicId] });
     },
     onError: (e: Error) => setDeleteError(e.message),
