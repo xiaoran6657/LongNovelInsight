@@ -7,6 +7,7 @@ import RetrievalMethodBadge from "./RetrievalMethodBadge";
 interface Props {
   topicId: string;
   query: string;
+  workIds?: string[] | null;
   onClose: () => void;
 }
 
@@ -51,6 +52,7 @@ function sourceLocatorSummary(
 export default function RetrievalDebugDrawer({
   topicId,
   query,
+  workIds,
   onClose,
 }: Props) {
   const [methods, setMethods] = useState<Set<RetrieveMethod>>(
@@ -64,6 +66,7 @@ export default function RetrievalDebugDrawer({
         top_k: 20,
         persist_trace: true,
         methods: [...methods],
+        work_ids: workIds ?? null,
       }),
   });
 

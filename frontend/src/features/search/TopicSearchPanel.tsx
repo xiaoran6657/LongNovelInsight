@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { searchChunks, getChunkLocator } from "../../api/search";
 import type { SearchMethod, SearchResponse, LocatorResponse } from "../../api/types";
@@ -33,6 +33,15 @@ export default function TopicSearchPanel({ topicId, activeWorkId }: Props) {
   const [selectedChunkId, setSelectedChunkId] = useState<string | null>(null);
   const [showDebugDrawer, setShowDebugDrawer] = useState(false);
   const submittedQueryRef = useRef("");
+  const submittedWorkIdRef = useRef<string | null | undefined>(null);
+
+  // Clear results and debug state when activeWorkId changes
+  useEffect(() => {
+    searchMut.reset();
+    setSelectedChunkId(null);
+    setShowDebugDrawer(false);
+    submittedQueryRef.current = "";
+  }, [activeWorkId]);
 
   const searchMut = useMutation({
     mutationFn: (q: string) =>
@@ -73,6 +82,7 @@ export default function TopicSearchPanel({ topicId, activeWorkId }: Props) {
     setSelectedChunkId(null);
     setShowDebugDrawer(false);
     submittedQueryRef.current = trimmed;
+    submittedWorkIdRef.current = activeWorkId;
     searchMut.mutate(trimmed);
   }
 
@@ -179,6 +189,7 @@ export default function TopicSearchPanel({ topicId, activeWorkId }: Props) {
         <RetrievalDebugDrawer
           topicId={topicId}
           query={submittedQueryRef.current}
+          workIds={submittedWorkIdRef.current ? [submittedWorkIdRef.current] : null}
           onClose={() => setShowDebugDrawer(false)}
         />
       )}
