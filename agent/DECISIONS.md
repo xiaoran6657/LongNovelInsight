@@ -229,4 +229,3 @@ This file records accepted architecture decisions in chronological order. Append
 - Tab navigation keeps existing UX intact while adding discoverability for new features.
 - No new routes simplifies routing and keeps the single-Topic context consistent.
 - Cytoscape deferred to avoid ~200KB bundle increase in the initial v0.4.0 release.
-
