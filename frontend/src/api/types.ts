@@ -548,6 +548,7 @@ export interface SearchRequest {
   limit?: number;
   include_snippets?: boolean;
   methods?: SearchMethod[];
+  work_ids?: string[] | null;
 }
 
 export interface SearchResult {
@@ -559,6 +560,9 @@ export interface SearchResult {
   snippet: string;
   score: number;
   method: string;
+  work_id?: string | null;
+  work_title?: string | null;
+  series_index?: number | null;
 }
 
 export interface SearchResponse {
@@ -581,6 +585,7 @@ export interface RetrieveRequest {
   top_k?: number;
   methods?: RetrieveMethod[];
   persist_trace?: boolean;
+  work_ids?: string[] | null;
 }
 
 export interface CandidateResult {
@@ -595,6 +600,9 @@ export interface CandidateResult {
   method: string;
   matched_terms: string[];
   source_locator: SourceLocator | null;
+  work_id?: string | null;
+  work_title?: string | null;
+  series_index?: number | null;
 }
 
 export interface RetrieveResponse {
@@ -680,7 +688,181 @@ export interface StructuredEvidenceItem {
   method: string;
   score: number;
   locator: SourceLocator | null;
+  work_id?: string | null;
+  work_title?: string | null;
+  series_index?: number | null;
 }
 
 /** Parsed evidence_json — either old string[] or new object[] */
 export type ParsedEvidence = string[] | StructuredEvidenceItem[] | null;
+
+// ── v0.4 Multi-Work types ──
+
+export type WorkStatus = "empty" | "uploaded" | "parsed" | "analyzed" | "error";
+
+export interface WorkItem {
+  id: string;
+  topic_id: string;
+  title: string;
+  subtitle: string | null;
+  author: string | null;
+  series_index: number | null;
+  description: string | null;
+  status: WorkStatus;
+  metadata_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkCreate {
+  title: string;
+  subtitle?: string | null;
+  author?: string | null;
+  series_index?: number | null;
+  description?: string | null;
+}
+
+export interface WorkUpdate {
+  title?: string | null;
+  subtitle?: string | null;
+  author?: string | null;
+  series_index?: number | null;
+  description?: string | null;
+}
+
+export interface WorkListResponse {
+  works: WorkItem[];
+}
+
+export type CrossWorkRunMode = "full" | "entities_only" | "graph_only" | "timeline_only";
+
+export interface CrossWorkRun {
+  id: string;
+  topic_id: string;
+  status: string;
+  mode: CrossWorkRunMode;
+  stats: Record<string, unknown>;
+  warnings: string[];
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+}
+
+export interface CrossWorkRunCreateRequest {
+  mode?: CrossWorkRunMode;
+  work_ids?: string[] | null;
+  rebuild?: boolean;
+}
+
+export interface CrossWorkRunListResponse {
+  runs: CrossWorkRunListItem[];
+  total: number;
+}
+
+export interface CrossWorkRunListItem {
+  id: string;
+  status: string;
+  mode: CrossWorkRunMode;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+}
+
+// Entity types
+
+export type EntityType = "character" | "location" | "organization" | "concept" | "item" | "unknown";
+
+export interface GlobalEntity {
+  id: string;
+  entity_type: EntityType;
+  canonical_name: string;
+  aliases: string[];
+  work_ids: string[];
+  mention_count: number;
+  evidence_count: number;
+  confidence: number;
+  merge_strategy: string;
+}
+
+export interface EntityListResponse {
+  entities: GlobalEntity[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface EntityMention {
+  id: string;
+  work_id: string;
+  source_type: string;
+  source_id: string;
+  chunk_id: string | null;
+  surface_text: string;
+  evidence_text: string | null;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface EntityMentionListResponse {
+  mentions: EntityMention[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// Graph types
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  work_ids: string[];
+  mention_count: number;
+  evidence_count: number;
+  confidence: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation_type: string;
+  weight: number;
+  confidence: number;
+  work_ids: string[];
+  evidence?: Array<{ chunk_id: string | null; text: string }>;
+}
+
+export interface CharacterGraphResponse {
+  graph_type: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: Record<string, number>;
+  snapshot_id: string | null;
+  generated_at: string | null;
+}
+
+// Timeline types
+
+export interface TimelineItem {
+  id: string;
+  work_id: string | null;
+  title: string;
+  summary: string | null;
+  sequence_index: number | null;
+  time_label: string | null;
+  participants: string[];
+  locations: string[];
+  evidence: Array<{ chunk_id: string | null; text: string }>;
+  confidence: number;
+  created_at: string | null;
+}
+
+export interface TimelineResponse {
+  items: TimelineItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
