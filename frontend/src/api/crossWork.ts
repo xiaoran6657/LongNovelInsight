@@ -2,6 +2,7 @@ import { apiRequest } from "./client";
 import type {
   CrossWorkRun,
   CrossWorkRunCreateRequest,
+  CrossWorkRunCreateResponse,
   CrossWorkRunListResponse,
   EntityListResponse,
   GlobalEntity,
@@ -13,8 +14,8 @@ import type {
 export function createCrossWorkRun(
   topicId: string,
   body: CrossWorkRunCreateRequest
-): Promise<CrossWorkRun> {
-  return apiRequest<CrossWorkRun>(`/api/topics/${topicId}/cross-work/runs`, {
+): Promise<CrossWorkRunCreateResponse> {
+  return apiRequest<CrossWorkRunCreateResponse>(`/api/topics/${topicId}/cross-work/runs`, {
     method: "POST",
     json: body,
   });

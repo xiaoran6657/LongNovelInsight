@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { listWorks, createWork, deleteWork } from "../../api/works";
+import { listWorks, createWork, deleteWork, updateWork } from "../../api/works";
 import type { WorkItem } from "../../api/types";
 import WorkCard from "./WorkCard";
 import WorkUploadPanel from "./WorkUploadPanel";
 import WorkAnalysisPanel from "./WorkAnalysisPanel";
+import WorkDetail from "./WorkDetail";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 
@@ -42,9 +43,26 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
     },
   });
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  const [editIndex, setEditIndex] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+
   const deleteMut = useMutation({
     mutationFn: (workId: string) => deleteWork(workId),
     onSuccess: () => {
+      setDeleteError("");
+      queryClient.invalidateQueries({ queryKey: ["works", topicId] });
+    },
+    onError: (e: Error) => setDeleteError(e.message),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      updateWork(id, body),
+    onSuccess: () => {
+      setEditingId(null);
       queryClient.invalidateQueries({ queryKey: ["works", topicId] });
     },
   });
@@ -114,17 +132,33 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
       )}
 
       {works.map((w) => (
-        <div key={w.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-          <div style={{ flex: 1 }}>
-            <WorkCard
-              work={w}
-              isActive={w.id === activeWorkId}
-              onSelect={onSelectWork}
-            />
-          </div>
-          {w.status === "empty" && (
+        <div key={w.id}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+            <div style={{ flex: 1 }}>
+              <WorkCard
+                work={w}
+                isActive={w.id === activeWorkId}
+                onSelect={onSelectWork}
+              />
+            </div>
             <button
               onClick={() => {
+                if (editingId === w.id) {
+                  setEditingId(null);
+                } else {
+                  setEditingId(w.id);
+                  setEditTitle(w.title);
+                  setEditAuthor(w.author || "");
+                  setEditIndex(w.series_index != null ? String(w.series_index) : "");
+                }
+              }}
+              style={{ fontSize: "0.68rem", padding: "0.15em 0.4em" }}
+            >
+              {editingId === w.id ? "Cancel" : "Edit"}
+            </button>
+            <button
+              onClick={() => {
+                setDeleteError("");
                 if (confirm(`Delete "${w.title}"?`)) deleteMut.mutate(w.id);
               }}
               style={{ fontSize: "0.68rem", padding: "0.15em 0.4em", color: "#c62828" }}
@@ -132,17 +166,64 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
             >
               ×
             </button>
+          </div>
+
+          {/* Edit form */}
+          {editingId === w.id && (
+            <div className="card" style={{ margin: "0.3rem 0 0.5rem 0", background: "#f9fbe7" }}>
+              <input
+                type="text" placeholder="Title" value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                style={{ width: "100%", marginBottom: "0.3rem", fontSize: "0.8rem" }}
+              />
+              <div style={{ display: "flex", gap: "0.3rem", marginBottom: "0.3rem" }}>
+                <input
+                  type="number" placeholder="Series #" value={editIndex}
+                  onChange={(e) => setEditIndex(e.target.value)}
+                  style={{ width: "30%", fontSize: "0.8rem" }}
+                />
+                <input
+                  type="text" placeholder="Author" value={editAuthor}
+                  onChange={(e) => setEditAuthor(e.target.value)}
+                  style={{ width: "70%", fontSize: "0.8rem" }}
+                />
+              </div>
+              <button
+                onClick={() =>
+                  updateMut.mutate({
+                    id: w.id,
+                    body: {
+                      title: editTitle,
+                      author: editAuthor || null,
+                      series_index: editIndex ? Number(editIndex) : null,
+                    },
+                  })
+                }
+                disabled={!editTitle.trim() || updateMut.isPending}
+                style={{ fontSize: "0.78rem" }}
+              >
+                {updateMut.isPending ? "Saving..." : "Save"}
+              </button>
+            </div>
           )}
         </div>
       ))}
 
-      {/* Upload/Parse/Analysis for selected Work */}
+      {/* Delete error display */}
+      {deleteError && (
+        <p style={{ color: "#c62828", fontSize: "0.75rem", marginTop: "0.3rem" }}>
+          {deleteError}
+        </p>
+      )}
+
+      {/* Details for selected Work */}
       {activeWorkId && (() => {
         const selected = works.find((w) => w.id === activeWorkId);
         if (!selected) return null;
         const hasDoc = selected.status !== "empty";
         return (
           <div style={{ marginTop: "0.8rem", borderTop: "1px solid #e0e0e0", paddingTop: "0.6rem" }}>
+            <WorkDetail work={selected} />
             <WorkUploadPanel workId={activeWorkId} hasDocument={hasDoc} />
             {hasDoc && <WorkAnalysisPanel work={selected} />}
           </div>

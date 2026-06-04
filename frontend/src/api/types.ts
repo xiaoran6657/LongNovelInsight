@@ -749,6 +749,13 @@ export interface CrossWorkRun {
   created_at: string | null;
 }
 
+export interface CrossWorkRunCreateResponse {
+  id: string;
+  topic_id: string;
+  status: string;
+  mode: CrossWorkRunMode;
+}
+
 export interface CrossWorkRunCreateRequest {
   mode?: CrossWorkRunMode;
   work_ids?: string[] | null;
