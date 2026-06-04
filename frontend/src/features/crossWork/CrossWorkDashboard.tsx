@@ -23,11 +23,19 @@ export default function CrossWorkDashboard({ topicId }: Props) {
     queryFn: () => listEntities(topicId, { limit: 1 }),
   });
 
+  // Auto-detect running run on mount
+  const detectedRunningId =
+    runsQuery.isSuccess && runsQuery.data.runs.length > 0 &&
+    (runsQuery.data.runs[0].status === "pending" || runsQuery.data.runs[0].status === "running")
+      ? runsQuery.data.runs[0].id : null;
+
+  const pollId = activeRunId || detectedRunningId;
+
   // Poll active run until terminal
   const activeRunQuery = useQuery({
-    queryKey: ["cross-work-run", topicId, activeRunId],
-    queryFn: () => activeRunId ? getCrossWorkRun(topicId, activeRunId) : null,
-    enabled: !!activeRunId,
+    queryKey: ["cross-work-run", topicId, pollId],
+    queryFn: () => pollId ? getCrossWorkRun(topicId, pollId) : null,
+    enabled: !!pollId,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "succeeded" || status === "failed" ? false : 2000;
@@ -56,6 +64,7 @@ export default function CrossWorkDashboard({ topicId }: Props) {
 
   const runList = runsQuery.isSuccess ? runsQuery.data : null;
   const lastRun = runList?.runs?.[0];
+  const runWarnings: string[] = activeRunQuery.data?.warnings ?? lastRun?.warnings ?? [];
 
   return (
     <div>
@@ -63,10 +72,10 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         <h3 style={{ margin: 0 }}>Cross-Work Dashboard</h3>
         <button
           onClick={() => buildMut.mutate()}
-          disabled={buildMut.isPending || !!activeRunId}
+          disabled={buildMut.isPending || !!pollId}
           style={{ fontSize: "0.8rem" }}
         >
-          {buildMut.isPending || activeRunId ? "Building..." : "Run Cross-Work Build"}
+          {buildMut.isPending || pollId ? "Building..." : "Run Cross-Work Build"}
         </button>
       </div>
 
@@ -74,7 +83,7 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         <ErrorBlock message={(buildMut.error as Error)?.message || "Build failed"} />
       )}
 
-      {activeRunId && (
+      {pollId && (
         <p className="text-dim" style={{ fontSize: "0.78rem", marginBottom: "0.4rem" }}>
           Build in progress... {activeRunQuery.data?.status && `(${activeRunQuery.data.status})`}
         </p>
@@ -95,6 +104,19 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         </div>
       </div>
 
+      {/* Warnings */}
+      {runWarnings.length > 0 && (
+        <div className="card" style={{ background: "#fff8e1", marginBottom: "0.6rem", fontSize: "0.78rem" }}>
+          <strong>Warnings ({runWarnings.length}):</strong>
+          {runWarnings.slice(0, 3).map((w: string, i: number) => (
+            <p key={i} className="text-dim" style={{ margin: "0.15rem 0", fontSize: "0.75rem" }}>{w}</p>
+          ))}
+          {runWarnings.length > 3 && (
+            <p className="text-dim" style={{ fontSize: "0.72rem" }}>+{runWarnings.length - 3} more</p>
+          )}
+        </div>
+      )}
+
       {runsQuery.isLoading && <LoadingBlock text="Loading runs..." />}
 
       {lastRun && (
@@ -110,7 +132,7 @@ export default function CrossWorkDashboard({ topicId }: Props) {
         </div>
       )}
 
-      {runsQuery.isSuccess && runsQuery.data.runs.length === 0 && !buildMut.isPending && !activeRunId && (
+      {runsQuery.isSuccess && runsQuery.data.runs.length === 0 && !buildMut.isPending && !pollId && (
         <p className="text-dim" style={{ fontSize: "0.8rem" }}>
           No cross-work runs yet. Click "Run Cross-Work Build" to analyze relationships across Works.
         </p>
