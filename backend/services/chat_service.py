@@ -274,6 +274,10 @@ def send_user_message(
                     "source_locator": None,
                 }
             )
+        # Annotate and filter legacy candidates by work_ids
+        _annotate_candidates_work_meta(candidates, session)
+        if work_ids:
+            candidates = [c for c in candidates if c.get("work_id") in work_ids]
         candidates.sort(key=lambda x: x["score"], reverse=True)
         candidates = candidates[:DEFAULT_TOP_K]
         # Normalize legacy raw scores to [0, 1] so chat evidence_json
