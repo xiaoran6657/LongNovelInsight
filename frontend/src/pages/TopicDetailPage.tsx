@@ -381,6 +381,7 @@ export default function TopicDetailPage() {
 
       <TopicSearchPanel
         topicId={topic.id}
+        activeWorkId={activeWorkId}
       />
 
       <AnalysisRunPanel

@@ -82,6 +82,23 @@ export default function SearchResultCard({ result, onOpenLocator }: Props) {
         {result.snippet}
       </p>
 
+      {result.work_title && (
+        <span
+          style={{
+            display: "inline-block",
+            padding: "0.1rem 0.4rem",
+            borderRadius: 3,
+            fontSize: "0.68rem",
+            background: "#fff3e0",
+            color: "#e65100",
+            border: "1px solid #ffe0b2",
+            marginRight: "0.4rem",
+          }}
+        >
+          {result.series_index != null && `${result.series_index}. `}
+          {result.work_title}
+        </span>
+      )}
       <p className="text-dim" style={{ fontSize: "0.7rem", margin: 0 }}>
         {locatorDetail}
       </p>

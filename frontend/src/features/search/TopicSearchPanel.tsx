@@ -7,6 +7,7 @@ import RetrievalDebugDrawer from "./RetrievalDebugDrawer";
 
 interface Props {
   topicId: string;
+  activeWorkId?: string | null;
 }
 
 const ALL_METHODS: { key: SearchMethod; label: string }[] = [
@@ -24,7 +25,7 @@ function abbreviateHref(href: string): string {
   return parts[parts.length - 1] || href;
 }
 
-export default function TopicSearchPanel({ topicId }: Props) {
+export default function TopicSearchPanel({ topicId, activeWorkId }: Props) {
   const [query, setQuery] = useState("");
   const [methods, setMethods] = useState<Set<SearchMethod>>(
     new Set(["fts", "keyword_fallback"])
@@ -39,6 +40,7 @@ export default function TopicSearchPanel({ topicId }: Props) {
         query: q,
         limit: 20,
         methods: [...methods],
+        work_ids: activeWorkId ? [activeWorkId] : null,
       }),
   });
 

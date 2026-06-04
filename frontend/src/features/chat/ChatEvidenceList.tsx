@@ -67,6 +67,9 @@ function normalizeEvidenceItem(
     method: typeof raw.method === "string" ? raw.method : "",
     score,
     locator,
+    work_id: typeof raw.work_id === "string" ? raw.work_id : undefined,
+    work_title: typeof raw.work_title === "string" ? raw.work_title : undefined,
+    series_index: typeof raw.series_index === "number" ? raw.series_index : undefined,
   };
 }
 
@@ -257,6 +260,22 @@ export default function ChatEvidenceList({
                   </span>
                   {item.method && (
                     <RetrievalMethodBadge method={item.method} />
+                  )}
+                  {(item as any).work_title && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "0.05rem 0.3rem",
+                        borderRadius: 2,
+                        fontSize: "0.63rem",
+                        background: "#fff3e0",
+                        color: "#e65100",
+                        border: "1px solid #ffe0b2",
+                      }}
+                    >
+                      {(item as any).series_index != null && `${(item as any).series_index}. `}
+                      {(item as any).work_title}
+                    </span>
                   )}
                   {item.score != null && (
                     <span className="text-dim" style={{ fontSize: "0.65rem" }}>
