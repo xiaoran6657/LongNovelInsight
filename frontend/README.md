@@ -122,7 +122,7 @@ frontend/
     │   ├── graphs/           # v0.4: character graph
     │   │   └── CharacterGraph.tsx
     │   └── timeline/         # v0.4: timeline
-        │       └── TimelineView.tsx
+    │       └── TimelineView.tsx
     ├── utils/                # Shared utilities
     │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
     ├── components/           # Shared UI components
