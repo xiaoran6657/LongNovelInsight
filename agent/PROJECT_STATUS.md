@@ -3,9 +3,9 @@
 ## Verified Snapshot
 
 - **Verified:** 2026-07-12, Asia/Shanghai
-- **Baseline commit:** `3bfa078` on `main`
+- **Baseline commit:** `0fe8f10` on `codex/repository-takeover`
 - **Branch:** `codex/repository-takeover`
-- **Working tree:** Modified by takeover task `TAKEOVER-001`; verified before commit
+- **Current increment:** UI-001 verified on 2026-07-12
 - **Current development version:** `v0.4.0-dev`
 - **Latest Git tag:** `v0.3.0` (`v0.3.1` and `v0.4.0` are not tagged)
 - **Release state:** v0.4 implementation exists, but release validation is not complete
@@ -33,9 +33,9 @@
 - `npm ci`: pass; repaired a missing local Rollup optional binary.
 - Typecheck: pass.
 - ESLint: pass.
-- Production build: pass, 158 modules, 458.34 kB JS / 131.40 kB gzip.
-- Playwright discovery: 44 tests in 5 files.
-- Full Playwright execution: 44 passed in 19.0 seconds.
+- Production build: pass, 158 modules, 458.53 kB JS / 131.45 kB gzip.
+- Playwright discovery: 47 tests in 5 files.
+- Full Playwright execution: 47 passed in 17.8 seconds.
 - Security updates: Vite 6.4.3, React Router 7.18.1, Babel 7.29.7, js-yaml 4.3.0.
 - `npm audit`: 0 vulnerabilities.
 
@@ -54,13 +54,13 @@
 - In-process daemon threads lack a unified restart-recovery contract.
 - Database migrations remain hand-written in `db.py`, though missing-column detection now
   propagates real database errors.
-- Frontend Work selection is not connected to Entities, Graph, and Timeline filters.
+- Scoped cross-work builds may replace the latest snapshot used by the unfiltered All view;
+  backend behavior and filter assertions need hardening.
 - Work preview analysis lacks clear cost confirmation and run/result handoff.
 - Analysis JSON rendering and chat edit-resend need resilience hardening.
 - Several backend and frontend modules are large multi-agent conflict hotspots.
 
 ## Release Blockers
 
-1. Review and publish the verified takeover branch.
-2. Complete the remaining P1 correctness tasks in `agent/NEXT_ACTIONS.md`.
-3. Prepare final v0.4.0 release notes and request separate approval before tagging or releasing.
+1. Complete the remaining P1 correctness tasks in `agent/NEXT_ACTIONS.md`.
+2. Prepare final v0.4.0 release notes and request separate approval before tagging or releasing.

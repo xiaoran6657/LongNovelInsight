@@ -3,14 +3,19 @@ import { getCharacterGraph } from "../../api/graphs";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 
-interface Props {
+type Props = {
   topicId: string;
-}
+  activeWorkId: string | null;
+};
 
-export default function CharacterGraph({ topicId }: Props) {
+export default function CharacterGraph({ topicId, activeWorkId }: Props) {
   const graphQuery = useQuery({
-    queryKey: ["graph", topicId],
-    queryFn: () => getCharacterGraph(topicId, { include_evidence: false }),
+    queryKey: ["graph", topicId, activeWorkId],
+    queryFn: () =>
+      getCharacterGraph(topicId, {
+        work_id: activeWorkId || undefined,
+        include_evidence: false,
+      }),
   });
 
   if (graphQuery.isLoading) return <LoadingBlock text="Loading graph..." />;

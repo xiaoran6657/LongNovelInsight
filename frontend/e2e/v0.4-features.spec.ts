@@ -77,7 +77,147 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
   });
 }
 
+async function mockCrossWorkViews(page: Parameters<typeof test>[1]["page"]) {
+  await page.route(
+    (url) => url.origin === API_HOST && url.pathname === `/api/topics/${TOPIC_ID}/entities`,
+    (route, request) => {
+      const workId = new URL(request.url()).searchParams.get("work_id");
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          entities: [
+            {
+              id: workId ? "work-entity" : "all-entity",
+              entity_type: "character",
+              canonical_name: workId ? "Book One Hero" : "All Works Hero",
+              aliases: [],
+              work_ids: workId ? [workId] : [WORK_ID, WORK_ID_2],
+              mention_count: 1,
+              evidence_count: 1,
+              confidence: 0.9,
+              merge_strategy: "exact",
+            },
+          ],
+          total: 1,
+          limit: 100,
+          offset: 0,
+        }),
+      });
+    },
+  );
+
+  await page.route(
+    (url) =>
+      url.origin === API_HOST &&
+      url.pathname === `/api/topics/${TOPIC_ID}/graphs/characters`,
+    (route, request) => {
+      const workId = new URL(request.url()).searchParams.get("work_id");
+      const prefix = workId ? "Book One" : "All Works";
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          graph_type: "character",
+          nodes: [
+            { id: "a", label: `${prefix} A`, type: "character", work_ids: [], mention_count: 1, evidence_count: 1, confidence: 0.9 },
+            { id: "b", label: `${prefix} B`, type: "character", work_ids: [], mention_count: 1, evidence_count: 1, confidence: 0.9 },
+          ],
+          edges: [
+            { id: "a-b", source: "a", target: "b", relation_type: "ally", weight: 1, confidence: 0.9, work_ids: [] },
+          ],
+          stats: {},
+          snapshot_id: "snapshot-1",
+          generated_at: "2025-01-01T00:00:00Z",
+        }),
+      });
+    },
+  );
+
+  await page.route(
+    (url) => url.origin === API_HOST && url.pathname === `/api/topics/${TOPIC_ID}/timeline`,
+    (route, request) => {
+      const workId = new URL(request.url()).searchParams.get("work_id");
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: workId ? "work-event" : "all-event",
+              work_id: workId,
+              title: workId ? "Book One Event" : "All Works Event",
+              summary: null,
+              sequence_index: 1,
+              time_label: null,
+              participants: [],
+              locations: [],
+              evidence: [],
+              confidence: 0.9,
+              created_at: "2025-01-01T00:00:00Z",
+            },
+          ],
+          total: 1,
+          limit: 100,
+          offset: 0,
+        }),
+      });
+    },
+  );
+}
+
 test.describe("v0.4 Works", () => {
+  test("selected Work filters the entity registry", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockCrossWorkViews(page);
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Entities", exact: true }).click();
+    await expect(page.getByText("All Works Hero")).toBeVisible();
+
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith(`/topics/${TOPIC_ID}/entities`) && url.searchParams.get("work_id") === WORK_ID;
+    });
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    await responsePromise;
+    await expect(page.getByText("Book One Hero")).toBeVisible();
+    await expect(page.getByText("All Works Hero")).not.toBeVisible();
+  });
+
+  test("selected Work filters the character graph", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockCrossWorkViews(page);
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Graph", exact: true }).click();
+    await expect(page.getByText("All Works A")).toBeVisible();
+
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith(`/topics/${TOPIC_ID}/graphs/characters`) && url.searchParams.get("work_id") === WORK_ID;
+    });
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    await responsePromise;
+    await expect(page.getByText("Book One A")).toBeVisible();
+    await expect(page.getByText("All Works A")).not.toBeVisible();
+  });
+
+  test("selected Work filters the timeline", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockCrossWorkViews(page);
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await expect(page.getByText("All Works Event")).toBeVisible();
+
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith(`/topics/${TOPIC_ID}/timeline`) && url.searchParams.get("work_id") === WORK_ID;
+    });
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    await responsePromise;
+    await expect(page.getByText("Book One Event")).toBeVisible();
+    await expect(page.getByText("All Works Event")).not.toBeVisible();
+  });
+
   test("create work form opens and closes", async ({ page }) => {
     await mockV04Topic(page);
     await page.goto(`/topics/${TOPIC_ID}`);

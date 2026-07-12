@@ -1,25 +1,31 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listEntities, getEntity, listEntityMentions } from "../../api/crossWork";
 import type { GlobalEntity, EntityMention } from "../../api/types";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 
-interface Props {
+type Props = {
   topicId: string;
-}
+  activeWorkId: string | null;
+};
 
-export default function EntityRegistryTable({ topicId }: Props) {
+export default function EntityRegistryTable({ topicId, activeWorkId }: Props) {
   const [entityType, setEntityType] = useState("");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("mention_count");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setSelectedId(null);
+  }, [activeWorkId]);
+
   const entitiesQuery = useQuery({
-    queryKey: ["entities", topicId, entityType, query, sort],
+    queryKey: ["entities", topicId, activeWorkId, entityType, query, sort],
     queryFn: () =>
       listEntities(topicId, {
         entity_type: entityType || undefined,
+        work_id: activeWorkId || undefined,
         q: query || undefined,
         sort,
         limit: 100,

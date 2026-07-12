@@ -2,41 +2,44 @@
 
 ## Objective
 
-Restore active maintenance, replace the legacy Claude-specific workflow with Codex-led
-project governance, clean generated and historical agent artifacts, and establish a verified
-quality baseline for v0.4.0-dev.
+Complete `UI-001`: make the Topic-level Work selector consistently scope the Entity Registry,
+Character Graph, and Timeline, then preserve the behavior with mocked E2E coverage.
 
 ## Status
 
-`TAKEOVER-001` is verified on 2026-07-12 on branch `codex/repository-takeover`. Governance
-migration, version alignment, generated artifact cleanup, dependency security updates, and all
-default quality gates are complete. Backend: 725 passed and 6 integration tests deselected.
-Frontend: typecheck, lint, build, and 44 Playwright tests passed; npm audit reports 0.
-The user authorized staging, commit, and push for this task. Tags and releases are not authorized.
+Verified on 2026-07-12 on branch `codex/repository-takeover`. The takeover commit `0fe8f10` is
+published to `origin/codex/repository-takeover`. UI-001 implementation and tests are complete in
+the current branch. Tags and releases are not authorized.
 
 ## Ownership
 
-- Primary agent: repository governance, cleanup, integration, and final verification.
-- Backend audit agent: backend tests, Ruff, and code-risk report.
-- Frontend audit agent: typecheck, lint, build, E2E inventory, and frontend-risk report.
-- Governance audit agent: legacy workflow and documentation migration review.
+- Primary agent: implementation, integration, verification, status, commit, and push.
+- Frontend audit agent: read-only component/query-key/E2E design review.
+- Backend audit agent: read-only `work_id` contract and isolation coverage review.
 
-## Current Changes
+## Changes
 
-- Replaced the root agent rules with a Codex-led, versioned source-of-truth model.
-- Rewrote the development workflow for multi-agent, cross-session delivery.
-- Added durable agent coordination and handoff documentation.
-- Unified v0.4 version metadata across backend runtime, package metadata, health API, frontend,
-  tests, and visible UI.
-- Removed legacy Claude configuration, runner outputs, historical development Prompts, caches,
-  build outputs, and obsolete local sample text files without touching `data/`.
-- Removed import-time data-directory creation and isolated test database/data paths.
-- Replaced exception-swallowing column migrations with explicit schema inspection.
-- Fixed Topic, Document, and Chat deletion under real foreign-key enforcement.
-- Normalized EPUB MIME metadata to `application/epub+zip`.
+- Pass `activeWorkId` from `TopicDetailPage` to Entity, Graph, and Timeline components.
+- Reset the selected Work when navigating between Topics.
+- Include Work scope in each TanStack Query key and API request.
+- Clear stale Entity detail selection when Work scope changes.
+- Add three mocked E2E tests that distinguish All results from Work-scoped results.
+
+## Verification
+
+- `npm run check`: pass; 158 modules, 458.53 kB JS / 131.45 kB gzip.
+- `npx playwright test e2e/v0.4-features.spec.ts`: 9 passed.
+- `npm run e2e`: 47 passed in 17.8 seconds.
+- Backend was not changed by UI-001; its last full baseline remains 725 passed.
+
+## Notes
+
+- Entity detail and mention endpoints remain Topic-global; only the Entity list is Work-filtered.
+- Backend audit found weak GET filter assertions and a risk that a scoped cross-work build may
+  become the latest snapshot shown by the All view. This is tracked separately and was not
+  silently expanded into the frontend task.
 
 ## Next Action
 
-Publish the verified takeover commit, then start `UI-001`: connect active Work filtering to
-Entities, Graph, and Timeline. Keep release tagging separate until the remaining v0.4 correctness
-tasks and release notes are reviewed.
+Start UI-002: add explicit LLM cost confirmation and reliable run/result handoff to Work
+analysis.

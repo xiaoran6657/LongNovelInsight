@@ -4,14 +4,19 @@ import type { TimelineItem } from "../../api/types";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 
-interface Props {
+type Props = {
   topicId: string;
-}
+  activeWorkId: string | null;
+};
 
-export default function TimelineView({ topicId }: Props) {
+export default function TimelineView({ topicId, activeWorkId }: Props) {
   const timelineQuery = useQuery({
-    queryKey: ["timeline", topicId],
-    queryFn: () => getTimeline(topicId, { limit: 100 }),
+    queryKey: ["timeline", topicId, activeWorkId],
+    queryFn: () =>
+      getTimeline(topicId, {
+        work_id: activeWorkId || undefined,
+        limit: 100,
+      }),
   });
 
   if (timelineQuery.isLoading) return <LoadingBlock text="Loading timeline..." />;

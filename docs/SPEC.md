@@ -67,7 +67,6 @@ credentials on the local machine.
 
 - Character graph is an edge-table MVP rather than an interactive visualization.
 - Timeline pagination and evidence expansion are limited.
-- Work selection is not yet wired consistently to every cross-work frontend tab.
 - Work-level analysis lacks complete cost confirmation, run handoff, and result tracking.
 - Analysis output rendering needs stronger normalization for malformed model JSON.
 - Process restart recovery for in-process background analysis requires hardening.

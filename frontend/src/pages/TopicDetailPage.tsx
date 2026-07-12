@@ -59,6 +59,7 @@ export default function TopicDetailPage() {
   useEffect(() => {
     if (prevTopicIdRef.current !== topicId) {
       prevTopicIdRef.current = topicId;
+      setActiveWorkId(null);
       setChunkRange({ mode: "chunk", start: null, end: null });
       setAnalysisMode("preview");
       setPreviewLimitChunks(3);
@@ -292,19 +293,19 @@ export default function TopicDetailPage() {
 
       {activeTab === "entities" && (
         <div className="card">
-          <EntityRegistryTable topicId={topic.id} />
+          <EntityRegistryTable topicId={topic.id} activeWorkId={activeWorkId} />
         </div>
       )}
 
       {activeTab === "graph" && (
         <div className="card">
-          <CharacterGraph topicId={topic.id} />
+          <CharacterGraph topicId={topic.id} activeWorkId={activeWorkId} />
         </div>
       )}
 
       {activeTab === "timeline" && (
         <div className="card">
-          <TimelineView topicId={topic.id} />
+          <TimelineView topicId={topic.id} activeWorkId={activeWorkId} />
         </div>
       )}
 
