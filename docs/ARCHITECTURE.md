@@ -141,6 +141,9 @@ The backend uses a flat `backend/` structure. There is no nested `backend/app/` 
 - Analysis runs the 6 output types as parallel async jobs via `ThreadPoolExecutor`. Worker threads only call LLM; the main thread writes DB results.
 - Provider configuration has three layers: Preset catalog (built-in) → Provider (credentials + defaults) → TopicProviderConfig (per-novel overrides). Effective config resolves Topic > Provider > Preset.
 - Chat answers use hybrid retrieval (v0.3): FTS5 full-text search, LIKE-based CJK keyword fallback, structured atom/output search, with legacy fuzzy character-overlap fallback for long natural-language queries. Candidates are deduplicated, score-normalized, and persisted as structured evidence_json with RetrievalTrace debugging.
+- Chat edit/resend is server-owned and failure-safe: retrieval and LLM generation run without a
+  SQLite transaction; the backend then serializes writers, revalidates the expected latest pair,
+  and replaces messages plus RetrievalTrace rows in one short transaction.
 
 ### SQLite Database
 

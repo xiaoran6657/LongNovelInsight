@@ -916,6 +916,21 @@ Backward compatibility: messages created before v0.3 may have `evidence_json` as
 
 Errors: `404` session not found, `409` no provider configured, `422` content is null / empty / non-string / >20000 chars.
 
+**`POST /api/chat/sessions/{session_id}/messages/{message_id}/resend`**
+
+Request:
+```json
+{
+  "content": "edited question",
+  "expected_assistant_message_id": "current-assistant-uuid"
+}
+```
+
+⚠️ Makes a real LLM call and may consume API credits. Only the latest complete exchange can be
+resent. The backend generates first, then atomically replaces the old pair; `404`, `409`, `422`, or
+`502` leaves the original exchange unchanged. On failure, keep the editor open and preserve the
+edited text. Response `200` uses the normal assistant-message shape.
+
 **`DELETE /api/chat/sessions/{session_id}`**
 
 Response `200`: `{ "deleted": true }`

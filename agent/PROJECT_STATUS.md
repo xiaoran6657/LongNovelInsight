@@ -3,9 +3,9 @@
 ## Verified Snapshot
 
 - **Verified:** 2026-07-12, Asia/Shanghai
-- **Baseline commit:** `662f74e` on `codex/repository-takeover`
+- **Baseline commit:** `d724059` on `codex/repository-takeover`
 - **Branch:** `codex/repository-takeover`
-- **Current increment:** UI-003 verified on 2026-07-12
+- **Current increment:** CHAT-001 verified on 2026-07-12
 - **Current development version:** `v0.4.0-dev`
 - **Latest Git tag:** `v0.3.0` (`v0.3.1` and `v0.4.0` are not tagged)
 - **Release state:** v0.4 implementation exists, but release validation is not complete
@@ -14,9 +14,9 @@
 
 ### Backend
 
-- Collection: 731 tests total; default configuration selects 725 and deselects 6 integration tests.
+- Collection: 736 tests total; default configuration selects 730 and deselects 6 integration tests.
 - Ruff: pass after takeover changes.
-- Full pytest run: 725 passed, 6 integration tests deselected, in 327.91 seconds.
+- Full pytest run: 730 passed, 6 integration tests deselected, in 330.62 seconds.
 - Retrieval warning regression: 27 tests passed with SQLAlchemy warnings treated as errors.
 - `beautifulsoup4 4.15.0` is installed from the declared project dependencies.
 - No real LLM calls were made.
@@ -33,9 +33,9 @@
 - `npm ci`: pass; repaired a missing local Rollup optional binary.
 - Typecheck: pass.
 - ESLint: pass.
-- Production build: pass, 159 modules, 461.23 kB JS / 132.28 kB gzip.
-- Playwright discovery: 50 tests in 5 files.
-- Full Playwright execution: 50 passed in 20.9 seconds.
+- Production build: pass, 159 modules, 461.71 kB JS / 132.58 kB gzip.
+- Playwright discovery: 52 tests in 6 files.
+- Full Playwright execution: 52 passed in 25.0 seconds.
 - Security updates: Vite 6.4.3, React Router 7.18.1, Babel 7.29.7, js-yaml 4.3.0.
 - `npm audit`: 0 vulnerabilities.
 
@@ -57,7 +57,7 @@
 - Scoped cross-work builds may replace the latest snapshot used by the unfiltered All view;
   backend behavior and filter assertions need hardening.
 - Work analysis has an API-credit confirmation but no backend numeric estimate endpoint yet.
-- Chat edit-resend still needs failure-safe sequencing.
+- Chat pair association still relies on timestamps rather than explicit turn/reply IDs.
 - Several backend and frontend modules are large multi-agent conflict hotspots.
 
 ## Release Blockers

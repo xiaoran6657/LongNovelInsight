@@ -2,49 +2,54 @@
 
 ## Objective
 
-Complete `UI-003`: safely normalize untrusted analysis output JSON and isolate unexpected render
-failures to one output card.
+Complete `CHAT-001`: replace destructive edit-then-delete chat resend with a failure-safe,
+server-owned atomic replacement flow.
 
 ## Status
 
-Verified on 2026-07-12 on branch `codex/repository-takeover`, based on published commit `662f74e`.
-UI-003 implementation and tests are complete in the current working tree. Tags and releases are
+Verified on 2026-07-12 on branch `codex/repository-takeover`, based on published commit `d724059`.
+CHAT-001 implementation and tests are complete in the current working tree. Tags and releases are
 not authorized.
 
 ## Ownership
 
 - Primary agent: implementation, integration, verification, status, commit, and push.
-- Frontend audit agent: malformed-output path and E2E design review.
-- Governance audit agent: existing error UI/test capability and boundary-placement review.
+- Frontend audit agent: edit/resend failure-window, cache, editor, and E2E review.
+- Backend audit agent: transaction, history, trace, locking, and concurrency review.
 
 ## Changes
 
-- Treat `content_json` as untrusted at the API boundary and accept either objects or serialized
-  object JSON while rejecting arrays and primitives.
-- Filter malformed list items before rendering Characters, Relations, Events, Causality, or Themes.
-- Normalize evidence quotes, source chunk IDs, titles, output types, and confidence values.
-- Add a dependency-free React error boundary around each complete output item, preserving the rest
-  of the output list when one item throws.
-- Add mocked E2E coverage for serialized JSON, malformed top-level content, mixed nested items, and
-  a deliberately triggered isolated card failure.
+- Add `POST /api/chat/sessions/{session_id}/messages/{message_id}/resend`, requiring the expected
+  assistant ID and limiting edits to the latest complete exchange.
+- Finish retrieval and LLM generation without a SQLite transaction, then acquire a write lock,
+  revalidate the pair, and replace old messages/traces in one commit.
+- Return 409 if another send changes the session during generation, 502 on LLM failure, and retain
+  the original pair on all generation or commit failures.
+- Exclude the replaced pair from LLM history so the old question/answer does not bias regeneration.
+- Replace the frontend DELETE/sleep/POST sequence with the atomic endpoint; keep failed edits open,
+  preserve revised text and the main draft, and show an API-credit/original-preserved warning.
+- Add backend transaction/trace/history/concurrency regressions and mocked browser success/failure
+  coverage.
 
 ## Verification
 
-- `npm run check`: pass.
-- Production build: pass; 159 modules, 461.23 kB JS / 132.28 kB gzip.
-- Targeted malformed-output E2E: 1 passed.
-- `npm run e2e`: 50 passed in 20.9 seconds.
-- Backend was not changed by UI-003; its last full baseline remains 725 passed.
+- Backend Ruff: pass.
+- Backend chat tests: 30 passed.
+- Backend full suite: 730 passed, 6 integration tests deselected, in 330.62 seconds.
+- `npm run check`: pass; 159 modules, 461.71 kB JS / 132.58 kB gzip.
+- Targeted chat E2E: 2 passed.
+- `npm run e2e`: 52 passed in 25.0 seconds.
 
 ## Notes
 
-- The backend normally returns parsed dict/list content, while historical mocks and legacy data may
-  contain serialized JSON strings. The renderer now handles both without weakening runtime checks.
-- Malformed raw model content is not echoed into the warning UI, avoiding accidental exposure of
-  novel text or provider responses.
-- The error boundary is per output item rather than page-wide, so run controls, history, and other
-  outputs remain available.
+- Only the latest complete exchange can be edited; changing an earlier turn without truncating later
+  context would leave semantically inconsistent answers.
+- The first post-LLM write is a conditional no-op update that serializes writers, followed by fresh
+  expected-assistant/latest-pair validation before replacement.
+- Message pairing still uses chronological adjacency. `CHAT-002` tracks explicit turn/reply IDs and
+  stable ordering as a separate schema improvement.
 
 ## Next Action
 
-Start `CHAT-001`: replace destructive edit-resend sequencing with an atomic or failure-safe flow.
+Start `RUN-001`: define one authoritative analysis-run path and a deprecation plan for jobs and
+legacy outputs before changing execution code.

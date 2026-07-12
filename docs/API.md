@@ -748,6 +748,28 @@ When retrieval finds no evidence, the service forces an `uncertainty` note to gu
 
 **Errors:** `404` session not found, `409` no provider configured, `422` content must be a non-empty string (max 20000 chars).
 
+### `POST /api/chat/sessions/{session_id}/messages/{message_id}/resend`
+
+Regenerate the latest complete user/assistant exchange after editing its user message. The request
+must identify the assistant response currently paired with the user message. Retrieval and the LLM
+call complete before the backend starts a short replacement transaction; generation, pair, or commit
+failures leave the original exchange unchanged.
+
+**Request:**
+```json
+{
+  "content": "刘备有哪些性格特点？",
+  "expected_assistant_message_id": "uuid",
+  "work_ids": ["optional-work-uuid"]
+}
+```
+
+**Response 200:** the replacement assistant message, using the same shape as send-message.
+
+**Errors:** `404` session/message not found, `409` pair changed or is no longer the latest exchange,
+`422` invalid content/target, `502` the LLM could not produce a replacement. Error responses preserve
+the original exchange.
+
 ### `DELETE /api/chat/sessions/{session_id}`
 
 Delete a chat session and all its messages.

@@ -6,6 +6,7 @@ import {
   listChatSessions,
   listChatMessages,
   sendChatMessage,
+  resendChatMessage,
   deleteChatMessage,
   deleteChatSession,
 } from "../api/chat";
@@ -152,58 +153,41 @@ export default function TopicChatPage() {
     },
   });
 
-  // Edit & resend: delete old pair, then send new content
+  const [editResendError, setEditResendError] = useState<{
+    messageId: string;
+    message: string;
+  } | null>(null);
+
+  // Edit & resend is one backend operation: the original pair remains until
+  // the revised response is ready and the replacement transaction commits.
   const editResendMut = useMutation({
-    mutationFn: async ({
+    mutationFn: ({
+      sid,
       oldMsgId,
+      expectedAssistantMessageId,
       content,
     }: {
+      sid: string;
       oldMsgId: string;
+      expectedAssistantMessageId: string;
       content: string;
-    }) => {
-      await deleteChatMessage(oldMsgId);
-      await new Promise((r) => setTimeout(r, 100)); // let backend commit
-      return sendChatMessage(activeSessionId!, content);
-    },
-    onMutate: async ({ content }) => {
-      setDraft("");
+    }) => resendChatMessage(sid, oldMsgId, content, expectedAssistantMessageId),
+    onMutate: async ({ sid, oldMsgId }) => {
+      setEditResendError(null);
       await queryClient.cancelQueries({
-        queryKey: ["chatMessages", activeSessionId],
+        queryKey: ["chatMessages", sid],
       });
-      const prev = queryClient.getQueryData<{
-        messages: ChatMessageRead[];
-        total: number;
-      }>(["chatMessages", activeSessionId]);
-      const opt: ChatMessageRead = {
-        id: `optimistic-${++optimisticIdRef.current}`,
-        session_id: activeSessionId!,
-        role: "user",
-        content,
-        evidence_json: null,
-        uncertainty: null,
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-        model_used: null,
-        created_at: new Date().toISOString(),
-      };
-      queryClient.setQueryData(["chatMessages", activeSessionId], {
-        messages: [...(prev?.messages ?? []), opt],
-        total: (prev?.total ?? 0) + 1,
+      return { sid, oldMsgId };
+    },
+    onError: (error, vars) => {
+      setEditResendError({
+        messageId: vars.oldMsgId,
+        message: error instanceof Error ? error.message : "Revised message was not sent",
       });
-      return { prev };
     },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) {
-        queryClient.setQueryData(
-          ["chatMessages", activeSessionId],
-          ctx.prev
-        );
-      }
-    },
-    onSettled: () => {
+    onSettled: (_data, _error, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["chatMessages", activeSessionId],
+        queryKey: ["chatMessages", vars.sid],
       });
     },
   });
@@ -268,10 +252,8 @@ export default function TopicChatPage() {
   });
 
   // Usage stats from messages
-  const usageStats = computeUsageStats(
-    messagesQuery.data?.messages ?? [],
-    effConfigQuery.data
-  );
+  const chatMessages = messagesQuery.data?.messages ?? [];
+  const usageStats = computeUsageStats(chatMessages, effConfigQuery.data);
 
   // Provider presets for model dropdown
   const presetsQuery = useQuery({
@@ -513,21 +495,39 @@ export default function TopicChatPage() {
                   <p className="field-error">Failed to load messages</p>
                 ) : (
                   <>
-                    {(messagesQuery.data?.messages ?? []).length === 0 && (
+                    {chatMessages.length === 0 && (
                       <p className="text-dim" style={{ textAlign: "center", padding: "2rem" }}>
                         No messages yet. Ask a question about the novel.
                       </p>
                     )}
-                    {(messagesQuery.data?.messages ?? []).map((msg: ChatMessageRead) => (
+                    {chatMessages.map((msg: ChatMessageRead, index) => (
                       <ChatBubble
                         key={msg.id}
                         topicId={topicId!}
                         message={msg}
                         onDelete={(id) => deleteMsgMut.mutate(id)}
-                        onEditResend={(id, content) =>
-                          editResendMut.mutate({ oldMsgId: id, content })
+                        expectedAssistantMessageId={
+                          msg.role === "user" &&
+                          index === chatMessages.length - 2 &&
+                          chatMessages[index + 1]?.role === "assistant"
+                            ? chatMessages[index + 1].id
+                            : null
                         }
+                        onEditResend={async (id, expectedAssistantMessageId, content) => {
+                          if (!activeSessionId) return;
+                          await editResendMut.mutateAsync({
+                            sid: activeSessionId,
+                            oldMsgId: id,
+                            expectedAssistantMessageId,
+                            content,
+                          });
+                        }}
                         isResending={editResendMut.isPending}
+                        resendError={
+                          editResendError?.messageId === msg.id
+                            ? editResendError.message
+                            : null
+                        }
                       />
                     ))}
                     <div ref={messagesEndRef} />
@@ -1071,6 +1071,7 @@ function ActionBtn({
     >
       <button
         type="button"
+        aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
           onClick();
@@ -1107,14 +1108,22 @@ function ChatBubble({
   topicId,
   message,
   onDelete,
+  expectedAssistantMessageId,
   onEditResend,
   isResending,
+  resendError,
 }: {
   topicId: string;
   message: ChatMessageRead;
   onDelete: (id: string) => void;
-  onEditResend: (id: string, content: string) => void;
+  expectedAssistantMessageId: string | null;
+  onEditResend: (
+    id: string,
+    expectedAssistantMessageId: string,
+    content: string,
+  ) => Promise<void>;
   isResending: boolean;
+  resendError: string | null;
 }) {
   const isUser = message.role === "user";
   const isOptimistic = message.id.startsWith("optimistic-");
@@ -1136,11 +1145,15 @@ function ChatBubble({
     });
   }
 
-  function handleEditSend() {
+  async function handleEditSend() {
     const trimmed = editText.trim();
-    if (!trimmed || isResending) return;
-    onEditResend(message.id, trimmed);
-    setEditing(false);
+    if (!trimmed || isResending || !expectedAssistantMessageId) return;
+    try {
+      await onEditResend(message.id, expectedAssistantMessageId, trimmed);
+      setEditing(false);
+    } catch {
+      // Keep the editor open and preserve the revised text for retry.
+    }
   }
 
   return (
@@ -1238,6 +1251,15 @@ function ChatBubble({
                 {isResending ? "..." : "Resend"}
               </button>
             </div>
+            <p className="text-dim" style={{ fontSize: "0.68rem", marginTop: "0.3rem" }}>
+              Resending calls the LLM again and may consume API credits. The original exchange is
+              kept unless the revised response succeeds.
+            </p>
+            {resendError && (
+              <p className="field-error" role="alert" style={{ marginTop: "0.3rem" }}>
+                Revised message was not sent. The original exchange was kept. {resendError}
+              </p>
+            )}
           </div>
         ) : (
           <div>{message.content}</div>
@@ -1277,14 +1299,16 @@ function ChatBubble({
             />
             {isUser && !isOptimistic && (
               <>
-                <ActionBtn
-                  icon={"✎"}
-                  label="Edit"
-                  onClick={() => {
-                    setEditText(message.content);
-                    setEditing(true);
-                  }}
-                />
+                {expectedAssistantMessageId && (
+                  <ActionBtn
+                    icon={"✎"}
+                    label="Edit"
+                    onClick={() => {
+                      setEditText(message.content);
+                      setEditing(true);
+                    }}
+                  />
+                )}
                 <ActionBtn
                   icon={"✗"}
                   label="Delete"

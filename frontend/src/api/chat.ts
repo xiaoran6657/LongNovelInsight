@@ -46,6 +46,24 @@ export function sendChatMessage(
   );
 }
 
+export function resendChatMessage(
+  sessionId: string,
+  messageId: string,
+  content: string,
+  expectedAssistantMessageId: string,
+): Promise<ChatAnswerRead> {
+  return apiRequest<ChatAnswerRead>(
+    `/api/chat/sessions/${sessionId}/messages/${messageId}/resend`,
+    {
+      method: "POST",
+      json: {
+        content,
+        expected_assistant_message_id: expectedAssistantMessageId,
+      },
+    },
+  );
+}
+
 export function deleteChatMessage(
   messageId: string
 ): Promise<{ deleted: boolean }> {

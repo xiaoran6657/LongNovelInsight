@@ -1,6 +1,8 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
 CHAT_PATCH_PATH = "services.chat_service.OpenAICompatibleLLMClient.chat"
 
 
@@ -79,6 +81,25 @@ def _mock_chat_analysis(messages, model, temperature, max_tokens, response_forma
     )
 
 
+def _get_chat_traces(session_id):
+    from sqlmodel import select as sql_select
+
+    from db import get_session
+    from main import app
+    from models.retrieval_trace import RetrievalTrace
+
+    session_gen = app.dependency_overrides.get(get_session, get_session)
+    session = next(session_gen())
+    try:
+        return list(
+            session.exec(
+                sql_select(RetrievalTrace).where(RetrievalTrace.session_id == session_id)
+            ).all()
+        )
+    finally:
+        session.close()
+
+
 class TestChat:
     def test_create_session(self, client):
         with client as c:
@@ -140,6 +161,225 @@ class TestChat:
                 assert "刘备" in data["content"]
                 assert data["evidence_json"] is not None
                 assert data["uncertainty"] is None
+
+    def test_resend_latest_exchange_replaces_pair_atomically(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            session_id = c.post(
+                f"/api/topics/{topic_id}/chat/sessions", json={"title": "Resend"}
+            ).json()["id"]
+
+            with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "刘备是谁？"},
+                )
+            original = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            original_ids = {message["id"] for message in original}
+            original_user = next(message for message in original if message["role"] == "user")
+            original_assistant = next(
+                message for message in original if message["role"] == "assistant"
+            )
+            original_trace_ids = {trace.id for trace in _get_chat_traces(session_id)}
+            captured_messages = []
+
+            def revised_response(messages, model, temperature, max_tokens, response_format):
+                captured_messages.extend(messages)
+                return _mock_chat_response(
+                    messages, model, temperature, max_tokens, response_format
+                )
+
+            with patch(CHAT_PATCH_PATH, side_effect=revised_response):
+                resp = c.post(
+                    f"/api/chat/sessions/{session_id}/messages/{original_user['id']}/resend",
+                    json={
+                        "content": "刘备有哪些性格特点？",
+                        "expected_assistant_message_id": original_assistant["id"],
+                    },
+                )
+            assert resp.status_code == 200
+
+            revised = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            assert len(revised) == 2
+            assert {message["id"] for message in revised}.isdisjoint(original_ids)
+            assert next(message for message in revised if message["role"] == "user")[
+                "content"
+            ] == "刘备有哪些性格特点？"
+            prompt_contents = [message.content for message in captured_messages]
+            assert not any("刘备是谁？" in content for content in prompt_contents)
+            assert sum("刘备有哪些性格特点？" in content for content in prompt_contents) == 1
+            revised_user = next(message for message in revised if message["role"] == "user")
+            revised_traces = _get_chat_traces(session_id)
+            assert len(revised_traces) == 1
+            assert revised_traces[0].id not in original_trace_ids
+            assert revised_traces[0].message_id == revised_user["id"]
+            assert revised_traces[0].query == "刘备有哪些性格特点？"
+
+    def test_resend_llm_failure_preserves_original_pair(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            session_id = c.post(
+                f"/api/topics/{topic_id}/chat/sessions", json={"title": "Safe Resend"}
+            ).json()["id"]
+            with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "刘备是谁？"},
+                )
+            original = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            original_user = next(message for message in original if message["role"] == "user")
+            original_assistant = next(
+                message for message in original if message["role"] == "assistant"
+            )
+            original_trace_ids = {trace.id for trace in _get_chat_traces(session_id)}
+
+            from services.llm_client import LLMClientError
+
+            with patch(
+                CHAT_PATCH_PATH, side_effect=LLMClientError("provider unavailable", 503)
+            ):
+                resp = c.post(
+                    f"/api/chat/sessions/{session_id}/messages/{original_user['id']}/resend",
+                    json={
+                        "content": "刘备是谁？",
+                        "expected_assistant_message_id": original_assistant["id"],
+                    },
+                )
+            assert resp.status_code == 502
+            assert "could not produce" in resp.json()["detail"]
+
+            after = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            assert after == original
+            assert {trace.id for trace in _get_chat_traces(session_id)} == original_trace_ids
+
+    def test_resend_rejects_non_latest_exchange(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            session_id = c.post(
+                f"/api/topics/{topic_id}/chat/sessions", json={"title": "History"}
+            ).json()["id"]
+            with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "刘备是谁？"},
+                )
+                first_pair = c.get(
+                    f"/api/chat/sessions/{session_id}/messages"
+                ).json()["messages"]
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "曹操是谁？"},
+                )
+            first_user = next(message for message in first_pair if message["role"] == "user")
+            first_assistant = next(
+                message for message in first_pair if message["role"] == "assistant"
+            )
+
+            resp = c.post(
+                f"/api/chat/sessions/{session_id}/messages/{first_user['id']}/resend",
+                json={
+                    "content": "修改第一轮",
+                    "expected_assistant_message_id": first_assistant["id"],
+                },
+            )
+            assert resp.status_code == 409
+            assert "latest complete exchange" in resp.json()["detail"]
+            assert c.get(f"/api/chat/sessions/{session_id}/messages").json()["total"] == 4
+
+    def test_resend_commit_failure_rolls_back_original_pair(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            session_id = c.post(
+                f"/api/topics/{topic_id}/chat/sessions", json={"title": "Rollback"}
+            ).json()["id"]
+            with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "刘备是谁？"},
+                )
+            original = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            original_user = next(message for message in original if message["role"] == "user")
+            original_assistant = next(
+                message for message in original if message["role"] == "assistant"
+            )
+
+            with (
+                patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response),
+                patch("sqlmodel.Session.commit", side_effect=RuntimeError("commit failed")),
+                pytest.raises(RuntimeError, match="commit failed"),
+            ):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages/{original_user['id']}/resend",
+                    json={
+                        "content": "刘备有哪些性格特点？",
+                        "expected_assistant_message_id": original_assistant["id"],
+                    },
+                )
+
+            after = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            assert after == original
+
+    def test_resend_detects_message_committed_during_llm_call(self, client):
+        with client as c:
+            topic_id = _setup_chat(c)
+            session_id = c.post(
+                f"/api/topics/{topic_id}/chat/sessions", json={"title": "Concurrent"}
+            ).json()["id"]
+            with patch(CHAT_PATCH_PATH, side_effect=_mock_chat_response):
+                c.post(
+                    f"/api/chat/sessions/{session_id}/messages",
+                    json={"content": "刘备是谁？"},
+                )
+            original = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            original_user = next(message for message in original if message["role"] == "user")
+            original_assistant = next(
+                message for message in original if message["role"] == "assistant"
+            )
+
+            def commit_concurrent_turn(*args, **kwargs):
+                from db import get_session
+                from main import app
+                from models.chat import ChatMessage
+
+                session_gen = app.dependency_overrides.get(get_session, get_session)
+                other_session = next(session_gen())
+                try:
+                    other_session.add(
+                        ChatMessage(
+                            session_id=session_id,
+                            role="user",
+                            content="Concurrent question",
+                        )
+                    )
+                    other_session.add(
+                        ChatMessage(
+                            session_id=session_id,
+                            role="assistant",
+                            content="Concurrent answer",
+                        )
+                    )
+                    other_session.commit()
+                finally:
+                    other_session.close()
+                return _mock_chat_response(*args, **kwargs)
+
+            with patch(CHAT_PATCH_PATH, side_effect=commit_concurrent_turn):
+                resp = c.post(
+                    f"/api/chat/sessions/{session_id}/messages/{original_user['id']}/resend",
+                    json={
+                        "content": "刘备有哪些性格特点？",
+                        "expected_assistant_message_id": original_assistant["id"],
+                    },
+                )
+            assert resp.status_code == 409
+            messages = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
+            assert len(messages) == 4
+            assert {message["content"] for message in messages} == {
+                "刘备是谁？",
+                "刘备是一个仁德的领袖。",
+                "Concurrent question",
+                "Concurrent answer",
+            }
 
     def test_messages_list(self, client):
         with client as c:

@@ -469,6 +469,7 @@ def save_retrieval_trace(
     message_id: str | None = None,
     method: str = "hybrid",
     work_ids: list[str] | None = None,
+    commit: bool = True,
 ) -> str:
     """Persist a RetrievalTrace and return its ID.
 
@@ -502,7 +503,10 @@ def save_retrieval_trace(
         results_json=json.dumps(trace_results, ensure_ascii=False),
     )
     session.add(trace)
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     session.refresh(trace)
     return trace.id
 

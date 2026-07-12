@@ -6,6 +6,7 @@ from models.chat import (
     ChatAnswerRead,
     ChatMessageCreate,
     ChatMessageRead,
+    ChatMessageResend,
     ChatSessionCreate,
     ChatSessionRead,
 )
@@ -85,6 +86,39 @@ def send_message(
         if "no provider" in msg_str.lower():
             raise HTTPException(status_code=409, detail=msg_str)
         raise HTTPException(status_code=400, detail=msg_str)
+
+    return ChatAnswerRead.from_message(assistant_msg)
+
+
+@session_router.post("/{session_id}/messages/{message_id}/resend")
+def resend_message(
+    session_id: str,
+    message_id: str,
+    body: ChatMessageResend,
+    session: Session = Depends(get_session),
+) -> ChatAnswerRead:
+    if chat_service.get_chat_session(session_id, session) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        assistant_msg = chat_service.resend_user_message(
+            session_id,
+            message_id,
+            body.content,
+            session,
+            expected_assistant_message_id=body.expected_assistant_message_id,
+            work_ids=body.work_ids,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except chat_service.ChatResendConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except chat_service.ChatResendGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        detail = str(e)
+        status = 409 if "no provider" in detail.lower() else 422
+        raise HTTPException(status_code=status, detail=detail)
 
     return ChatAnswerRead.from_message(assistant_msg)
 

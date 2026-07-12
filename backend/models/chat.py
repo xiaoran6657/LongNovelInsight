@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
 
@@ -61,6 +62,21 @@ class ChatMessageCreate(SQLModel):
         if len(trimmed) > 20000:
             raise ValueError("content must not exceed 20000 characters")
         return cls(content=trimmed)
+
+
+class ChatMessageResend(ChatMessageCreate):
+    expected_assistant_message_id: str = Field(min_length=1)
+    work_ids: list[str] | None = None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("content must not be empty")
+        if len(trimmed) > 20000:
+            raise ValueError("content must not exceed 20000 characters")
+        return trimmed
 
 
 class ChatMessageRead(SQLModel):

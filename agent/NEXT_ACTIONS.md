@@ -7,8 +7,8 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | ID | Status | Owner | Task | Acceptance |
 | --- | --- | --- | --- | --- |
 | BASE-001 | done | primary | Install declared backend dependencies in Conda | `beautifulsoup4 4.15.0` installed on 2026-07-12 |
-| BASE-002 | done | primary | Run full backend suite after BASE-001 | 725 passed; 6 integration tests deselected |
-| BASE-003 | done | primary | Run full Playwright suite | 50 tests passed with mocked APIs on 2026-07-12 |
+| BASE-002 | done | primary | Run full backend suite after BASE-001 | 730 passed; 6 integration tests deselected |
+| BASE-003 | done | primary | Run full Playwright suite | 52 tests passed with mocked APIs on 2026-07-12 |
 | BASE-004 | done | frontend | Upgrade vulnerable Vite and React Router versions | Frontend gates pass; npm audit reports 0 vulnerabilities |
 | BASE-005 | done | primary | Review takeover diff and documentation links | Diff check and local Markdown link scan passed on 2026-07-12 |
 
@@ -20,7 +20,7 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | UI-002 | done | frontend/backend | Add API-credit confirmation and run/result handoff to Work analysis |
 | UI-003 | done | frontend | Normalize untrusted analysis JSON and add per-output error boundaries |
 | COST-001 | ready | frontend/backend | Expose a Work analysis estimate endpoint and show a numeric preflight estimate |
-| CHAT-001 | ready | frontend/backend | Replace destructive edit-resend sequencing with an atomic or failure-safe flow |
+| CHAT-001 | done | frontend/backend | Replace destructive edit-resend sequencing with an atomic server transaction |
 | RUN-001 | ready | backend | Define one authoritative analysis-run path and a deprecation plan for jobs/legacy outputs |
 | RUN-002 | ready | backend | Add startup recovery and single-executor guarantees for interrupted runs |
 | CROSS-001 | ready | backend | Harden All vs scoped cross-work snapshot semantics and GET filter assertions |
@@ -31,6 +31,7 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | --- | --- | --- | --- |
 | FE-TEST-001 | ready | frontend | Typecheck and lint E2E/config files; add pure-logic unit tests |
 | FE-CACHE-001 | ready | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
+| CHAT-002 | ready | backend | Add explicit turn/reply linkage and stable ordering for chat message pairs |
 | E2E-001 | ready | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
 | DB-001 | ready | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |
 | DOC-001 | ready | docs | Consolidate current v0.4 API, architecture, and LLM pipeline documentation |
