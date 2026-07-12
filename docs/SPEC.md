@@ -69,5 +69,6 @@ credentials on the local machine.
 - Timeline pagination and evidence expansion are limited.
 - Work-level preview analysis requires an explicit API-credit confirmation and hands the created
   run to the shared status/result UI. A backend numeric estimate endpoint remains planned.
-- Analysis output rendering needs stronger normalization for malformed model JSON.
+- Analysis output rendering accepts object or serialized-object content, filters malformed nested
+  items, and isolates unexpected card failures so other results remain usable.
 - Process restart recovery for in-process background analysis requires hardening.

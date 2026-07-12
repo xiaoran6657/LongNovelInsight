@@ -12,7 +12,7 @@ npm run typecheck     # TypeScript check
 npm run lint          # ESLint
 npm run build         # Production build → dist/
 npm run check         # All three checks at once
-npm run e2e           # Playwright end-to-end tests (49 tests: 38 baseline + 11 v0.4)
+npm run e2e           # Playwright end-to-end tests (50 tests: 39 baseline + 11 v0.4)
 ```
 
 The backend must be running separately:
@@ -39,7 +39,7 @@ frontend/
 ├── index.html
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
-├── playwright.config.ts      # Playwright e2e config (49 tests)
+├── playwright.config.ts      # Playwright e2e config (50 tests)
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
 ├── eslint.config.js          # typescript-eslint + recommended
 ├── .env.example              # VITE_API_BASE_URL template
@@ -253,7 +253,7 @@ v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministi
 | `typecheck` | `tsc --noEmit` | TypeScript check only |
 | `lint` | `eslint src/` | Lint source files |
 | `check` | `npm run typecheck && npm run lint && npm run build` | All checks |
-| `e2e` | `playwright test` | Run Playwright e2e tests (49 total) |
+| `e2e` | `playwright test` | Run Playwright e2e tests (50 total) |
 | `e2e:ui` | `playwright test --ui` | Run Playwright in UI mode |
 
 ## Dependencies

@@ -8,7 +8,7 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | --- | --- | --- | --- | --- |
 | BASE-001 | done | primary | Install declared backend dependencies in Conda | `beautifulsoup4 4.15.0` installed on 2026-07-12 |
 | BASE-002 | done | primary | Run full backend suite after BASE-001 | 725 passed; 6 integration tests deselected |
-| BASE-003 | done | primary | Run full Playwright suite | 49 tests passed with mocked APIs on 2026-07-12 |
+| BASE-003 | done | primary | Run full Playwright suite | 50 tests passed with mocked APIs on 2026-07-12 |
 | BASE-004 | done | frontend | Upgrade vulnerable Vite and React Router versions | Frontend gates pass; npm audit reports 0 vulnerabilities |
 | BASE-005 | done | primary | Review takeover diff and documentation links | Diff check and local Markdown link scan passed on 2026-07-12 |
 
@@ -18,7 +18,7 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | --- | --- | --- | --- |
 | UI-001 | done | frontend | Wire active Work filtering into Entities, Graph, and Timeline query parameters and keys |
 | UI-002 | done | frontend/backend | Add API-credit confirmation and run/result handoff to Work analysis |
-| UI-003 | ready | frontend | Normalize untrusted analysis JSON and add an output-area error boundary |
+| UI-003 | done | frontend | Normalize untrusted analysis JSON and add per-output error boundaries |
 | COST-001 | ready | frontend/backend | Expose a Work analysis estimate endpoint and show a numeric preflight estimate |
 | CHAT-001 | ready | frontend/backend | Replace destructive edit-resend sequencing with an atomic or failure-safe flow |
 | RUN-001 | ready | backend | Define one authoritative analysis-run path and a deprecation plan for jobs/legacy outputs |

@@ -2,50 +2,49 @@
 
 ## Objective
 
-Complete `UI-002`: require explicit confirmation before a Work preview calls the configured LLM,
-then hand the returned run ID to the existing status, persistence, cancellation, and output UI.
+Complete `UI-003`: safely normalize untrusted analysis output JSON and isolate unexpected render
+failures to one output card.
 
 ## Status
 
-Verified on 2026-07-12 on branch `codex/repository-takeover`, based on published commit `07c8c5e`.
-UI-002 implementation and tests are complete in the current working tree. Tags and releases are
+Verified on 2026-07-12 on branch `codex/repository-takeover`, based on published commit `662f74e`.
+UI-003 implementation and tests are complete in the current working tree. Tags and releases are
 not authorized.
 
 ## Ownership
 
 - Primary agent: implementation, integration, verification, status, commit, and push.
-- Frontend audit agent: component, persistence, and E2E design review.
-- Backend audit agent: read-only Work run lifecycle and output-contract review.
+- Frontend audit agent: malformed-output path and E2E design review.
+- Governance audit agent: existing error UI/test capability and boundary-placement review.
 
 ## Changes
 
-- Add a two-step confirmation that identifies the Work, three-chunk scope, real LLM call, and
-  possible API-credit consumption before any create request is sent.
-- Pass the created Work run ID into Topic-level persistence and switch to Overview so the shared
-  run status, cancel/retry/resume, and filtered output panels take over.
-- Refresh Work state when a run reaches terminal status and allow analyzed Works to be rerun.
-- Reuse the existing strong analysis request/response types in the Work API client.
-- Add mocked E2E coverage for no-request-before-confirmation, cancel safety, request body, run
-  handoff, session persistence, and analyzed-Work reruns.
+- Treat `content_json` as untrusted at the API boundary and accept either objects or serialized
+  object JSON while rejecting arrays and primitives.
+- Filter malformed list items before rendering Characters, Relations, Events, Causality, or Themes.
+- Normalize evidence quotes, source chunk IDs, titles, output types, and confidence values.
+- Add a dependency-free React error boundary around each complete output item, preserving the rest
+  of the output list when one item throws.
+- Add mocked E2E coverage for serialized JSON, malformed top-level content, mixed nested items, and
+  a deliberately triggered isolated card failure.
 
 ## Verification
 
-- Typecheck and ESLint: pass.
-- Production build: pass; 158 modules, 459.61 kB JS / 131.76 kB gzip.
-- `npx playwright test e2e/v0.4-features.spec.ts`: 11 passed as part of the full run.
-- `npm run e2e`: 49 passed in 17.1 seconds.
-- Backend was not changed by UI-002; its last full baseline remains 725 passed.
+- `npm run check`: pass.
+- Production build: pass; 159 modules, 461.23 kB JS / 132.28 kB gzip.
+- Targeted malformed-output E2E: 1 passed.
+- `npm run e2e`: 50 passed in 20.9 seconds.
+- Backend was not changed by UI-003; its last full baseline remains 725 passed.
 
 ## Notes
 
-- The confirmation warns about API-credit consumption but cannot show a reliable numeric estimate;
-  the backend currently exposes no Work estimate endpoint. `COST-001` tracks that follow-up.
-- Work output metadata endpoints omit full content. The handoff intentionally uses the Topic output
-  endpoint filtered by the exact run ID, which returns complete output content.
-- Work runs are serialized at Topic scope. `start_immediately=false` is not used because the backend
-  currently has no endpoint that starts such a pending run.
+- The backend normally returns parsed dict/list content, while historical mocks and legacy data may
+  contain serialized JSON strings. The renderer now handles both without weakening runtime checks.
+- Malformed raw model content is not echoed into the warning UI, avoiding accidental exposure of
+  novel text or provider responses.
+- The error boundary is per output item rather than page-wide, so run controls, history, and other
+  outputs remain available.
 
 ## Next Action
 
-Start UI-003: normalize untrusted analysis JSON before rendering and add an output-area error
-boundary.
+Start `CHAT-001`: replace destructive edit-resend sequencing with an atomic or failure-safe flow.

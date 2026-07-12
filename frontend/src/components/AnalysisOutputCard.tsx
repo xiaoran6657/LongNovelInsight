@@ -117,9 +117,35 @@ function getArray(v: unknown): unknown[] {
   return [];
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function normalizeContent(v: unknown): { json: Record<string, unknown>; malformed: boolean } {
+  if (v == null) return { json: {}, malformed: false };
+  if (isRecord(v)) return { json: v, malformed: false };
+  if (typeof v === "string") {
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (isRecord(parsed)) return { json: parsed, malformed: false };
+    } catch {
+      // The warning UI below handles invalid serialized JSON.
+    }
+  }
+  return { json: {}, malformed: true };
+}
+
+function getRecordArray(v: unknown): Record<string, unknown>[] {
+  return getArray(v).filter(isRecord);
+}
+
 function getStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  return v.map((item) => (typeof item === "string" ? item : String(item ?? "")));
+  return v.flatMap((item) => {
+    if (typeof item === "string") return item.trim() ? [item] : [];
+    if (typeof item === "number" || typeof item === "boolean") return [String(item)];
+    return [];
+  });
 }
 
 function hasAnyEvidence(items: unknown[]): boolean {
@@ -199,14 +225,14 @@ function CharactersBlock({
   evidence: string[];
   chunks: string[];
 }) {
-  const chars = getArray(json.characters);
+  const chars = getRecordArray(json.characters);
   if (chars.length === 0) {
     return <p className="text-dim">No characters found.</p>;
   }
   return (
     <div>
       {chars.map((c, i) => {
-        const item = c as Record<string, unknown>;
+        const item = c;
         const cKey =
           getString(item.character_id_hint) !== "—"
             ? String(item.character_id_hint)
@@ -290,14 +316,14 @@ function RelationsBlock({
   evidence: string[];
   chunks: string[];
 }) {
-  const rels = getArray(json.relationships);
+  const rels = getRecordArray(json.relationships);
   if (rels.length === 0) {
     return <p className="text-dim">No relationships found.</p>;
   }
   return (
     <div>
       {rels.map((r, i) => {
-        const item = r as Record<string, unknown>;
+        const item = r;
         const source =
           getString(item.source_character) !== "—"
             ? item.source_character
@@ -370,14 +396,14 @@ function EventsBlock({
   evidence: string[];
   chunks: string[];
 }) {
-  const evts = getArray(json.events);
+  const evts = getRecordArray(json.events);
   if (evts.length === 0) {
     return <p className="text-dim">No events found.</p>;
   }
   return (
     <div>
       {evts.map((e, i) => {
-        const item = e as Record<string, unknown>;
+        const item = e;
         const title =
           getString(item.title) !== "—"
             ? item.title
@@ -485,14 +511,14 @@ function CausalityBlock({
   evidence: string[];
   chunks: string[];
 }) {
-  const chains = getArray(json.causal_chains);
+  const chains = getRecordArray(json.causal_chains);
   if (chains.length === 0) {
     return <p className="text-dim">No causal chains found.</p>;
   }
   return (
     <div>
       {chains.map((c, i) => {
-        const item = c as Record<string, unknown>;
+        const item = c;
         const cause =
           getString(item.cause) !== "—"
             ? item.cause
@@ -577,14 +603,14 @@ function ThemesBlock({
   evidence: string[];
   chunks: string[];
 }) {
-  const themes = getArray(json.themes);
+  const themes = getRecordArray(json.themes);
   if (themes.length === 0) {
     return <p className="text-dim">No themes found.</p>;
   }
   return (
     <div>
       {themes.map((t, i) => {
-        const item = t as Record<string, unknown>;
+        const item = t;
         const name =
           getString(item.theme) !== "—"
             ? item.theme
@@ -684,6 +710,16 @@ function FallbackBlock({
   );
 }
 
+function MalformedContentBlock() {
+  return (
+    <div style={{ fontSize: "0.82rem" }}>
+      <p style={{ color: "#e65100" }} role="alert">
+        This result returned malformed structured content and cannot be displayed safely.
+      </p>
+    </div>
+  );
+}
+
 // ── Main card component ──
 
 interface AnalysisOutputCardProps {
@@ -694,13 +730,18 @@ interface AnalysisOutputCardProps {
 export default function AnalysisOutputCard({
   output,
 }: AnalysisOutputCardProps) {
-  const json = output.content_json ?? {};
-  const conf = fmtConf(inferConfidence(output.confidence, json));
-  const evidence = output.evidence_quotes ?? [];
-  const chunks = output.source_chunk_ids ?? [];
+  const rawJson: unknown = output.content_json;
+  const { json, malformed: contentMalformed } = normalizeContent(rawJson);
+  const outputConfidence = typeof output.confidence === "number" ? output.confidence : 0;
+  const conf = fmtConf(inferConfidence(outputConfidence, json));
+  const evidence = getStringArray(output.evidence_quotes);
+  const chunks = getStringArray(output.source_chunk_ids);
+  const outputType = getString(output.output_type, "unknown");
+  const title = getString(output.title, `${outputType} output`);
 
   function renderBody() {
-    switch (output.output_type) {
+    if (contentMalformed) return <MalformedContentBlock />;
+    switch (outputType) {
       case "overview":
         return <OverviewBlock json={json} evidence={evidence} chunks={chunks} />;
       case "characters":
@@ -737,11 +778,11 @@ export default function AnalysisOutputCard({
         }}
       >
         <p>
-          <strong>{output.title}</strong>
+          <strong>{title}</strong>
         </p>
         <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-          <span className={`status-badge status-${output.output_type}`}>
-            {output.output_type}
+          <span className={`status-badge status-${outputType}`}>
+            {outputType}
           </span>
           <span style={{ fontSize: "0.78rem", color: conf.color }}>
             {conf.text}

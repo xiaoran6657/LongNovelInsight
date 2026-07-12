@@ -606,6 +606,87 @@ test.describe("Analysis v2 – stage progress and failed extractions", () => {
 });
 
 test.describe("Analysis v2 – outputs panel", () => {
+  test("normalizes malformed outputs and isolates card render failures", async ({ page }) => {
+    await mockParsedTopic(page);
+    await page.route(apiRoute("/api/topics/test-topic-1/analysis/runs"), (route) => {
+      route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify({ runs: [] }),
+      });
+    });
+    await page.route(apiRoute("/api/topics/test-topic-1/analysis/outputs"), (route) => {
+      if (!route.request().url().includes("latest_only=true")) {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ outputs: [], count: 0 }),
+        });
+        return;
+      }
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          outputs: [
+            {
+              id: "out-serialized", topic_id: TOPIC_ID, run_id: null,
+              output_type: "characters", title: "Serialized Characters",
+              content_json: JSON.stringify({ characters: [{ name: "Serialized Hero" }] }),
+              evidence_quotes: [], source_chunk_ids: [], confidence: 0.8,
+              created_at: "2025-05-20T10:00:00Z",
+            },
+            {
+              id: "out-malformed-top", topic_id: TOPIC_ID, run_id: null,
+              output_type: "characters", title: "Malformed Top Level",
+              content_json: "[1,2,3]", evidence_quotes: [], source_chunk_ids: [],
+              confidence: 0, created_at: "2025-05-20T10:01:00Z",
+            },
+            {
+              id: "out-mixed-items", topic_id: TOPIC_ID, run_id: null,
+              output_type: "characters", title: "Mixed Character Items",
+              content_json: { characters: [null, "bad", {}] },
+              evidence_quotes: [null, "", "usable evidence"],
+              source_chunk_ids: [null, 42, "chunk-1"], confidence: 0,
+              created_at: "2025-05-20T10:02:00Z",
+            },
+            {
+              id: "out-empty-items", topic_id: TOPIC_ID, run_id: null,
+              output_type: "characters", title: "Empty Character Items",
+              content_json: { characters: [null, "bad"] },
+              evidence_quotes: [], source_chunk_ids: [], confidence: 0,
+              created_at: "2025-05-20T10:03:00Z",
+            },
+            {
+              id: "out-render-error", topic_id: TOPIC_ID, run_id: { invalid: true },
+              output_type: "characters", title: "Boundary Test",
+              content_json: { characters: [{ name: "Hidden by boundary" }] },
+              evidence_quotes: [], source_chunk_ids: [], confidence: 0,
+              created_at: "2025-05-20T10:04:00Z",
+            },
+          ],
+          count: 5,
+        }),
+      });
+    });
+
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible({ timeout: 10000 });
+    const filterSelect = page.locator("select", {
+      has: page.locator("option[value='characters']"),
+    });
+    await filterSelect.selectOption("characters");
+
+    await expect(page.getByText("Serialized Hero", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "malformed structured content" }),
+    ).toBeVisible();
+    await expect(page.getByText("Character 1", { exact: true })).toBeVisible();
+    await expect(page.getByText("No characters found.", { exact: true })).toBeVisible();
+    await expect(page.getByText("bad", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Unable to render this output", { exact: true })).toBeVisible();
+    await expect(page.getByText("Hidden by boundary", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Unexpected Application Error!", { exact: true })).toHaveCount(0);
+  });
+
   test("shows outputs filtered by selected run", async ({ page }) => {
     await mockParsedTopic(page);
 

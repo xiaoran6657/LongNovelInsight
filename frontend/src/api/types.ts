@@ -194,7 +194,7 @@ export interface AnalysisOutput {
   run_id?: string | null;
   output_type: string;
   title: string;
-  content_json: Record<string, unknown> | null;
+  content_json: unknown;
   source_chunk_ids: string[];
   evidence_quotes: string[];
   confidence: number;

@@ -4,6 +4,7 @@ import { getAnalysisRun, deleteAnalysisOutputs, listAnalysisOutputsV2 } from "..
 import type { AnalysisOutput } from "../../api/types";
 import { ApiError } from "../../api/client";
 import AnalysisOutputCard from "../../components/AnalysisOutputCard";
+import AnalysisOutputErrorBoundary from "../../components/AnalysisOutputErrorBoundary";
 import LoadingBlock from "../../components/LoadingBlock";
 import ErrorBlock from "../../components/ErrorBlock";
 import EmptyState from "../../components/EmptyState";
@@ -28,6 +29,27 @@ function groupLatest(outputs: AnalysisOutput[]): AnalysisOutput[] {
 interface Props {
   topicId: string;
   runId: string | null;
+}
+
+function AnalysisOutputItem({ output }: { output: AnalysisOutput }) {
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+        <div>
+          <strong>{output.output_type}</strong>
+          {output.run_id && (
+            <span className="text-dim" style={{ fontSize: "0.72rem", marginLeft: "0.5rem" }}>
+              run {output.run_id.slice(0, 8)}…
+            </span>
+          )}
+        </div>
+        <span className="text-dim" style={{ fontSize: "0.72rem" }}>
+          {new Date(output.created_at).toLocaleDateString()}
+        </span>
+      </div>
+      <AnalysisOutputCard output={output} />
+    </div>
+  );
 }
 
 export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
@@ -148,22 +170,12 @@ export default function AnalysisOutputsPanel({ topicId, runId }: Props) {
           </div>
 
           {filtered.map((o) => (
-            <div key={o.id} style={{ marginBottom: "1rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                <div>
-                  <strong>{o.output_type}</strong>
-                  {o.run_id && (
-                    <span className="text-dim" style={{ fontSize: "0.72rem", marginLeft: "0.5rem" }}>
-                      run {o.run_id.slice(0, 8)}…
-                    </span>
-                  )}
-                </div>
-                <span className="text-dim" style={{ fontSize: "0.72rem" }}>
-                  {new Date(o.created_at).toLocaleDateString()}
-                </span>
-              </div>
-              <AnalysisOutputCard output={o} />
-            </div>
+            <AnalysisOutputErrorBoundary
+              key={`${o.id}-${o.created_at}`}
+              outputType={typeof o.output_type === "string" ? o.output_type : "analysis"}
+            >
+              <AnalysisOutputItem output={o} />
+            </AnalysisOutputErrorBoundary>
           ))}
         </div>
       )}

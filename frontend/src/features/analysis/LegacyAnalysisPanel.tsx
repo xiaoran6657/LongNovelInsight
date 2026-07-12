@@ -82,9 +82,14 @@ export default function LegacyAnalysisPanel({ topicId, hasDoc, isParsed, boundPr
       const typeStats: Record<string, TypeStat> = {};
       for (const o of outputs) {
         let conf: number | null = o.confidence > 0 ? o.confidence : null;
-        if (!conf && o.content_json) {
+        if (
+          !conf &&
+          o.content_json &&
+          typeof o.content_json === "object" &&
+          !Array.isArray(o.content_json)
+        ) {
           const items: number[] = [];
-          for (const [, v] of Object.entries(o.content_json)) {
+          for (const [, v] of Object.entries(o.content_json as Record<string, unknown>)) {
             if (Array.isArray(v)) for (const item of v) {
               if (item && typeof item === "object" && typeof (item as Record<string, unknown>).confidence === "number")
                 items.push((item as Record<string, unknown>).confidence as number);
