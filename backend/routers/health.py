@@ -4,6 +4,7 @@ from sqlmodel import Session, func, select
 from config import DATA_DIR
 from db import get_session
 from models.topic import Topic
+from version import APP_VERSION
 
 router = APIRouter(tags=["health"])
 
@@ -18,7 +19,7 @@ def health(session: Session = Depends(get_session)) -> dict:
 
     return {
         "status": "ok",
-        "version": "0.2.0-dev",
+        "version": APP_VERSION,
         "topic_count": topic_count,
         "total_disk_usage_bytes": total_disk_usage_bytes,
     }

@@ -10,5 +10,3 @@ UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
 # because it requires a configured embedding provider. When disabled, the
 # /retrieve endpoint returns a warning if "semantic_rerank" is requested.
 ENABLE_SEMANTIC_RERANK = False
-
-DATA_DIR.mkdir(parents=True, exist_ok=True)

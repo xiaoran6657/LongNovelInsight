@@ -1,4 +1,7 @@
-# LongNovelInsight v0.3.0-dev — Architecture
+# LongNovelInsight v0.4.0-dev — Architecture
+
+This document preserves the architecture's version-by-version evolution. Sections explicitly
+labelled v0.1-v0.3 are historical context; the v0.4 boundaries and current code take precedence.
 
 ## System Overview
 

@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from models.chat import ChatMessage, ChatSession
 from models.model_provider import ModelProvider, mask_api_key
+from models.retrieval_trace import RetrievalTrace
 from models.topic import Topic
 from services.llm_client import LLMClientError, LLMMessage, OpenAICompatibleLLMClient
 from services.retrieval_service import (
@@ -84,6 +85,15 @@ def delete_chat_message(message_id: str, session: Session) -> bool:
             .limit(1)
         ).all()
     )
+    message_ids = [msg.id]
+    if next_msgs and next_msgs[0].role == "assistant":
+        message_ids.append(next_msgs[0].id)
+    traces = session.exec(
+        select(RetrievalTrace).where(RetrievalTrace.message_id.in_(message_ids))  # noqa: E711
+    ).all()
+    for trace in traces:
+        session.delete(trace)
+    session.flush()
     if next_msgs and next_msgs[0].role == "assistant":
         session.delete(next_msgs[0])
     session.delete(msg)
@@ -95,9 +105,16 @@ def delete_chat_session(session_id: str, session: Session) -> bool:
     s = session.get(ChatSession, session_id)
     if s is None:
         return False
+    traces = session.exec(
+        select(RetrievalTrace).where(RetrievalTrace.session_id == session_id)
+    ).all()
+    for trace in traces:
+        session.delete(trace)
+    session.flush()
     messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == session_id)).all()
     for m in messages:
         session.delete(m)
+    session.flush()
     session.delete(s)
     session.commit()
     return True

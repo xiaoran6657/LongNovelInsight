@@ -1,4 +1,8 @@
-# LongNovelInsight v0.2.0-dev — API Reference
+# LongNovelInsight — Core API Reference
+
+This manual reference documents the stable core and legacy-compatible endpoints. The running
+FastAPI OpenAPI document at `/docs` is authoritative for the full v0.4 endpoint set, including
+Work and cross-work APIs. Consolidating those endpoints here is tracked in `agent/NEXT_ACTIONS.md`.
 
 Base URL: `http://localhost:8000/api`
 
@@ -16,7 +20,7 @@ Returns backend status and basic statistics.
 ```json
 {
   "status": "ok",
-  "version": "0.2.0-dev",
+  "version": "0.4.0-dev",
   "topic_count": 3,
   "total_disk_usage_bytes": 5242880
 }

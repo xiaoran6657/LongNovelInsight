@@ -229,3 +229,22 @@ This file records accepted architecture decisions in chronological order. Append
 - Tab navigation keeps existing UX intact while adding discoverability for new features.
 - No new routes simplifies routing and keeps the single-Topic context consistent.
 - Cytoscape deferred to avoid ~200KB bundle increase in the initial v0.4.0 release.
+
+---
+
+## 2026-07-12 — ADR-017: Codex-Led Repository Governance
+
+**Decision:** `AGENTS.md` is the only stable agent rule source. Current verified state, the
+prioritized queue, cross-session handoff, and durable architecture decisions are maintained in
+separate versioned files under `agent/`. ChatGPT Codex owns task decomposition, agent assignment,
+integration, verification, and handoff. Git publication actions always require explicit user
+approval.
+
+**Rationale:** The previous Claude-to-Codex runner duplicated rules across three files, embedded
+stale version and platform assumptions, generated untracked transcripts, and granted automatic
+commit behavior. Versioned, evidence-based coordination files allow a new agent or conversation
+to resume without treating chat logs or historical prompts as current truth.
+
+**Consequences:** Legacy Claude configuration, the dual-agent runner, raw runner outputs, and
+historical development prompts are removed from the active workspace. Product runtime prompts
+under `backend/prompts/` remain part of the application.

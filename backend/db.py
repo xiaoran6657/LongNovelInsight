@@ -1,11 +1,12 @@
 import logging
 from collections.abc import Generator
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
 import models  # noqa: F401 — ensure all table models register with SQLModel.metadata
-from config import DB_PATH
+from config import DATA_DIR, DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,17 @@ def get_session() -> Generator[Session, None, None]:
         yield session
 
 
+def _add_missing_columns(table: str, columns: list[tuple[str, str]]) -> None:
+    existing = {column["name"] for column in sa_inspect(engine).get_columns(table)}
+    missing = [(name, definition) for name, definition in columns if name not in existing]
+    if not missing:
+        return
+
+    with engine.begin() as conn:
+        for name, definition in missing:
+            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}'))
+
+
 def _migrate_chat_message_usage_columns() -> None:
     """Add token usage columns to chat_message if they don't exist yet."""
     columns = [
@@ -29,23 +41,12 @@ def _migrate_chat_message_usage_columns() -> None:
         ("total_tokens", "INTEGER NOT NULL DEFAULT 0"),
         ("model_used", "TEXT"),
     ]
-    with engine.connect() as conn:
-        for col_name, col_def in columns:
-            try:
-                conn.execute(text(f"ALTER TABLE chat_message ADD COLUMN {col_name} {col_def}"))
-            except Exception:
-                pass  # column already exists
-        conn.commit()
+    _add_missing_columns("chat_message", columns)
 
 
 def _migrate_analysis_output_run_id() -> None:
     """Add run_id column to analysis_output if it doesn't exist yet."""
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE analysis_output ADD COLUMN run_id TEXT"))
-        except Exception:
-            pass
-        conn.commit()
+    _add_missing_columns("analysis_output", [("run_id", "TEXT")])
 
 
 def _migrate_analysis_run_final_columns() -> None:
@@ -56,13 +57,7 @@ def _migrate_analysis_run_final_columns() -> None:
         ("final_failed", "INTEGER NOT NULL DEFAULT 0"),
         ("final_skipped", "INTEGER NOT NULL DEFAULT 0"),
     ]
-    with engine.connect() as conn:
-        for col_name, col_def in columns:
-            try:
-                conn.execute(text(f"ALTER TABLE analysis_run ADD COLUMN {col_name} {col_def}"))
-            except Exception:
-                pass
-        conn.commit()
+    _add_missing_columns("analysis_run", columns)
 
 
 def _migrate_analysis_artifact() -> None:
@@ -84,13 +79,11 @@ def _migrate_v03_source_locator_columns() -> None:
         ("chapter", "metadata_json", "TEXT"),
         ("chunk", "source_locator_json", "TEXT"),
     ]
-    with engine.connect() as conn:
-        for table, col, col_type in migrations:
-            try:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass  # column already exists
-        conn.commit()
+    by_table: dict[str, list[tuple[str, str]]] = {}
+    for table, column, column_type in migrations:
+        by_table.setdefault(table, []).append((column, column_type))
+    for table, columns in by_table.items():
+        _add_missing_columns(table, columns)
 
 
 def _migrate_retrieval_trace() -> None:
@@ -130,13 +123,7 @@ def _migrate_local_extraction_usage_columns() -> None:
         ("usage_unavailable_attempts", "INTEGER NOT NULL DEFAULT 0"),
         ("attempt_usage_json", "TEXT"),
     ]
-    with engine.connect() as conn:
-        for col_name, col_def in columns:
-            try:
-                conn.execute(text(f"ALTER TABLE local_extraction ADD COLUMN {col_name} {col_def}"))
-            except Exception:
-                pass
-        conn.commit()
+    _add_missing_columns("local_extraction", columns)
 
 
 def _migrate_v04_work_tables(_engine=None) -> None:
@@ -145,8 +132,6 @@ def _migrate_v04_work_tables(_engine=None) -> None:
     Idempotent — safe to run multiple times. The schema guard only skips the
     table rebuild; remaining tables, indexes, and data backfill always run.
     """
-    from sqlalchemy import inspect as sa_inspect
-
     eng = _engine or engine
 
     # ── Schema check ──
@@ -269,6 +254,7 @@ def _migrate_v04_work_tables(_engine=None) -> None:
 
 
 def init_db() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
     _migrate_chat_message_usage_columns()
     _migrate_analysis_output_run_id()

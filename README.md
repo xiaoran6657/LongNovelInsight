@@ -106,7 +106,10 @@ export DEEPSEEK_API_KEY="sk-your-key-here"
 
 ## Development
 
-See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for the development process with Claude Code.
+See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for the Codex-led development and handoff process.
+
+See [docs/SPEC.md](docs/SPEC.md) for the current product boundary and
+[agent/PROJECT_STATUS.md](agent/PROJECT_STATUS.md) for the last verified quality baseline.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the version roadmap.
 

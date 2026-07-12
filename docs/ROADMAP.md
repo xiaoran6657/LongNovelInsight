@@ -15,6 +15,8 @@ Status: Complete.
 
 ## v0.2.x — Scale & Depth for Single TXT
 
+Status: Core staged pipeline delivered; several output families remain deferred.
+
 Goal: make full-length TXT novels analyzable with lower repeated token cost and deeper structured outputs.
 
 - Chunk-level local extraction.
@@ -55,9 +57,9 @@ Non-goals:
 
 ## v0.4.x — Multi-Book & Visualization
 
-Goal: support novel series and visual analysis. **Backend (10 steps) and Frontend (11 steps) complete.**
+Goal: support novel series and visual analysis. Backend and frontend implementation steps are complete.
 
-**Status: COMPLETE (2026-06-04)**
+**Status: Implementation complete; v0.4.0 release validation pending.**
 
 - [x] One Topic contains multiple Works.
 - [x] Cross-work entity registry (deterministic merge, no new LLM calls).

@@ -12,6 +12,8 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
+!**/.env.example
 
 # Node
 node_modules/
@@ -41,24 +43,21 @@ workspace/
 *.txt
 *.epub
 *.pdf
+!backend/tests/fixtures/**/*.txt
+!backend/tests/fixtures/**/*.epub
 
 # OS / IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 
 # Logs
 logs/
 outputs/
-
-# Claude Code local settings
-.claude/settings.local.json
-**/.claude/settings.local.json
-
-# Claude / AI local workflow memory
-agent/
-CLAUDE.md
+agent/local/
+agent/runs/
 
 # Python packaging / build artifacts
 *.egg-info/
@@ -67,11 +66,5 @@ build/
 dist/
 *.egg
 
-Prompts/
-MVP/
-.claude/
-AGENTS.md
-# Agent runner runs (output artifacts, not tracked)
-agent/runner/runs/
 *.local.json
 *.log

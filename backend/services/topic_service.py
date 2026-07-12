@@ -5,13 +5,21 @@ from models.analysis_run import AnalysisRun
 from models.chapter import Chapter
 from models.chat import ChatMessage, ChatSession
 from models.chunk import Chunk
+from models.cross_work_run import CrossWorkRun
 from models.document import Document
+from models.embedding_cache import EmbeddingCache
+from models.entity_mention import EntityMention
 from models.extracted_atom import ExtractedAtom
+from models.global_entity import GlobalEntity
+from models.graph_snapshot import GraphSnapshot
 from models.job import Job
 from models.job_item import JobItem
 from models.local_extraction import LocalExtraction
+from models.retrieval_trace import RetrievalTrace
+from models.timeline_item import TimelineItem
 from models.topic import Topic
 from models.topic_provider_config import TopicProviderConfig
+from models.work import Work
 from services import storage
 
 
@@ -39,6 +47,13 @@ def delete_topic(topic_id: str, session: Session) -> dict:
     topic = session.get(Topic, topic_id)
     if topic is None:
         return {"deleted": False, "freed_bytes": 0}
+
+    # Delete retrieval traces before their optional chat message/session references.
+    traces = session.exec(
+        select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+    ).all()
+    for trace in traces:
+        session.delete(trace)
 
     # Delete chat messages -> sessions
     sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
@@ -86,6 +101,36 @@ def delete_topic(topic_id: str, session: Session) -> dict:
     if tpc:
         session.delete(tpc)
 
+    # Delete cross-work derived data before Works and the Topic.
+    mentions = session.exec(
+        select(EntityMention).where(EntityMention.topic_id == topic_id)
+    ).all()
+    for mention in mentions:
+        session.delete(mention)
+    entities = session.exec(
+        select(GlobalEntity).where(GlobalEntity.topic_id == topic_id)
+    ).all()
+    for entity in entities:
+        session.delete(entity)
+    graphs = session.exec(select(GraphSnapshot).where(GraphSnapshot.topic_id == topic_id)).all()
+    for graph in graphs:
+        session.delete(graph)
+    timeline_items = session.exec(
+        select(TimelineItem).where(TimelineItem.topic_id == topic_id)
+    ).all()
+    for item in timeline_items:
+        session.delete(item)
+    cross_work_runs = session.exec(
+        select(CrossWorkRun).where(CrossWorkRun.topic_id == topic_id)
+    ).all()
+    for run in cross_work_runs:
+        session.delete(run)
+    embedding_rows = session.exec(
+        select(EmbeddingCache).where(EmbeddingCache.topic_id == topic_id)
+    ).all()
+    for row in embedding_rows:
+        session.delete(row)
+
     # Delete chunks -> chapters
     chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
     for c in chunks:
@@ -99,13 +144,18 @@ def delete_topic(topic_id: str, session: Session) -> dict:
 
     delete_topic_chunk_fts(topic_id, session)
 
-    # Delete document
-    doc = session.exec(select(Document).where(Document.topic_id == topic_id)).first()
-    if doc:
-        session.delete(doc)
+    # Delete all Work-scoped documents.
+    documents = session.exec(select(Document).where(Document.topic_id == topic_id)).all()
+    for document in documents:
+        session.delete(document)
+
+    works = session.exec(select(Work).where(Work.topic_id == topic_id)).all()
+    for work in works:
+        session.delete(work)
 
     # Delete Topic
     freed_db = topic.storage_bytes
+    session.flush()
     session.delete(topic)
     session.commit()
 

@@ -109,6 +109,30 @@ class TestSourceFileIsolation:
 
 
 class TestDeleteIsolation:
+    def test_delete_topic_with_multiple_work_documents(self, engine, client):
+        """Deleting a Topic removes every Work-scoped Document before its Works."""
+        tid, w1_id, w2_id, _ = _setup_two_works(engine)
+        for work_id, filename in ((w1_id, "w1.txt"), (w2_id, "w2.txt")):
+            response = client.post(
+                f"/api/works/{work_id}/documents/upload",
+                files={
+                    "file": (
+                        filename,
+                        io.BytesIO(f"{filename}\nFirst chapter.\n".encode()),
+                        "text/plain",
+                    )
+                },
+            )
+            assert response.status_code == 201
+
+        response = client.delete(f"/api/topics/{tid}")
+        assert response.status_code == 200
+
+        with Session(engine) as session:
+            assert session.get(Topic, tid) is None
+            assert session.exec(select(Work).where(Work.topic_id == tid)).first() is None
+            assert session.exec(select(Document).where(Document.topic_id == tid)).first() is None
+
     def test_legacy_delete_does_not_affect_other_works(self, engine, client):
         """Deleting default Work's document should not delete other Work's chunks."""
         tid, w1_id, w2_id, pid = _setup_two_works(engine)

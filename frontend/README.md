@@ -46,6 +46,7 @@ frontend/
 ├── e2e/                      # Playwright end-to-end tests
 │   ├── basic.spec.ts         # Basic smoke tests
 │   ├── analysis-v2.spec.ts   # v0.2 analysis pipeline tests
+│   ├── topic-detail.spec.ts  # Topic detail and analysis interactions
 │   ├── v0.3-features.spec.ts # v0.3 EPUB/search/evidence tests (11 tests)
 │   └── v0.4-features.spec.ts # v0.4 Work CRUD + form body tests (6 tests)
 └── src/

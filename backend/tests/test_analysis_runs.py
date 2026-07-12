@@ -1471,17 +1471,20 @@ def test_retry_failed_endpoint_starts_background(client):
             session = next(gen)
             try:
                 from models.analysis_run import AnalysisRun
+                from models.chunk import Chunk
                 from models.local_extraction import LocalExtraction
 
                 run = session.get(AnalysisRun, run_id)
                 if run:
+                    chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).first()
+                    assert chunk is not None
                     run.status = "partial_success"
                     session.add(run)
                     # Create a failed extraction so the endpoint check passes
                     ext = LocalExtraction(
                         run_id=run_id,
                         topic_id=topic_id,
-                        chunk_id="fake-chunk-id",
+                        chunk_id=chunk.id,
                         status="failed",
                         attempt_count=1,
                     )
@@ -1696,16 +1699,19 @@ def test_concurrent_retry_rejected_409(client):
         session = next(gen)
         try:
             from models.analysis_run import AnalysisRun
+            from models.chunk import Chunk
             from models.local_extraction import LocalExtraction
 
             run = session.get(AnalysisRun, run_id)
             if run:
+                chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).first()
+                assert chunk is not None
                 run.status = "partial_success"
                 session.add(run)
                 ext = LocalExtraction(
                     run_id=run_id,
                     topic_id=topic_id,
-                    chunk_id="fake-chunk-id",
+                    chunk_id=chunk.id,
                     status="failed",
                     attempt_count=1,
                 )
@@ -2088,16 +2094,19 @@ def test_retry_failed_no_failed_extractions_409(client):
         session = next(gen)
         try:
             from models.analysis_run import AnalysisRun
+            from models.chunk import Chunk
             from models.local_extraction import LocalExtraction
 
             run = session.get(AnalysisRun, run_id)
             if run:
+                chunk = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).first()
+                assert chunk is not None
                 run.status = "partial_success"
                 # Add a succeeded extraction but no failed ones
                 ext = LocalExtraction(
                     run_id=run.id,
                     topic_id=topic_id,
-                    chunk_id="fake-chunk-id",
+                    chunk_id=chunk.id,
                     status="succeeded",
                     attempt_count=1,
                 )

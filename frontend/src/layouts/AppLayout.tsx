@@ -1,5 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 
+import { APP_VERSION } from "../version";
+
 const NAV_ITEMS = [
   { path: "/", label: "Dashboard" },
   { path: "/providers", label: "Providers" },
@@ -23,7 +25,7 @@ export default function AppLayout() {
         <Link to="/" className="header-title">
           LongNovelInsight
         </Link>
-        <span className="header-version">v0.2.0-dev</span>
+        <span className="header-version">v{APP_VERSION}</span>
       </header>
 
       <nav className="nav">

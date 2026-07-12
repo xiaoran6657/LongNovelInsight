@@ -200,9 +200,11 @@ def test_delete_provider_in_use_by_topic_config_409(client):
     client.delete(f"/api/topics/{tid}")
 
 
-def test_delete_provider_ignores_orphan_config(engine, client):
-    """Orphan TopicProviderConfig (topic already deleted) should not block provider deletion."""
-    from sqlmodel import Session, select
+def test_topic_provider_config_rejects_orphan_topic(engine, client):
+    """TopicProviderConfig cannot reference a missing Topic."""
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from sqlmodel import Session
 
     from models.topic_provider_config import TopicProviderConfig
 
@@ -219,7 +221,7 @@ def test_delete_provider_ignores_orphan_config(engine, client):
     )
     pid = r.json()["id"]
 
-    # Create a TopicProviderConfig row whose topic does not exist (orphan)
+    # The database must reject a config whose Topic does not exist.
     with Session(engine) as session:
         tpc = TopicProviderConfig(
             topic_id="deleted-topic-id",
@@ -227,18 +229,9 @@ def test_delete_provider_ignores_orphan_config(engine, client):
             model_name_override="orphan-model",
         )
         session.add(tpc)
-        session.commit()
+        with pytest.raises(IntegrityError):
+            session.commit()
 
-    # Deleting the provider should succeed because the config row is orphaned
+    # The failed insert leaves no reference that could block provider deletion.
     r = client.delete(f"/api/providers/{pid}")
     assert r.status_code == 200
-
-    # Verify orphan row is still there (we don't cascade — just don't block)
-    with Session(engine) as session:
-        leftover = session.exec(
-            select(TopicProviderConfig).where(TopicProviderConfig.topic_id == "deleted-topic-id")
-        ).first()
-        assert leftover is not None
-        # Clean up manually
-        session.delete(leftover)
-        session.commit()

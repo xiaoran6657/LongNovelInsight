@@ -105,7 +105,7 @@ backend/
 │   ├── overview.md, characters.md, relations.md, events.md, causality.md, themes.md
 │   └── local/
 │       └── local_extraction.md   # v0.2+ local extraction prompt with output size limits
-├── tests/                       # 724 passing tests
+├── tests/                       # Unit, API, migration, and integration tests
 └── scripts/
     ├── smoke_backend.py         # v0.1 smoke test (safe + --real-llm modes)
     └── smoke_v2_backend.py      # v0.2 smoke test (safe + --real-llm modes)
@@ -344,48 +344,20 @@ zero LLM cost (deterministic Python).
 - Per-attempt error re-evaluation: if attempt 1 was transport but attempt 2 shows
   JSON truncation, attempt 3 correctly escalates to `RETRY_MAX_TOKENS`.
 
-## Test Summary (724 tests, all passing)
+## Tests
 
-| File | Tests | Key areas |
-|------|-------|-----------|
-| `test_documents.py` | 24 | 8 encodings, delete cascade, empty/whitespace reject, path safety |
-| `test_analysis_jobs.py` | 20 | Job CRUD, item failure, cancel, no duplicates |
-| `test_model_providers.py` | 16 | CRUD, default uniqueness, api_key masking |
-| `test_analysis_outputs.py` | 17 | 6-type outputs, evidence, batch-merge, late characters |
-| `test_parser_service.py` | 17 | Chapter detection (CN/EN), chunking, token estimation |
-| `test_chat.py` | 17 | Session CRUD, send/validate, evidence, history, delete message |
-| `test_parse_api.py` | 13 | Parse API, chunks pagination, storage, idempotent |
-| `test_topics.py` | 17 | CRUD, provider FK, topic config, effective config, cascade delete |
-| `test_retrieval_service.py` | 8 | Keyword match, stopwords filter, excerpt position, empty query |
-| `test_llm_client.py` | 12 | Normal/401/network/transport/retry/finish_reason/api_key leak |
-| `test_model_provider_test.py` | 4 | Provider test success/404/LLM error/api_key leak |
-| `test_health.py` | 1 | Health endpoint |
-| `test_analysis_selection.py` (v2) | 29 | Chunk meta, preview/range/full/incremental, cost estimate |
-| `test_atom_normalizer.py` (v2) | 15 | JSON normalization, evidence/confidence contract |
-| `test_v2_prompts.py` (v2) | 28 | v1+v2 prompt loading, JSON parsing, validation |
-| `test_local_extraction_worker.py` (v2/v3) | 29 | Cumulative attempts, truncation, adaptive retry, cache fields |
-| `test_merge_service.py` (v2/v3) | 22 | Deterministic merge (8 types), causality matching strategies |
-| `test_final_output_service.py` (v2/v3) | 13 | Final outputs, warning consolidation, resolved event IDs |
-| `test_artifact_storage.py` (v2) | 6 | Hybrid storage, write/read/delete, threshold |
-| `test_analysis_run.py` (v2) | 15 | AnalysisRun CRUD, migration, status transitions |
-| `test_analysis_runs.py` (v2/v3) | 60 | Pipeline, retry, resume, cumulative tokens, _fail_run, usage breakdown |
-| `test_stable_id.py` (v2) | 26 | Stable ID generation, CJK safety, idempotency |
-| `test_fts_service.py` (v3) | 11 | FTS5 rebuild, search, CJK fallback |
-| `test_retrieval_integration.py` (v3) | 5 | Hybrid retrieval smoke tests |
-| `test_epub_parser.py` (v3) | 26 | EPUB parse, metadata, chapter extraction |
-| `test_search_api.py` (v3) | 8 | Search endpoint, metadata, locator |
-| `test_v04_migration.py` (v4) | 17 | Multi-Work migration, table rebuild, default Work backfill |
-| `test_works.py` (v4) | 12 | Work CRUD, delete-safety, legacy doc backfill |
-| `test_v04_upload_parse.py` (v4) | 13 | Work-scoped upload, parse, legacy compatibility |
-| `test_v04_analysis.py` (v4) | 7 | Work-scoped analysis, run isolation, work_id in status |
-| `test_v04_entities.py` (v4) | 8 | Entity registry build, alias merge, type conflict, mentions |
-| `test_v04_graph.py` (v4) | 7 | Graph edges from relations, co-occurrence fallback, filters |
-| `test_v04_timeline.py` (v4) | 7 | Timeline ordering, persistence, filters |
-| `test_v04_isolation.py` (v4) | 8 | Multi-Work source files, parse, delete, entity safety |
-| `test_v04_cross_work_run.py` (v4) | 7 | Cross-work run orchestration, modes, status |
-| `test_v04_search_filters.py` (v4) | 6 | Work-scoped search/retrieve, metadata annotation |
+The default suite covers API behavior, parsing, retrieval, staged analysis, migrations,
+multi-Work isolation, and cross-work aggregation. Test counts change as behavior is added, so
+the current verified result is maintained in `agent/PROJECT_STATUS.md` rather than duplicated
+here.
 
-All tests mock LLM calls. No real external API calls in CI.
+```powershell
+conda run -n LongNovelInsight python -m pytest -v
+conda run -n LongNovelInsight ruff check .
+```
+
+Default tests mock LLM calls and use temporary databases and data directories. Tests marked
+`integration` are excluded by default and may require a live backend or external configuration.
 
 ## Key Design Decisions
 

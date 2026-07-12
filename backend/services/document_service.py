@@ -16,6 +16,7 @@ from models.extracted_atom import ExtractedAtom
 from models.job import Job
 from models.job_item import JobItem
 from models.local_extraction import LocalExtraction
+from models.retrieval_trace import RetrievalTrace
 from models.topic import Topic
 from services import storage
 
@@ -98,13 +99,22 @@ def _delete_document_derived_data(
     if is_only_document:
         # ── Full topic cleanup ──
 
+        traces = session.exec(
+            select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
+        ).all()
+        for trace in traces:
+            session.delete(trace)
+        session.flush()
+
         # Chat messages → sessions
         sessions = session.exec(select(ChatSession).where(ChatSession.topic_id == topic_id)).all()
         for s in sessions:
             messages = session.exec(select(ChatMessage).where(ChatMessage.session_id == s.id)).all()
             for m in messages:
                 session.delete(m)
+            session.flush()
             session.delete(s)
+        session.flush()
 
         # Analysis artifacts
         from services.artifact_storage_service import delete_artifacts_for_topic
@@ -117,19 +127,23 @@ def _delete_document_derived_data(
         ).all()
         for o in outputs:
             session.delete(o)
+        session.flush()
 
         # v2 analysis: atoms → extractions → runs
         atoms = session.exec(select(ExtractedAtom).where(ExtractedAtom.topic_id == topic_id)).all()
         for a in atoms:
             session.delete(a)
+        session.flush()
         extractions = session.exec(
             select(LocalExtraction).where(LocalExtraction.topic_id == topic_id)
         ).all()
         for e in extractions:
             session.delete(e)
+        session.flush()
         runs = session.exec(select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)).all()
         for r in runs:
             session.delete(r)
+        session.flush()
 
         # Jobs → job_items
         jobs = session.exec(select(Job).where(Job.topic_id == topic_id)).all()
@@ -137,15 +151,19 @@ def _delete_document_derived_data(
             items = session.exec(select(JobItem).where(JobItem.job_id == j.id)).all()
             for ji in items:
                 session.delete(ji)
+            session.flush()
             session.delete(j)
+        session.flush()
 
         # All chapters and chunks for the topic
         chunks = session.exec(select(Chunk).where(Chunk.topic_id == topic_id)).all()
         for c in chunks:
             session.delete(c)
+        session.flush()
         chapters = session.exec(select(Chapter).where(Chapter.topic_id == topic_id)).all()
         for ch in chapters:
             session.delete(ch)
+        session.flush()
 
         # FTS cleanup
         from services.fts_service import delete_topic_chunk_fts
@@ -358,7 +376,7 @@ def _upload_epub(
         file_type="epub",
         file_size_bytes=len(content),
         char_count=0,  # set after parse
-        content_type=file.content_type or "application/epub+zip",
+        content_type="application/epub+zip",
         encoding="epub",
         storage_path=rel_path,
         metadata_json=metadata_json,

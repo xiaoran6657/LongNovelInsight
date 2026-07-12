@@ -184,7 +184,10 @@ def _annotate_work_meta(results: list[dict], session: Session) -> None:
     from models.work import Work as WorkModel
 
     for r in results:
-        chunk = session.get(Chunk, r.get("chunk_id"))
+        chunk_id = r.get("chunk_id")
+        if not isinstance(chunk_id, str) or not chunk_id:
+            continue
+        chunk = session.get(Chunk, chunk_id)
         if chunk is None:
             continue
         doc = session.get(Document, chunk.document_id)

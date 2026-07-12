@@ -156,10 +156,14 @@ test.describe("v0.4 Works", () => {
     await page.fill('input[placeholder="Title (required)"]', "Test Novel");
     await page.fill('input[placeholder="Author"]', "Author X");
     await page.fill('input[placeholder="Series #"]', "1");
-    await page.locator("button", { hasText: "Create Work" }).click();
-    await page.waitForResponse(
-      (resp) => resp.url().includes(`/api/topics/${TOPIC_ID}/works`) && resp.request().method() === "POST"
-    );
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes(`/api/topics/${TOPIC_ID}/works`) &&
+          resp.request().method() === "POST",
+      ),
+      page.locator("button", { hasText: "Create Work" }).click(),
+    ]);
 
     expect(requestBody.title).toBe("Test Novel");
     expect(requestBody.author).toBe("Author X");
@@ -189,10 +193,14 @@ test.describe("v0.4 Works", () => {
     await page.locator("button", { hasText: "Edit" }).first().click();
     await page.fill('input[placeholder="Title"]', "Updated Title");
     await page.fill('input[placeholder="Author"]', "New Author");
-    await page.locator("button", { hasText: "Save" }).click();
-    await page.waitForResponse(
-      (resp) => resp.url().includes(`/api/works/${WORK_ID}`) && resp.request().method() === "PATCH"
-    );
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes(`/api/works/${WORK_ID}`) &&
+          resp.request().method() === "PATCH",
+      ),
+      page.locator("button", { hasText: "Save" }).click(),
+    ]);
 
     expect(patchBody.title).toBe("Updated Title");
     expect(patchBody.author).toBe("New Author");
@@ -214,8 +222,14 @@ test.describe("v0.4 Works", () => {
     await page.waitForLoadState("networkidle");
     await page.locator("button", { hasText: "Works" }).click();
     page.on("dialog", (dialog) => dialog.accept());
-    await page.locator("button", { hasText: "×" }).first().click();
-    await page.waitForResponse((resp) => resp.url().includes(`/api/works/${WORK_ID}`) && resp.request().method() === "DELETE");
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes(`/api/works/${WORK_ID}`) &&
+          resp.request().method() === "DELETE",
+      ),
+      page.locator("button", { hasText: "×" }).first().click(),
+    ]);
 
     expect(deleteCalled).toBe(true);
   });

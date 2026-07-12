@@ -1,4 +1,8 @@
-# Frontend API Contract — LongNovelInsight v0.3.0-dev
+# Frontend API Contract — v0.3 Baseline
+
+This is the historical v0.3 integration contract. The current v0.4 contract is defined by the
+FastAPI OpenAPI schema and `frontend/src/api/`; v0.4 consolidation is tracked in
+`agent/NEXT_ACTIONS.md`.
 
 > Auto-generated from actual backend code (routers/ + models/), not from docs/API.md alone.
 > If a discrepancy is found between this document and backend behavior, the backend code is the authority.
@@ -72,7 +76,7 @@ Response `200`:
 ```json
 {
   "status": "ok",
-  "version": "0.2.0-dev",
+  "version": "0.4.0-dev",
   "topic_count": 3,
   "total_disk_usage_bytes": 5242880
 }

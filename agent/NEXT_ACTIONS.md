@@ -1,101 +1,45 @@
 # Next Actions
 
-**v0.4 Backend COMPLETE (Steps 1-10).** **v0.4 Frontend COMPLETE (Steps 1-11).** Next: v0.4.0 release tagging + v0.4.1 hardening.
+Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 
-## Immediate Priority: v0.4.0 Release
+## P0 — Complete the v0.4.0-dev Baseline
 
-1. Tag `v0.4.0` after final integration test pass.
-2. Write release notes summarizing all v0.4 backend + frontend changes.
-3. Run full regression: backend pytest, frontend typecheck/lint/build/e2e.
+| ID | Status | Owner | Task | Acceptance |
+| --- | --- | --- | --- | --- |
+| BASE-001 | done | primary | Install declared backend dependencies in Conda | `beautifulsoup4 4.15.0` installed on 2026-07-12 |
+| BASE-002 | done | primary | Run full backend suite after BASE-001 | 725 passed; 6 integration tests deselected |
+| BASE-003 | done | primary | Run full Playwright suite | 44 tests passed with mocked APIs on 2026-07-12 |
+| BASE-004 | done | frontend | Upgrade vulnerable Vite and React Router versions | Frontend gates pass; npm audit reports 0 vulnerabilities |
+| BASE-005 | done | primary | Review takeover diff and documentation links | Diff check and local Markdown link scan passed on 2026-07-12 |
 
-### v0.4.1 Hardening (candidate items)
+## P1 — Correctness and User Trust
 
-- Cytoscape.js integration for character graph visualization.
-- Timeline pagination and evidence/source locator expand controls.
-- Upload/parse/analysis e2e tests (currently unreliable in mocked Playwright env).
+| ID | Status | Area | Task |
+| --- | --- | --- | --- |
+| UI-001 | ready | frontend | Wire active Work filtering into Entities, Graph, and Timeline query parameters and keys |
+| UI-002 | ready | frontend/backend | Add cost confirmation and run/result handoff to Work analysis |
+| UI-003 | ready | frontend | Normalize untrusted analysis JSON and add an output-area error boundary |
+| CHAT-001 | ready | frontend/backend | Replace destructive edit-resend sequencing with an atomic or failure-safe flow |
+| RUN-001 | ready | backend | Define one authoritative analysis-run path and a deprecation plan for jobs/legacy outputs |
+| RUN-002 | ready | backend | Add startup recovery and single-executor guarantees for interrupted runs |
+
+## P2 — Quality and Maintainability
+
+| ID | Status | Area | Task |
+| --- | --- | --- | --- |
+| FE-TEST-001 | ready | frontend | Typecheck and lint E2E/config files; add pure-logic unit tests |
+| FE-CACHE-001 | ready | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
+| E2E-001 | ready | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
+| DB-001 | ready | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |
+| DOC-001 | ready | docs | Consolidate current v0.4 API, architecture, and LLM pipeline documentation |
+| REFACTOR-001 | ready | both | Split the largest service/components along existing domain boundaries without new frameworks |
+
+## Later v0.4.x Candidates
+
+- Interactive relationship graph visualization.
+- Timeline pagination and evidence expansion.
 - Work-scoped chat evidence filtering.
-- Retry attempt_usage_json merging for complete audit trail.
+- Complete retry attempt-history merging.
+- Narrow-window responsive layout and keyboard accessibility pass.
 
----
-
-## Completed
-
-### v0.4 Frontend (11 steps) — COMPLETE (2026-06-04)
-
-| Step | Description | Status |
-|------|-------------|--------|
-| 0 | Audit & plan (`docs/v0.4/frontend-step0-audit.md`) | ✅ |
-| 1 | API types + 4 client modules (works, crossWork, graphs, timeline) | ✅ |
-| 2 | Work list/create/edit/delete + tab navigation in TopicDetailPage | ✅ |
-| 3 | Work upload/parse/analysis entry points + WorkDetail | ✅ |
-| 4 | Cross-work dashboard (run polling, warnings, stats, build trigger) | ✅ |
-| 5 | Entity registry table (search/filter/sort, detail drawer with mentions) | ✅ |
-| 6 | Character graph (edge table, error state) | ✅ |
-| 7 | Timeline view (ordered list, error state) | ✅ |
-| 8 | E2E tests + docs (6 Work CRUD + form body tests) | ✅ |
-| 9 | Work scope in search results + chat evidence | ✅ |
-| 10 | UX hardening (empty/error states, zero-Works safety, search clear) | ✅ |
-| 11 | Documentation finalization + full regression | ✅ |
-
-### v0.4 Backend (10 steps) — COMPLETE (2026-06-03)
-
-| Step | Description | Status |
-|------|-------------|--------|
-| 0 | Audit & plan (`docs/v0.4/backend-step0-audit.md`) | ✅ |
-| 1 | Schema + migration (6 new tables, document rebuild) | ✅ |
-| 2 | Work CRUD + default Work resolution | ✅ |
-| 3 | Work-aware upload/parse (scoped source files, delete scope) | ✅ |
-| 4 | Work-scoped v2 analysis | ✅ |
-| 5 | Cross-work entity registry builder (deterministic merge) | ✅ |
-| 6 | Character relationship graph snapshots | ✅ |
-| 7 | Cross-work timeline builder | ✅ |
-| 8 | Cross-work run orchestration | ✅ |
-| 9 | Search/retrieve work-scope filters | ✅ |
-| 10 | Documentation (README, CLAUDE, PROJECT_STATUS, NEXT_ACTIONS) | ✅ |
-
-### v0.3.1 — Stability & Token Accounting (2026-06-03)
-
-15 items covering transport errors, truncation detection, adaptive retry,
-thinking mode awareness, prompt output limits, causality matching,
-warning consolidation, run status protection, cumulative token accounting,
-DeepSeek cache fields, retry/resume persistence, cost estimate alignment,
-frontend token breakdown, README updates.
-
-### v0.3.0 — EPUB, Search & Evidence (2026-05-31)
-
-Backend Steps 0-12 complete. Frontend Steps 0-12 complete. Tagged `v0.3.0-rc1`.
-
-### v0.2.0 — Staged Analysis Pipeline (2026-05-26)
-
-Backend Steps 0-14 complete. Frontend Steps 0-13 complete. Tagged `v0.2.0`.
-
----
-
-## v0.4 Design Summary
-
-### What v0.4 delivered
-
-| Area | v0.3.1 | v0.4.0 |
-|------|--------|--------|
-| Data model | Topic 1↔1 Document | Topic 1→\* Work, Work 1→0..1 Document |
-| Upload | Per Topic | Per Work (legacy → default Work) |
-| Analysis | Per Topic | Per Work + cross-work build |
-| Entities | Chunk-level atoms only | Topic-level global registry with mentions |
-| Relationships | Merge outputs only | Graph snapshots with evidence edges |
-| Events | Per-chunk extraction | Ordered timeline with cross-work support |
-| Visualization | List/search cards | Edge table + entity registry + timeline |
-
-### Key design principles
-
-- Deterministic cross-work aggregation (no new LLM calls).
-- Evidence-first: every entity/graph/timeline node links back to source chunks.
-- Backward compatible: existing v0.3 APIs and databases continue to work.
-- Incremental: one default Work per legacy Topic, no forced migration.
-
-### Files
-
-- Spec: `MVP/v0.4.md`
-- Backend prompts: `Prompts/V0.4/Backend_v0.4_Prompts.md`
-- Frontend prompts: `Prompts/V0.4/Frontend_v0.4_Prompts.md`
-- Review prompts: `Prompts/V0.4/Codex_v0.4_Review_Prompts.md`
-- Roadmap: `docs/ROADMAP.md`
+Roadmap items beyond v0.4 require explicit scope approval before implementation.

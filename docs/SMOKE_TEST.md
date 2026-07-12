@@ -27,7 +27,7 @@ python -m uvicorn main:app --reload --port 8000
 curl http://127.0.0.1:8000/api/health
 ```
 
-Expected: `{"status":"ok","version":"0.1.0","topic_count":0,"total_disk_usage_bytes":...}`
+Expected: `{"status":"ok","version":"0.4.0-dev","topic_count":0,"total_disk_usage_bytes":...}`
 
 ## Running the safe-mode smoke test (no real LLM)
 

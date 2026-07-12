@@ -1,56 +1,63 @@
-# LongNovelInsight — Development Workflow
+# LongNovelInsight Development Workflow
 
-This document describes how I (Claude Code) and the human developer collaborate on this project.
+This project is maintained as a continuous Codex-led engineering effort. A task may span
+multiple agents and conversations, so repository evidence and explicit handoff notes are part
+of the deliverable rather than optional bookkeeping.
 
-## Development Cycle
+## 1. Start a Task
 
-Every task follows this cycle:
+1. Read `AGENTS.md`, `agent/PROJECT_STATUS.md`, `agent/NEXT_ACTIONS.md`, and
+   `agent/HANDOFF.md`.
+2. Check `git status` before editing and preserve unrelated changes.
+3. Define a bounded outcome and acceptance checks.
+4. Split parallel work only when file ownership is disjoint or the work is read-only.
 
-1. **Plan** — Clarify the task scope. Read relevant existing code. Write a short plan. Wait for approval.
-2. **Implement** — Write the code. Keep it simple. No over-engineering. Follow [CLAUDE.md](../CLAUDE.md) and [AGENT_RULES.md](../agent/AGENT_RULES.md).
-3. **Test** — Run tests. Make sure they pass. Add new tests for new behavior.
-4. **Fix** — Fix any test failures or lint errors. Repeat until clean.
-5. **Update Agent Files** — Update `agent/PROJECT_STATUS.md` to reflect new state. Update `agent/NEXT_ACTIONS.md` with the next 3–5 tasks. If an architectural decision was made, append to `agent/DECISIONS.md`.
-6. **Commit** — Commit with a clear English message. Do NOT commit `data/`, `*.sqlite`, `*.txt`, `.env`, or API keys.
+## 2. Investigate
 
-## Task Completion Output
+- Treat status documents as leads, not proof. Re-run relevant commands.
+- Prefer repository code, tests, and current command output over historical prompts.
+- Record contradictions between documentation and implementation before resolving them.
+- Do not perform real LLM calls or mutate user data during routine diagnostics.
 
-After every task (or logical sub-task), output a summary in this format:
+## 3. Implement
 
-```
-### Changed Files
-- path/to/file1.py — what changed
-- path/to/file2.tsx — what changed
+- Assign one agent as the owner of each file being edited.
+- Keep changes within the current release scope.
+- Add or update tests with behavior changes.
+- Avoid dependencies and broad architecture changes unless the user explicitly approves them.
 
-### Commands Run
-```
-pytest -v
-ruff check .
-```
+## 4. Verify
 
-### Test Results
-- 12 passed, 0 failed
-- ruff: no issues
+Use the quality gates in `AGENTS.md`. Release-level work requires the full backend suite,
+backend lint, frontend typecheck, frontend lint, frontend build, and the applicable Playwright
+suite. Write exact command results into `agent/PROJECT_STATUS.md` or `agent/HANDOFF.md`.
 
-### Risks / Notes
-- Any potential issues to watch for
-- Dependencies on future tasks
+## 5. Hand Off
 
-### Next Task
-- The next thing to work on
-```
+Before ending a work session, update `agent/HANDOFF.md` with:
 
-## Communication
+- objective and current status;
+- responsible agents or subsystem owners;
+- changed files;
+- commands and results;
+- unresolved risks or decisions;
+- the exact first action for the next session.
 
-- Default language: Chinese (中文).
-- Code and commit messages: English.
-- When uncertain about scope, ask before implementing.
-- Do not silently add features beyond the current task scope.
+Keep `agent/NEXT_ACTIONS.md` as the prioritized queue, not a historical changelog. Durable
+history belongs in release notes, architecture decisions, and Git history.
 
-## Environment
+## 6. Git and Release Actions
 
-- **Conda env**: `LongNovelInsight`
-- **Backend port**: 8000
-- **Frontend port**: 5173
-- **Database**: `data/longnovelinsight.sqlite` (gitignored)
-- **Data directory**: `data/` (gitignored)
+Editing and local verification do not authorize staging or publication. `git add`, commits,
+pushes, tags, pull requests, and releases each require explicit user approval. When approval is
+given, stage only reviewed files and re-run the relevant quality gates before publishing.
+
+## Completion Summary
+
+Every completed task should report:
+
+1. outcome and changed files;
+2. commands run and exact results;
+3. remaining risks or unverified behavior;
+4. next recommended task;
+5. whether any Git action still awaits approval.
