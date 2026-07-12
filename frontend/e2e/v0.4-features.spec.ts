@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 const TOPIC_ID = "test-topic-v4";
 const WORK_ID = "test-work-1";
 const WORK_ID_2 = "test-work-2";
+const WORK_RUN_ID = "test-work-run-1";
 const API_HOST = "http://127.0.0.1:8000";
 
 function apiRoute(pathPattern: string | RegExp) {
@@ -166,7 +167,156 @@ async function mockCrossWorkViews(page: Parameters<typeof test>[1]["page"]) {
   );
 }
 
+async function mockWorkAnalysis(
+  page: Parameters<typeof test>[1]["page"],
+  status: "parsed" | "analyzed",
+) {
+  await page.route(apiRoute(`/api/topics/${TOPIC_ID}/works`), (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      works: [
+        { id: WORK_ID, topic_id: TOPIC_ID, title: "Book One", subtitle: null, author: "Author A", series_index: 1, description: null, status, metadata_json: null, created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z" },
+        { id: WORK_ID_2, topic_id: TOPIC_ID, title: "Book Two", subtitle: null, author: null, series_index: 2, description: null, status: "empty", metadata_json: null, created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z" },
+      ],
+    }),
+  }));
+  await page.route(apiRoute(`/api/works/${WORK_ID}/documents/current`), (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "work-doc-1", topic_id: TOPIC_ID, work_id: WORK_ID,
+      original_filename: "book-one.txt", file_type: "txt", encoding: "utf-8",
+      file_size_bytes: 1024, char_count: 5000, status: "parsed",
+      created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z",
+    }),
+  }));
+  await page.route(apiRoute(`/api/works/${WORK_ID}/chapters`), (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify({ chapters: [] }),
+  }));
+  await page.route(
+    (url) => url.origin === API_HOST && url.pathname === `/api/works/${WORK_ID}/chunks`,
+    (route) => route.fulfill({
+      status: 200, contentType: "application/json", body: JSON.stringify({ chunks: [] }),
+    }),
+  );
+}
+
+async function mockWorkRunStatus(page: Parameters<typeof test>[1]["page"]) {
+  await page.route(apiRoute(`/api/analysis/runs/${WORK_RUN_ID}`), (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      run: {
+        id: WORK_RUN_ID, topic_id: TOPIC_ID, work_id: WORK_ID, mode: "preview",
+        status: "running", progress_current: 1, progress_total: 5,
+        extraction_total: 3, extraction_succeeded: 1, extraction_failed: 0,
+        merge_total: 1, merge_succeeded: 0, merge_failed: 0,
+        final_total: 1, final_succeeded: 0, final_failed: 0,
+        total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0,
+        usage_unavailable_attempts: 0, model_used: "m", error_message: null,
+        started_at: "2025-01-01T00:00:00Z", finished_at: null,
+        created_at: "2025-01-01T00:00:00Z",
+      },
+      extractions: [],
+      merge: { total: 1, succeeded: 0, failed: 0, outputs: [], warnings: [] },
+      final: { total: 1, succeeded: 0, failed: 0, outputs: [] },
+    }),
+  }));
+  await page.route(apiRoute(`/api/topics/${TOPIC_ID}/analysis/runs`), (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      runs: [{
+        id: WORK_RUN_ID, mode: "preview", status: "running",
+        extraction_succeeded: 1, extraction_failed: 0, merge_succeeded: 0,
+        merge_failed: 0, total_tokens: 0, model_used: "m", work_id: WORK_ID,
+        started_at: "2025-01-01T00:00:00Z", finished_at: null,
+        created_at: "2025-01-01T00:00:00Z",
+      }],
+      total: 1,
+    }),
+  }));
+  await page.route(apiRoute(`/api/topics/${TOPIC_ID}/analysis/outputs`), (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify({ outputs: [], count: 0 }),
+  }));
+}
+
 test.describe("v0.4 Works", () => {
+  test("Work preview analysis requires confirmation and hands the run to Overview", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockWorkAnalysis(page, "parsed");
+    await mockWorkRunStatus(page);
+    let createCalls = 0;
+    let requestBody: Record<string, unknown> = {};
+    await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/runs`), (route, request) => {
+      createCalls += 1;
+      requestBody = request.postDataJSON() || {};
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          run: {
+            id: WORK_RUN_ID, topic_id: TOPIC_ID, mode: "preview",
+            status: "pending", progress_total: 5,
+          },
+          status_url: `/api/analysis/runs/${WORK_RUN_ID}`,
+        }),
+      });
+    });
+
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Works", exact: true }).click();
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    const runButton = page.getByRole("button", { name: "Run Preview Analysis", exact: true });
+    await expect(runButton).toBeVisible();
+    await runButton.click();
+    await expect(page.getByText(/consume API credits/i)).toBeVisible();
+    expect(createCalls).toBe(0);
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText(/consume API credits/i)).not.toBeVisible();
+    expect(createCalls).toBe(0);
+
+    await runButton.click();
+    const statusRequest = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === `/api/analysis/runs/${WORK_RUN_ID}`,
+    );
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === `/api/works/${WORK_ID}/analysis/runs` &&
+          response.request().method() === "POST",
+      ),
+      page.getByRole("button", { name: /confirm preview analysis/i }).click(),
+    ]);
+    expect(createCalls).toBe(1);
+    expect(requestBody).toEqual({
+      mode: "preview", limit_chunks: 3, requested_types: ["characters"],
+    });
+
+    await statusRequest;
+    await expect(page.getByRole("heading", { name: "Analysis (v2)" })).toBeVisible();
+    await expect(page.getByText("Polling...", { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(
+        (key) => sessionStorage.getItem(key),
+        `activeAnalysisRun_${TOPIC_ID}`,
+      ),
+    ).toBe(WORK_RUN_ID);
+  });
+
+  test("analyzed Work still offers preview analysis rerun", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockWorkAnalysis(page, "analyzed");
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Works", exact: true }).click();
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Run Preview Analysis", exact: true }),
+    ).toBeVisible();
+  });
+
   test("selected Work filters the entity registry", async ({ page }) => {
     await mockV04Topic(page);
     await mockCrossWorkViews(page);

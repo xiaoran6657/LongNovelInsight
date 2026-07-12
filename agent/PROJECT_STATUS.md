@@ -3,9 +3,9 @@
 ## Verified Snapshot
 
 - **Verified:** 2026-07-12, Asia/Shanghai
-- **Baseline commit:** `0fe8f10` on `codex/repository-takeover`
+- **Baseline commit:** `07c8c5e` on `codex/repository-takeover`
 - **Branch:** `codex/repository-takeover`
-- **Current increment:** UI-001 verified on 2026-07-12
+- **Current increment:** UI-002 verified on 2026-07-12
 - **Current development version:** `v0.4.0-dev`
 - **Latest Git tag:** `v0.3.0` (`v0.3.1` and `v0.4.0` are not tagged)
 - **Release state:** v0.4 implementation exists, but release validation is not complete
@@ -33,9 +33,9 @@
 - `npm ci`: pass; repaired a missing local Rollup optional binary.
 - Typecheck: pass.
 - ESLint: pass.
-- Production build: pass, 158 modules, 458.53 kB JS / 131.45 kB gzip.
-- Playwright discovery: 47 tests in 5 files.
-- Full Playwright execution: 47 passed in 17.8 seconds.
+- Production build: pass, 158 modules, 459.61 kB JS / 131.76 kB gzip.
+- Playwright discovery: 49 tests in 5 files.
+- Full Playwright execution: 49 passed in 17.1 seconds.
 - Security updates: Vite 6.4.3, React Router 7.18.1, Babel 7.29.7, js-yaml 4.3.0.
 - `npm audit`: 0 vulnerabilities.
 
@@ -56,7 +56,7 @@
   propagates real database errors.
 - Scoped cross-work builds may replace the latest snapshot used by the unfiltered All view;
   backend behavior and filter assertions need hardening.
-- Work preview analysis lacks clear cost confirmation and run/result handoff.
+- Work analysis has an API-credit confirmation but no backend numeric estimate endpoint yet.
 - Analysis JSON rendering and chat edit-resend need resilience hardening.
 - Several backend and frontend modules are large multi-agent conflict hotspots.
 

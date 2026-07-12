@@ -53,6 +53,13 @@ export default function TopicDetailPage() {
   const [previewLimitChunks, setPreviewLimitChunks] = useState(3);
   const { activeRunId, setActiveRunId, clearStorage } = useActiveRunPersistence(topicId ?? "");
 
+  function handleRunTerminal() {
+    clearStorage();
+    if (topicId) {
+      queryClient.invalidateQueries({ queryKey: ["works", topicId] });
+    }
+  }
+
   // Clear topic-scoped UI state when topic changes.
   // activeRunId is managed by useActiveRunPersistence (re-reads sessionStorage on topic change).
   const prevTopicIdRef = useRef(topicId);
@@ -284,6 +291,10 @@ export default function TopicDetailPage() {
             topicId={topic.id}
             activeWorkId={activeWorkId}
             onSelectWork={(id) => setActiveWorkId(id)}
+            onAnalysisRunCreated={(runId) => {
+              setActiveRunId(runId);
+              setActiveTab("overview");
+            }}
           />
           <div style={{ marginTop: "1rem", borderTop: "1px solid #e0e0e0", paddingTop: "0.8rem" }}>
             <CrossWorkDashboard topicId={topic.id} />
@@ -399,7 +410,7 @@ export default function TopicDetailPage() {
         onActiveRunIdChange={setActiveRunId}
         onChangeMode={setAnalysisMode}
         onChangeLimitChunks={setPreviewLimitChunks}
-        onRunTerminal={clearStorage}
+        onRunTerminal={handleRunTerminal}
       />
 
       <AnalysisRunHistory

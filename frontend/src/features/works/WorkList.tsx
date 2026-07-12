@@ -13,9 +13,10 @@ interface Props {
   topicId: string;
   activeWorkId: string | null;
   onSelectWork: (id: string | null) => void;
+  onAnalysisRunCreated: (runId: string) => void;
 }
 
-export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props) {
+export default function WorkList({ topicId, activeWorkId, onSelectWork, onAnalysisRunCreated }: Props) {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -266,7 +267,13 @@ export default function WorkList({ topicId, activeWorkId, onSelectWork }: Props)
           <div style={{ marginTop: "0.8rem", borderTop: "1px solid #e0e0e0", paddingTop: "0.6rem" }}>
             <WorkDetail work={selected} />
             <WorkUploadPanel workId={activeWorkId} hasDocument={hasDoc} />
-            {hasDoc && <WorkAnalysisPanel work={selected} />}
+            {hasDoc && (
+              <WorkAnalysisPanel
+                key={selected.id}
+                work={selected}
+                onRunCreated={onAnalysisRunCreated}
+              />
+            )}
           </div>
         );
       })()}

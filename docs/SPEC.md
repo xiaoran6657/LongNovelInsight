@@ -67,6 +67,7 @@ credentials on the local machine.
 
 - Character graph is an edge-table MVP rather than an interactive visualization.
 - Timeline pagination and evidence expansion are limited.
-- Work-level analysis lacks complete cost confirmation, run handoff, and result tracking.
+- Work-level preview analysis requires an explicit API-credit confirmation and hands the created
+  run to the shared status/result UI. A backend numeric estimate endpoint remains planned.
 - Analysis output rendering needs stronger normalization for malformed model JSON.
 - Process restart recovery for in-process background analysis requires hardening.

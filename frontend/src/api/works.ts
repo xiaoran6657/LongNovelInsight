@@ -8,7 +8,8 @@ import type {
   ParseResult,
   Chapter,
   Chunk,
-  AnalysisRunCreateSummary,
+  AnalysisRunCreateRequest,
+  CreateAnalysisRunResponse,
   AnalysisRunListResponse,
   AnalysisOutput,
 } from "./types";
@@ -90,9 +91,9 @@ export function listWorkChunks(
 
 export function createWorkAnalysisRun(
   workId: string,
-  body: Record<string, unknown>
-): Promise<{ run: AnalysisRunCreateSummary; status_url: string }> {
-  return apiRequest<{ run: AnalysisRunCreateSummary; status_url: string }>(
+  body: AnalysisRunCreateRequest
+): Promise<CreateAnalysisRunResponse> {
+  return apiRequest<CreateAnalysisRunResponse>(
     `/api/works/${workId}/analysis/runs`,
     { method: "POST", json: body }
   );
