@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 
 from models.cross_work_run import CrossWorkRun
+from models.work import Work
 
 VALID_MODES = {"full", "entities_only", "graph_only", "timeline_only"}
 
@@ -25,11 +26,28 @@ def create_cross_work_run(
     if mode not in VALID_MODES:
         raise ValueError(f"Invalid mode '{mode}'. Must be: {sorted(VALID_MODES)}")
 
+    scope_work_ids = sorted(set(work_ids or []))
+    if scope_work_ids:
+        existing_work_ids = set(
+            session.exec(
+                select(Work.id).where(
+                    Work.topic_id == topic_id,
+                    Work.id.in_(scope_work_ids),
+                )
+            ).all()
+        )
+        unknown_work_ids = sorted(set(scope_work_ids) - existing_work_ids)
+        if unknown_work_ids:
+            raise ValueError(f"work_ids must belong to the Topic; unknown IDs: {unknown_work_ids}")
+
     run = CrossWorkRun(
         topic_id=topic_id,
         status="pending",
         mode=mode,
-        stats_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
+        stats_json=json.dumps(
+            {"scope": {"work_ids": scope_work_ids}},
+            ensure_ascii=False,
+        ),
         warnings_json="[]",
     )
     session.add(run)
@@ -61,10 +79,10 @@ def _execute_impl(run_id: str, engine) -> None:
         session.commit()
         topic_id = run.topic_id
         mode = run.mode
-        work_ids = json.loads(run.stats_json).get("work_ids")
+        work_ids = get_cross_work_run_work_ids(run)
 
     all_warnings: list[str] = []
-    stats: dict = {}
+    stats: dict = {"scope": {"work_ids": work_ids}}
     has_failure = False
 
     if mode in ("full", "entities_only"):
@@ -73,7 +91,7 @@ def _execute_impl(run_id: str, engine) -> None:
             from services.cross_work_entity_service import build_entity_registry
 
             with Session(engine) as s:
-                result = build_entity_registry(topic_id, s, work_ids=work_ids)
+                result = build_entity_registry(topic_id, s)
             stats["entities"] = {
                 "entity_count": result.get("entity_count", 0),
                 "mention_count": result.get("mention_count", 0),
@@ -166,6 +184,7 @@ def get_cross_work_run_status(session: Session, run_id: str) -> dict | None:
         "topic_id": run.topic_id,
         "status": run.status,
         "mode": run.mode,
+        "work_ids": get_cross_work_run_work_ids(run),
         "stats": json.loads(run.stats_json) if run.stats_json else {},
         "warnings": json.loads(run.warnings_json) if run.warnings_json else [],
         "error": run.error,
@@ -173,6 +192,21 @@ def get_cross_work_run_status(session: Session, run_id: str) -> dict | None:
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
+
+
+def get_cross_work_run_work_ids(run: CrossWorkRun) -> list[str]:
+    try:
+        payload = json.loads(run.stats_json) if run.stats_json else {}
+    except (json.JSONDecodeError, TypeError):
+        return []
+    scope = payload.get("scope")
+    if isinstance(scope, dict):
+        work_ids = scope.get("work_ids")
+    else:
+        work_ids = payload.get("work_ids")
+    if not isinstance(work_ids, list):
+        return []
+    return sorted({work_id for work_id in work_ids if isinstance(work_id, str)})
 
 
 def list_cross_work_runs(

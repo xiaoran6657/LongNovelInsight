@@ -364,7 +364,7 @@ Normalized atomic facts produced from local extraction results.
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `run_id` | FK → analysis_run | optional, nullable | Links output to v2 AnalysisRun. NULL for v1 outputs. |
+| `run_id` | FK → analysis_run | optional, nullable | Non-null is authoritative AnalysisRun provenance; NULL identifies a historical v1/job-era output. |
 
 v0.2 merge stage writes intermediate AnalysisOutput rows with these `output_type` values:
 `merge_overview`, `merge_characters`, `merge_events`, `merge_relations`, `merge_causality`, `merge_themes`, `merge_worldbuilding`, `merge_foreshadowing`.

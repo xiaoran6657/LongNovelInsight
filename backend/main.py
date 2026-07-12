@@ -9,8 +9,10 @@ from version import APP_VERSION
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from db import init_db
+    from services.analysis_run_service import recover_interrupted_analysis_runs
 
     init_db()
+    recover_interrupted_analysis_runs()
     yield
 
 

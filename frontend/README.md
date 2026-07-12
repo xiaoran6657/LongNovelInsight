@@ -9,10 +9,11 @@ cd frontend
 npm install
 npm run dev           # → http://localhost:5173
 npm run typecheck     # TypeScript check
-npm run lint          # ESLint
+npm run lint          # ESLint across source, E2E, unit tests, and configs
+npm run test:unit     # Pure-logic Playwright tests (no browser fixture)
 npm run build         # Production build → dist/
 npm run check         # All three checks at once
-npm run e2e           # Playwright end-to-end tests (52 tests: 41 baseline + 11 v0.4)
+npm run e2e           # Playwright end-to-end tests (53 tests: 41 baseline + 12 v0.4)
 ```
 
 The backend must be running separately:
@@ -39,11 +40,13 @@ frontend/
 ├── index.html
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
-├── playwright.config.ts      # Playwright e2e config (52 tests)
+├── playwright.config.ts      # Playwright e2e config (53 tests)
+├── playwright.unit.config.ts # Pure-logic unit config (8 tests)
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
 ├── eslint.config.js          # typescript-eslint + recommended
 ├── .env.example              # VITE_API_BASE_URL template
 ├── e2e/                      # Playwright end-to-end tests
+├── tests/                    # Pure TypeScript logic tests
 │   ├── basic.spec.ts         # Basic smoke tests
 │   ├── analysis-v2.spec.ts   # v0.2 analysis pipeline tests
 │   ├── topic-detail.spec.ts  # Topic detail and analysis interactions
@@ -61,7 +64,7 @@ frontend/
     │   ├── topics.ts         # Topic CRUD + provider config + effective config + recommendation
     │   ├── documents.ts      # Document upload / delete / metadata
     │   ├── parse.ts          # Parse / chapters / chunks / storage
-    │   ├── analysis.ts       # Analysis run / outputs / jobs / status
+    │   ├── analysis.ts       # Authoritative AnalysisRun lifecycle + output reads
     │   ├── chat.ts           # Chat sessions / messages / delete message
     │   ├── search.ts         # v0.3: POST /search
     │   ├── retrieve.ts       # v0.3: POST /retrieve
@@ -74,13 +77,13 @@ frontend/
     │   ├── analysis/         # v0.2+ analysis run UI: mode selector, run panel, history, outputs
     │   │   ├── AnalysisRunPanel.tsx       # Active run detail with token breakdown
     │   │   ├── AnalysisRunHistory.tsx     # Past runs list (paginated)
-    │   │   ├── AnalysisOutputsPanel.tsx   # Unified v1/v2 output view
+    │   │   ├── AnalysisOutputsPanel.tsx   # Run outputs + historical output reads
     │   │   ├── AnalysisModeSelector.tsx   # Mode: preview/range/full/incremental
     │   │   ├── AnalysisCostProjection.tsx  # Cost estimate with retry buffer note
     │   │   ├── AnalysisStageProgress.tsx  # Extraction/Merge/Final progress bars
     │   │   ├── ChunksMetaPanel.tsx        # Chunk statistics
     │   │   ├── ChunkRangeSelector.tsx     # Chunk/chapter range input
-    │   │   ├── LegacyAnalysisPanel.tsx    # v0.1 legacy analysis UI
+
     │   │   ├── analysisSelection.ts       # estimateTokens (aligned with backend formula)
     │   │   ├── useAnalysisRun.ts          # Run query + polling hook
     │   │   └── useActiveRunPersistence.ts # SessionStorage run ID persistence
@@ -216,9 +219,9 @@ frontend/
 - Cost estimate aligned with backend formula: `max_output_tokens × 0.65 × retry_multiplier`.
 - Thinking mode adds 1.4× buffer to estimates.
 
-## v0.2 Analysis Run
+## Authoritative AnalysisRun UI
 
-v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministic Merge → Final Outputs — ~4× more token-efficient than v0.1.
+The frontend creates only staged AnalysisRun records: Local Extraction → Deterministic Merge → Final Outputs. Legacy v1 and Job executors have no UI caller.
 
 ### Frontend Features
 - Chunks Meta + Range Selector
@@ -226,7 +229,7 @@ v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministi
 - Run Creation + Polling (2.5s interval)
 - Run History (truncated to 10, expandable)
 - Stage Progress with failure details
-- Unified v1/v2 Output View
+- Run-linked output view with historical `run_id=null` rows still readable
 - Session Storage Run Persistence
 - Cost Projection with effective config
 - Error Recovery with retry on all panels
@@ -250,10 +253,11 @@ v0.2 introduces a staged analysis pipeline — Local Extraction → Deterministi
 | `dev` | `vite` | Start dev server with HMR |
 | `build` | `tsc --noEmit && vite build` | Type-check then production build |
 | `preview` | `vite preview` | Preview production build |
-| `typecheck` | `tsc --noEmit` | TypeScript check only |
-| `lint` | `eslint src/` | Lint source files |
-| `check` | `npm run typecheck && npm run lint && npm run build` | All checks |
-| `e2e` | `playwright test` | Run Playwright e2e tests (52 total) |
+| `typecheck` | `tsc --noEmit` | Strict TypeScript check for source, E2E, unit tests, and configs |
+| `lint` | explicit source/E2E/test/config paths | ESLint all maintained frontend TypeScript/JavaScript |
+| `test:unit` | `playwright test --config playwright.unit.config.ts` | Run 8 pure-logic tests without browser fixtures |
+| `check` | typecheck + lint + unit + build | All non-E2E frontend checks |
+| `e2e` | `playwright test` | Run 53 mocked Playwright E2E tests |
 | `e2e:ui` | `playwright test --ui` | Run Playwright in UI mode |
 
 ## Dependencies

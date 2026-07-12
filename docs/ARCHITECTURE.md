@@ -203,46 +203,51 @@ The backend communicates with any OpenAI-compatible chat completions API. Defaul
 3. Parse the JSON response. Validate required fields (`source_chunk_ids`, `evidence_quotes`, `confidence`).
 4. Store structured output.
 
-### Analysis Pipeline
+### Authoritative Analysis Pipeline
 
-1. **Recommendation** — Inspect document size, chunk count, estimated tokens, and provider to recommend model, parallelism, and analysis mode (preview/direct/map_reduce_required).
-2. **Parse** — Split novel into chapters (regex), then each chapter into overlapping chunks (fixed token window, e.g., 4000 tokens with 200 overlap).
-3. **Analyze** — For each of the 6 analysis types, send selected chunks + a structured prompt to the LLM. Analysis types run in parallel via `ThreadPoolExecutor` (bounded 1-6, default 3). Workers only call LLM and return a result dataclass; the main thread writes DB rows.
-4. **Store** — Save each analysis output to SQLite `analysis_output` table. Job metadata records per-type timings and token usage.
+New product code uses AnalysisRun and analysis_run_service as the sole execution lifecycle:
 
-Per-type max output tokens: overview 1024, characters 3072, relations 2048, events 3072, causality 2048, themes 1536.
+1. **Select** — resolve exactly one Work/Document, then select preview, range, full, or incremental chunks.
+2. **Extract** — send each selected chunk once to the LLM and persist LocalExtraction plus normalized ExtractedAtom rows.
+3. **Merge** — deterministically merge atoms by requested type in Python.
+4. **Finalize** — deterministically write frontend-compatible AnalysisOutput rows with a non-null run_id.
+5. **Control** — status, cancel, retry-failed, and resume operate on the same AnalysisRun.
 
-Retry policy: max 2 attempts per type for retryable errors (429, 5xx, timeout, rate-limit). JSON parse failures retry once with doubled max_tokens.
+The explicit Work entry point is POST /api/works/{work_id}/analysis/runs. The Topic facade
+POST /api/topics/{topic_id}/analysis/runs remains supported for the Overview UI and legacy
+single-document clients, but resolves the deterministic default Work before calling the same
+service. It never creates a cross-Work run.
 
-See [LLM_PIPELINE.md](LLM_PIPELINE.md) for detailed prompt design and output schemas.
+AnalysisOutput remains the current final projection and retrieval source. Rows with non-null
+run_id have authoritative AnalysisRun provenance; rows with null run_id are historical outputs
+that remain readable.
 
-### Analysis Modes
+### AnalysisRun Runtime Ownership and Recovery
 
-| Mode | Condition | Description |
-|------|-----------|-------------|
-| `preview` | Small/medium + limit_chunks | Subset of chunks, fast and low cost |
-| `direct` | Up to ~300k chars | Full 6-type analysis via async parallel jobs |
-| `map_reduce_required` | >1M chars | Blocked in v0.1 — use preview or wait for v0.2 |
+analysis_run_service owns a process-local registry keyed by both run and Topic. Initial execution,
+retry-failed, and resume claim that registry under one re-entrant lock before starting a daemon
+thread, so a supported single-process backend has at most one executor per Topic. Run creation uses
+the same lock for its active-state check and insert. Executor claims are released in a finally
+path and also on thread-start failure.
 
-### Job System
+FastAPI startup performs database-only recovery after schema initialization. Rows left running
+by a prior process are marked failed with startup_recovery metadata and remain explicitly
+resumable. Intentionally deferred pending rows are not changed, and startup never triggers an LLM
+request. Resume reuses succeeded local extractions and processes only missing or opted-in failed
+chunks.
 
-Long-running operations (parse novel, run analysis) are tracked as jobs.
+The registry is intentionally not a distributed lock. Multiple Uvicorn workers or multiple backend
+processes sharing one SQLite database are outside the v0.4 local single-user deployment contract.
 
-**Job Lifecycle:** `pending` → `running` → `succeeded` / `partial_success` / `failed` / `cancelled`
+### Deprecated Analysis Executors
 
-**Analysis Job Flow:**
-1. `POST /api/topics/{id}/analysis/jobs` → returns 201 with job in `pending` state.
-2. Frontend polls `GET /api/topics/{id}/analysis/status` every 2-3 seconds.
-3. Worker threads execute the 6 output types in parallel.
-4. Main thread collects results, writes AnalysisOutput rows, updates job status.
-5. If all types succeed → `succeeded`. Some fail → `partial_success` (successful outputs saved, failed types in metadata). All fail → `failed`.
+The v1 synchronous executor, v1 async executor, single-type executor, and Job/JobItem APIs are
+independent legacy lifecycles. They remain callable in v0.4 for compatibility, are marked deprecated
+in OpenAPI, and are no longer exposed by the frontend. They must not be used for new product code.
+No historical rows are automatically deleted or rewritten.
 
-**Job Metadata:** Stores per-type timings (`type_timings`), token usage (`usage_by_type` with prompt/completion/cache hit/cache miss tokens), parallelism, model name, thinking mode, and failed type details.
-
-**Cancellation:** `POST /api/analysis/jobs/{id}/cancel` marks job cancelled. In-flight LLM calls may complete but results are discarded. Only pending/running jobs are cancellable.
-
-**Implementation:** In-process `ThreadPoolExecutor` (v0.1.0 — no external task queue). Worker threads do NOT receive a DB session.
-
+See [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md) for the endpoint matrix, invariants, and
+phased removal plan.
 ## Technology Boundaries (v0.1.0 / v0.2.0 — historical)
 
 | Technology | Status |
@@ -262,7 +267,8 @@ Long-running operations (parse novel, run analysis) are tracked as jobs.
 v0.2 replaces v0.1's per-type-per-chunk LLM calls with a staged map-reduce design:
 
 ```
-POST /api/topics/{id}/analysis/runs  (or /analysis/run?pipeline=v2)
+POST /api/works/{work_id}/analysis/runs
+(or Topic default-Work facade /api/topics/{id}/analysis/runs)
     │
     ▼
 AnalysisRun (pending → running)
@@ -434,6 +440,24 @@ backend/
 | `/api/topics/{id}/entities/{entity_id}/evidence` | GET | Entity evidence (atoms + chunks + outputs) |
 | `/api/topics/{id}/similar-scenes` | GET | Similar scenes by chunk_id or query |
 
+## Cross-Work Materialization Scope
+
+The empty work_ids scope is the canonical All view. Scoped identifiers are normalized to a sorted,
+deduplicated list and must belong to the requested Topic.
+
+- GlobalEntity and EntityMention form one canonical Topic-wide registry. A scoped cross-work run
+  still rebuilds this complete registry so local identity resolution cannot replace All with a
+  partial subset.
+- GraphSnapshot supports independent All and scoped materializations through scope_json. A build
+  replaces only the same normalized scope. An unfiltered GET selects only the latest All snapshot;
+  a Work-filtered GET selects the latest compatible scoped snapshot and falls back to All, then
+  projects edges and recomputes response node/edge counts.
+- TimelineItem remains a canonical Topic-wide materialization. An All build replaces all items,
+  while a scoped build replaces only items for the selected Works. Empty scoped results commit the
+  selected-scope deletion without touching other Works.
+- CrossWorkRun validates scoped Work ownership and preserves normalized work_ids in create, list,
+  detail, and completed stats responses.
+- Entity, graph, and timeline GET filters reject a Work owned by another Topic with 404.
 ## Technology Boundaries (v0.4.0)
 
 | Technology | Status |

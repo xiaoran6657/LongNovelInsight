@@ -202,9 +202,10 @@ class TestChat:
             revised = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
             assert len(revised) == 2
             assert {message["id"] for message in revised}.isdisjoint(original_ids)
-            assert next(message for message in revised if message["role"] == "user")[
-                "content"
-            ] == "刘备有哪些性格特点？"
+            assert (
+                next(message for message in revised if message["role"] == "user")["content"]
+                == "刘备有哪些性格特点？"
+            )
             prompt_contents = [message.content for message in captured_messages]
             assert not any("刘备是谁？" in content for content in prompt_contents)
             assert sum("刘备有哪些性格特点？" in content for content in prompt_contents) == 1
@@ -235,9 +236,7 @@ class TestChat:
 
             from services.llm_client import LLMClientError
 
-            with patch(
-                CHAT_PATCH_PATH, side_effect=LLMClientError("provider unavailable", 503)
-            ):
+            with patch(CHAT_PATCH_PATH, side_effect=LLMClientError("provider unavailable", 503)):
                 resp = c.post(
                     f"/api/chat/sessions/{session_id}/messages/{original_user['id']}/resend",
                     json={
@@ -263,9 +262,7 @@ class TestChat:
                     f"/api/chat/sessions/{session_id}/messages",
                     json={"content": "刘备是谁？"},
                 )
-                first_pair = c.get(
-                    f"/api/chat/sessions/{session_id}/messages"
-                ).json()["messages"]
+                first_pair = c.get(f"/api/chat/sessions/{session_id}/messages").json()["messages"]
                 c.post(
                     f"/api/chat/sessions/{session_id}/messages",
                     json={"content": "曹操是谁？"},

@@ -233,7 +233,7 @@ All LLM calls go through a single `llm_client.py` module (`backend/services/llm_
 - **API key safety**: The client never logs the raw API key. The `provider_test_service` sanitizes error messages via `mask_api_key()`.
 - **Tests**: All tests mock `httpx.post` via `monkeypatch`. No real external API calls in CI.
 
-## Pipeline Orchestration (v0.1.0)
+## Historical Pipeline Orchestration (v0.1.0, deprecated)
 
 v0.1.0 runs analysis synchronously via `POST /api/topics/{topic_id}/analysis/run`:
 
@@ -296,9 +296,11 @@ The chat flow uses hybrid retrieval to ground LLM answers in source material:
 ["桃园结义展现了刘备的义气。"]
 ```
 
-## v0.2 Staged Analysis Pipeline (In Progress)
+## Authoritative Staged Analysis Pipeline (v0.4)
 
 v0.2 replaces the single-pass 6-type LLM pipeline with a staged map-reduce design:
+
+The supported entry points and deprecation boundary are defined in [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md).
 
 ### Pipeline Stages
 
@@ -311,17 +313,17 @@ Step 6: Orchestrator (AnalysisRun lifecycle: create → start → run)
     ↓
 Step 7: Deterministic Merge (per type, Python — no LLM)
     ↓
-Step 8: Final Outputs (convert merged → frontend AnalysisOutput) — NOT YET IMPLEMENTED
+Step 8: Final Outputs (convert merged → frontend AnalysisOutput with run_id)
 ```
 
-### Current State (Steps 1–7 + Fix Patch)
+### Current State
 
 - **Local extraction worker**: Pure function, per-chunk LLM call. Parses JSON, validates against contract (analysis_type, chunk_id, evidence requirements). Stores canonical JSON (not raw markdown). Retries on retryable HTTP codes (429/500/502/503/504) and JSON parse errors. API key masking in error messages.
 - **AnalysisRun orchestrator**: Creates run, executes extractions in parallel via ThreadPoolExecutor (bounded 1–6, respects `analysis_parallelism` config). After extraction, runs deterministic merge stage.
 - **Deterministic merge** (7 types + overview): Python functions that group ExtractedAtoms by stable_id, consolidate fields, and write intermediate `AnalysisOutput` rows with `output_type="merge_<type>"`. Merge is idempotent — re-running overwrites previous merge outputs. Each merged item includes per-item `source_chunk_ids`, `evidence_quotes`, and `confidence`.
 - **Chunk selection**: Persists selected chunk IDs in `chunk_selection_json`. Range/incremental modes execute exactly the selected chunks (not `all_chunks[:n]`).
-- **Progress tracking**: `progress_total = extraction_total + merge_total`. Final stage not counted until Step 8.
-- **Status**: `get_analysis_run_status` returns extraction summary + merge summary (merge_total/merge_succeeded/merge_failed/outputs/warnings). Does not claim final outputs are ready.
+- **Progress tracking**: `progress_total = extraction_total + merge_total + final_total`.
+- **Status**: `get_analysis_run_status` returns extraction, merge, final, and token-usage summaries.
 - **Error handling**: Unhandled exceptions → run.status = failed. Cancelled runs skip merge stage.
 - **API key resolution**: TopicProviderConfig.provider_id > Topic.provider_id > default provider.
 

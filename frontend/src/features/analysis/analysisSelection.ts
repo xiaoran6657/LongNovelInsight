@@ -1,7 +1,7 @@
 import type { ChunkRange } from "./ChunkRangeSelector";
 import type { ChunksMetaResponse, EffectiveProviderConfig } from "../../api/types";
 
-export interface EstimateInput {
+export type EstimateInput = {
   meta: ChunksMetaResponse | undefined;
   mode: string;
   limitChunks: number;
@@ -97,5 +97,5 @@ export function estimateTokens(input: EstimateInput): {
 
 export function isRangeValid(range: ChunkRange): boolean {
   if (range.start == null || range.end == null) return true;
-  return range.start <= range.end;
+  return range.start >= 0 && range.end >= 0 && range.start <= range.end;
 }

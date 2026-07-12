@@ -1,17 +1,36 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { parseWork, createWorkAnalysisRun } from "../../api/works";
+import { createWorkAnalysisRun, estimateWorkAnalysis, parseWork } from "../../api/works";
 import LoadingBlock from "../../components/LoadingBlock";
-import type { WorkItem } from "../../api/types";
+import AnalysisCostProjection from "../analysis/AnalysisCostProjection";
+import type { AnalysisRunCreateRequest, WorkItem } from "../../api/types";
 
 type Props = {
   work: WorkItem;
   onRunCreated: (runId: string) => void;
 };
 
+const PREVIEW_REQUEST: AnalysisRunCreateRequest = {
+  mode: "preview",
+  limit_chunks: 3,
+  requested_types: ["characters"],
+};
+
+function formatTokens(value: number): string {
+  return value.toLocaleString();
+}
+
 export default function WorkAnalysisPanel({ work, onRunCreated }: Props) {
   const queryClient = useQueryClient();
   const [showAnalysisConfirm, setShowAnalysisConfirm] = useState(false);
+  const canAnalyze = work.status === "parsed" || work.status === "analyzed";
+
+  const estimateQuery = useQuery({
+    queryKey: ["workAnalysisEstimate", work.id, PREVIEW_REQUEST],
+    queryFn: () => estimateWorkAnalysis(work.id, PREVIEW_REQUEST),
+    enabled: canAnalyze,
+    retry: false,
+  });
 
   const parseMut = useMutation({
     mutationFn: () => parseWork(work.id),
@@ -21,12 +40,7 @@ export default function WorkAnalysisPanel({ work, onRunCreated }: Props) {
   });
 
   const analysisMut = useMutation({
-    mutationFn: () =>
-      createWorkAnalysisRun(work.id, {
-        mode: "preview",
-        limit_chunks: 3,
-        requested_types: ["characters"],
-      }),
+    mutationFn: () => createWorkAnalysisRun(work.id, PREVIEW_REQUEST),
     onSuccess: (data) => {
       setShowAnalysisConfirm(false);
       queryClient.invalidateQueries({ queryKey: ["works", work.topic_id] });
@@ -47,7 +61,6 @@ export default function WorkAnalysisPanel({ work, onRunCreated }: Props) {
     <div style={{ marginBottom: "0.5rem" }}>
       <h4 style={{ margin: "0 0 0.3rem 0" }}>Analysis</h4>
 
-      {/* Parse */}
       {work.status === "uploaded" && (
         <div style={{ marginBottom: "0.4rem" }}>
           <button
@@ -67,21 +80,43 @@ export default function WorkAnalysisPanel({ work, onRunCreated }: Props) {
 
       {parseMut.isPending && <LoadingBlock text="Parsing document..." />}
 
-      {/* Analysis run */}
-      {(work.status === "parsed" || work.status === "analyzed") && (
+      {canAnalyze && (
         <div style={{ marginBottom: "0.4rem" }}>
+          {estimateQuery.isPending && <LoadingBlock text="Estimating preview usage..." />}
+          {estimateQuery.data && (
+            <AnalysisCostProjection
+              selectedChunks={estimateQuery.data.selected_chunk_count}
+              estimatedInputTokens={estimateQuery.data.estimated_total_input_tokens}
+              estimatedOutputTokens={estimateQuery.data.estimated_total_output_tokens}
+              note={`${estimateQuery.data.estimate_notes} Token estimate only; no currency price is available for arbitrary providers.`}
+            />
+          )}
+          {estimateQuery.isError && (
+            <div style={{ marginBottom: "0.4rem" }}>
+              <p style={{ color: "#c62828", fontSize: "0.75rem" }}>
+                {(estimateQuery.error as Error)?.message || "Preview estimate failed"}
+              </p>
+              <button
+                onClick={() => estimateQuery.refetch()}
+                disabled={estimateQuery.isFetching}
+                style={{ fontSize: "0.8rem" }}
+              >
+                {estimateQuery.isFetching ? "Retrying..." : "Retry Estimate"}
+              </button>
+            </div>
+          )}
           {!showAnalysisConfirm && (
             <button
               onClick={() => setShowAnalysisConfirm(true)}
-              disabled={analysisMut.isPending}
+              disabled={analysisMut.isPending || !estimateQuery.data}
               style={{ fontSize: "0.8rem" }}
             >
               {analysisMut.isPending ? "Starting..." : "Run Preview Analysis"}
             </button>
           )}
           <p className="text-dim" style={{ fontSize: "0.7rem", marginTop: "0.2rem" }}>
-            Runs a preview analysis (3 chunks) on the Work's document.
-            For full analysis, use the Overview tab.
+            Runs a preview analysis (3 chunks) on the Work&apos;s document. For full analysis, use
+            the Overview tab.
           </p>
           {showAnalysisConfirm && (
             <div
@@ -92,13 +127,24 @@ export default function WorkAnalysisPanel({ work, onRunCreated }: Props) {
                 Confirm LLM preview analysis?
               </p>
               <p className="text-dim" style={{ marginTop: "0.25rem" }}>
-                This sends up to 3 chunks from &quot;{work.title}&quot; to the configured
-                LLM and may consume API credits.
+                This sends up to 3 chunks from &quot;{work.title}&quot; to the configured LLM and
+                may consume API credits.
               </p>
+              {estimateQuery.data && (
+                <p style={{ marginTop: "0.25rem" }}>
+                  Estimated usage: ~
+                  {formatTokens(
+                    estimateQuery.data.estimated_total_input_tokens +
+                      estimateQuery.data.estimated_total_output_tokens
+                  )}{" "}
+                  tokens (~{formatTokens(estimateQuery.data.estimated_total_input_tokens)} input, ~
+                  {formatTokens(estimateQuery.data.estimated_total_output_tokens)} output).
+                </p>
+              )}
               <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.4rem" }}>
                 <button
                   onClick={() => analysisMut.mutate()}
-                  disabled={analysisMut.isPending}
+                  disabled={analysisMut.isPending || !estimateQuery.data}
                   aria-label="Confirm preview analysis"
                   style={{ fontSize: "0.8rem" }}
                 >

@@ -240,7 +240,7 @@ def get_work_metadata(work_id: str, session: Session = Depends(get_session)):
 # ── Work-scoped analysis endpoints ──
 
 
-class WorkCreateRunRequest(BaseModel):
+class WorkAnalysisSelectionRequest(BaseModel):
     mode: str = "preview"
     requested_types: list[str] | None = None
     limit_chunks: int | None = None
@@ -248,8 +248,71 @@ class WorkCreateRunRequest(BaseModel):
     chunk_index_end: int | None = None
     chapter_index_start: int | None = None
     chapter_index_end: int | None = None
+
+
+class WorkCreateRunRequest(WorkAnalysisSelectionRequest):
     force: bool = False
     start_immediately: bool = True
+
+
+@doc_router.post("/analysis/estimate")
+def estimate_work_analysis(
+    work_id: str,
+    body: WorkAnalysisSelectionRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    from services.analysis_selection_service import (
+        estimate_v2_analysis_cost,
+        normalize_requested_types,
+        select_chunks_for_analysis,
+    )
+    from services.provider_config_service import get_effective_config
+
+    work = _check_work(work_id, session)
+    doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
+    if doc is None:
+        raise HTTPException(status_code=409, detail="No document found for this Work")
+
+    try:
+        requested_types = normalize_requested_types(body.requested_types)
+        selected, selection = select_chunks_for_analysis(
+            session,
+            work.topic_id,
+            body.mode,
+            limit_chunks=body.limit_chunks,
+            range_start=body.chunk_index_start,
+            range_end=body.chunk_index_end,
+            chapter_start=body.chapter_index_start,
+            chapter_end=body.chapter_index_end,
+            document_id=doc.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not selected:
+        raise HTTPException(status_code=409, detail="No chunks found; parse document first")
+
+    effective = get_effective_config(session, work.topic_id)
+    if not effective or not effective.is_ready:
+        raise HTTPException(status_code=409, detail="No provider configured for this topic")
+
+    estimate = estimate_v2_analysis_cost(
+        selected,
+        requested_types=requested_types,
+        max_output_tokens=effective.max_output_tokens or 3072,
+        thinking_mode=effective.thinking_mode,
+        mode=body.mode,
+    )
+    return {
+        "work_id": work_id,
+        "topic_id": work.topic_id,
+        "mode": body.mode,
+        "requested_types": requested_types,
+        "model_name": effective.model_name,
+        "estimated_llm_requests": len(selected),
+        "selection": selection,
+        **estimate,
+    }
 
 
 @doc_router.post("/analysis/runs", status_code=201)

@@ -14,7 +14,10 @@ export function formatBytes(bytes: number): string {
  */
 export function formatDateTime(iso: string): string {
   try {
-    const normalized = /[+\-Zz]\d*$/.test(iso.trimEnd()) ? iso : iso + "Z";
+    const trimmed = iso.trim();
+    const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(trimmed)
+      ? trimmed
+      : trimmed + "Z";
     const d = new Date(normalized);
     if (isNaN(d.getTime())) return iso;
     return d.toLocaleString(undefined, {

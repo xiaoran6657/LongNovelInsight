@@ -52,7 +52,7 @@ def check(desc, ok, detail=""):
 
 
 def main():
-    print("=== v0.2 Integration Smoke Test ===\n")
+    print("=== v0.4 Integration Smoke Test ===\n")
     passed = 0
     failed = 0
 
@@ -60,7 +60,7 @@ def main():
 
     # ── Health ──
     r = client.get("/api/health")
-    ok = r.status_code == 200 and r.json()["version"] == "0.2.0-dev"
+    ok = r.status_code == 200 and r.json()["version"] == "0.4.0-dev"
     passed += check("Backend healthy", ok, r.text)
     if not ok:
         failed += 1

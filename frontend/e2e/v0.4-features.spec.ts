@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const TOPIC_ID = "test-topic-v4";
 const WORK_ID = "test-work-1";
@@ -13,7 +13,7 @@ function apiRoute(pathPattern: string | RegExp) {
   return (url: URL) => url.origin === API_HOST && pathPattern.test(url.pathname + url.search);
 }
 
-async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
+async function mockV04Topic(page: Page) {
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}`), (route) => {
     route.fulfill({
       status: 200, contentType: "application/json",
@@ -78,7 +78,7 @@ async function mockV04Topic(page: Parameters<typeof test>[1]["page"]) {
   });
 }
 
-async function mockCrossWorkViews(page: Parameters<typeof test>[1]["page"]) {
+async function mockCrossWorkViews(page: Page) {
   await page.route(
     (url) => url.origin === API_HOST && url.pathname === `/api/topics/${TOPIC_ID}/entities`,
     (route, request) => {
@@ -168,7 +168,7 @@ async function mockCrossWorkViews(page: Parameters<typeof test>[1]["page"]) {
 }
 
 async function mockWorkAnalysis(
-  page: Parameters<typeof test>[1]["page"],
+  page: Page,
   status: "parsed" | "analyzed",
 ) {
   await page.route(apiRoute(`/api/topics/${TOPIC_ID}/works`), (route) => route.fulfill({
@@ -200,9 +200,20 @@ async function mockWorkAnalysis(
       status: 200, contentType: "application/json", body: JSON.stringify({ chunks: [] }),
     }),
   );
+  await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/estimate`), (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      work_id: WORK_ID, topic_id: TOPIC_ID, mode: "preview",
+      requested_types: ["characters"], model_name: "m", estimated_llm_requests: 3,
+      selected_chunk_count: 3, selected_chars: 20000, selected_estimated_tokens: 5000,
+      estimated_total_input_tokens: 9200, estimated_total_output_tokens: 7800,
+      estimate_notes: "Includes a preview retry buffer.",
+    }),
+  }));
 }
 
-async function mockWorkRunStatus(page: Parameters<typeof test>[1]["page"]) {
+async function mockWorkRunStatus(page: Page) {
   await page.route(apiRoute(`/api/analysis/runs/${WORK_RUN_ID}`), (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -249,6 +260,21 @@ test.describe("v0.4 Works", () => {
     await mockWorkRunStatus(page);
     let createCalls = 0;
     let requestBody: Record<string, unknown> = {};
+    let estimateBody: Record<string, unknown> = {};
+    await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/estimate`), (route, request) => {
+      estimateBody = request.postDataJSON() || {};
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          work_id: WORK_ID, topic_id: TOPIC_ID, mode: "preview",
+          requested_types: ["characters"], model_name: "m", estimated_llm_requests: 3,
+          selected_chunk_count: 3, selected_chars: 20000, selected_estimated_tokens: 5000,
+          estimated_total_input_tokens: 9200, estimated_total_output_tokens: 7800,
+          estimate_notes: "Includes a preview retry buffer.",
+        }),
+      });
+    });
     await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/runs`), (route, request) => {
       createCalls += 1;
       requestBody = request.postDataJSON() || {};
@@ -269,9 +295,18 @@ test.describe("v0.4 Works", () => {
     await page.getByRole("button", { name: "Works", exact: true }).click();
     await page.getByRole("button", { name: "1. Book One", exact: true }).click();
     const runButton = page.getByRole("button", { name: "Run Preview Analysis", exact: true });
-    await expect(runButton).toBeVisible();
+    const estimateCard = page.getByRole("heading", { name: "Cost Estimate" }).locator("..");
+    await expect(estimateCard).toContainText("Total tokens: ~17,000");
+    await expect(estimateCard).toContainText("Input tokens: ~9,200");
+    await expect(estimateCard).toContainText("Output tokens: ~7,800");
+    await expect(runButton).toBeEnabled();
+    expect(estimateBody).toEqual({
+      mode: "preview", limit_chunks: 3, requested_types: ["characters"],
+    });
+    expect(createCalls).toBe(0);
     await runButton.click();
     await expect(page.getByText(/consume API credits/i)).toBeVisible();
+    await expect(page.getByText(/Estimated usage: ~17,000 tokens/)).toBeVisible();
     expect(createCalls).toBe(0);
 
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -306,6 +341,51 @@ test.describe("v0.4 Works", () => {
     ).toBe(WORK_RUN_ID);
   });
 
+  test("failed Work estimate blocks analysis until retry succeeds", async ({ page }) => {
+    await mockV04Topic(page);
+    await mockWorkAnalysis(page, "parsed");
+    let shouldFail = true;
+    let createCalls = 0;
+    await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/estimate`), (route) => {
+      if (shouldFail) {
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Estimate unavailable" }),
+        });
+        return;
+      }
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          work_id: WORK_ID, topic_id: TOPIC_ID, mode: "preview",
+          requested_types: ["characters"], model_name: "m", estimated_llm_requests: 3,
+          selected_chunk_count: 3, selected_chars: 20000, selected_estimated_tokens: 5000,
+          estimated_total_input_tokens: 9200, estimated_total_output_tokens: 7800,
+          estimate_notes: "Includes a preview retry buffer.",
+        }),
+      });
+    });
+    await page.route(apiRoute(`/api/works/${WORK_ID}/analysis/runs`), (route) => {
+      createCalls += 1;
+      route.abort();
+    });
+
+    await page.goto(`/topics/${TOPIC_ID}`);
+    await page.getByRole("button", { name: "Works", exact: true }).click();
+    await page.getByRole("button", { name: "1. Book One", exact: true }).click();
+    const runButton = page.getByRole("button", { name: "Run Preview Analysis", exact: true });
+    await expect(page.getByText(/Estimate unavailable/)).toBeVisible();
+    await expect(runButton).toBeDisabled();
+    expect(createCalls).toBe(0);
+
+    shouldFail = false;
+    await page.getByRole("button", { name: "Retry Estimate", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Cost Estimate" })).toBeVisible();
+    await expect(runButton).toBeEnabled();
+    expect(createCalls).toBe(0);
+  });
   test("analyzed Work still offers preview analysis rerun", async ({ page }) => {
     await mockV04Topic(page);
     await mockWorkAnalysis(page, "analyzed");

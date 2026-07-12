@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const API_HOST = "http://127.0.0.1:8000";
 const TOPIC_ID = "chat-topic";
@@ -34,7 +34,7 @@ const revisedMessages = [
   },
 ];
 
-async function mockChatPage(page: Parameters<typeof test>[1]["page"]) {
+async function mockChatPage(page: Page) {
   await page.route(apiPath(`/api/topics/${TOPIC_ID}`), (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -60,7 +60,7 @@ async function mockChatPage(page: Parameters<typeof test>[1]["page"]) {
   }));
 }
 
-async function openLatestEdit(page: Parameters<typeof test>[1]["page"]) {
+async function openLatestEdit(page: Page) {
   await page.goto(`/topics/${TOPIC_ID}/chat`);
   await page.getByText("Test Session", { exact: true }).click();
   await expect(page.getByText("Original answer", { exact: true })).toBeVisible();

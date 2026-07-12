@@ -248,3 +248,88 @@ to resume without treating chat logs or historical prompts as current truth.
 **Consequences:** Legacy Claude configuration, the dual-agent runner, raw runner outputs, and
 historical development prompts are removed from the active workspace. Product runtime prompts
 under `backend/prompts/` remain part of the application.
+---
+
+## 2026-07-12 — ADR-018: AnalysisRun Is the Authoritative Analysis Lifecycle
+
+**Decision:** AnalysisRun and analysis_run_service are the sole supported execution lifecycle
+for new analysis. The Work-scoped creation endpoint is the explicit v0.4 path; the Topic creation
+endpoint is a default-Work facade over the same service. Status, cancellation, retry, and resume use
+/api/analysis/runs/{run_id}. Final AnalysisOutput rows with non-null run_id are the current
+result projection.
+
+The v1 synchronous, v1 async, single-type, and Job/JobItem executors remain callable only for v0.4
+compatibility and are deprecated in OpenAPI. AnalysisOutput itself is not deprecated: historical
+rows with null run_id remain readable, while new product code must not create them. No Job rows or
+historical outputs are rewritten as AnalysisRun records.
+
+**Rationale:** The coexisting executors have different lifecycle, provenance, deletion, and
+multi-Work behavior. Job-created outputs do not reliably link back to Job, and legacy mutators can
+delete Topic-wide AnalysisOutput data. Converging new calls on AnalysisRun provides one selection,
+execution, token-accounting, retry, and result-provenance contract without destroying local user
+history.
+
+**Consequences:**
+- The frontend exposes only the AnalysisRun UI and removes legacy Job/v1 clients.
+- Topic AnalysisRun creation resolves one deterministic default Work; it never mixes chunks across
+  Works.
+- Legacy execution and Job operations retain v0.4 response compatibility but are marked deprecated.
+- Removing legacy routes, Job/JobItem tables, or run_id=NULL output rows requires a separately
+  authorized migration/removal task. No Sunset date is declared in v0.4.
+- docs/ANALYSIS_RUN_CONTRACT.md is the operational endpoint and deprecation matrix.
+
+---
+
+## 2026-07-12 — ADR-019: Process-Local AnalysisRun Ownership and Explicit Restart Recovery
+
+**Decision:** The supported v0.4 backend runs as one process. analysis_run_service owns a
+process-local registry that permits at most one active executor per Topic and prevents duplicate
+execution of the same run. Creation, initial start, retry-failed, and resume coordinate through the
+same lock; executor claims are released on normal exit and thread-start failure.
+
+After database initialization, startup recovery marks persisted running AnalysisRuns as failed
+and explicitly resumable, recording structured startup_recovery metadata. Persisted pending
+runs are left unchanged. Recovery performs no LLM request; continuation requires the visible
+/api/analysis/runs/{run_id}/resume action and reuses succeeded chunk extractions.
+
+**Rationale:** Daemon threads do not survive a process restart, so leaving rows running reports
+work that no executor owns. Automatically resuming would spend provider credit without a new visible
+user action. A small in-process registry matches the local single-user architecture and closes
+same-process start races without adding forbidden queue or locking infrastructure.
+
+**Consequences:**
+- Multiple Uvicorn workers or backend processes sharing one SQLite database are unsupported in
+  v0.4; the registry is not a distributed lock.
+- Startup converts only orphaned running rows. Intentionally deferred pending rows remain
+  startable state and are not interpreted as interruptions.
+- Retry and resume own their validation, state transition, and executor claim in the service layer.
+- A future multi-process runtime would require a separately authorized database-backed lease or
+  task-runner design.
+---
+
+## 2026-07-12 — ADR-020: Canonical All and Partitioned Cross-Work Scope
+
+**Decision:** Empty work_ids denotes the canonical All scope. Scoped Work IDs are sorted,
+deduplicated, validated as members of the Topic, and preserved in CrossWorkRun responses and
+completed statistics.
+
+GlobalEntity and EntityMention remain one Topic-wide canonical registry, so scoped run input does
+not narrow entity rebuilding. GraphSnapshot is the only independently versioned scoped
+materialization: builds replace only the same scope, unfiltered GET selects only All, and
+Work-filtered GET may use the latest compatible scoped snapshot with All fallback. TimelineItem
+remains one Topic-wide materialization whose scoped rebuild replaces only selected Works.
+
+**Rationale:** The previous builders cleared Topic-wide data before every scoped build, while graph
+GET selected the newest snapshot without reading scope_json. A one-Work build could therefore
+silently replace the All view. Entity identity resolution also depends on cross-Work evidence and
+cannot safely be partitioned without a larger schema. Partitioning graph snapshots and timeline
+writes at their existing persistence boundaries preserves user-visible All data without adding new
+infrastructure or speculative tables.
+
+**Consequences:**
+- Same-scope graph rebuilds are idempotent replacements; different scopes coexist.
+- Filtered graph statistics describe the returned projection, not the stored source snapshot.
+- Empty scoped timeline builds commit removal for selected Works only.
+- Entity, graph, and timeline GET Work filters return 404 for foreign-Topic Work IDs.
+- A future independently versioned entity or timeline snapshot model requires a separate migration
+  decision.

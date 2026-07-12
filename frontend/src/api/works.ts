@@ -9,6 +9,7 @@ import type {
   Chapter,
   Chunk,
   AnalysisRunCreateRequest,
+  WorkAnalysisEstimate,
   CreateAnalysisRunResponse,
   AnalysisRunListResponse,
   AnalysisOutput,
@@ -88,6 +89,16 @@ export function listWorkChunks(
 }
 
 // ── Analysis ──
+
+export function estimateWorkAnalysis(
+  workId: string,
+  body: AnalysisRunCreateRequest
+): Promise<WorkAnalysisEstimate> {
+  return apiRequest<WorkAnalysisEstimate>(
+    `/api/works/${workId}/analysis/estimate`,
+    { method: "POST", json: body }
+  );
+}
 
 export function createWorkAnalysisRun(
   workId: string,

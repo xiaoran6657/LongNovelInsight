@@ -594,9 +594,7 @@ def resend_user_message(
             before_deferred_write=lock_and_revalidate,
         )
         if revised_assistant.uncertainty == "LLM error":
-            raise ChatResendGenerationError(
-                "The LLM could not produce a revised response"
-            )
+            raise ChatResendGenerationError("The LLM could not produce a revised response")
         if replacement_original is None:
             raise ChatResendConflictError("The original message pair could not be locked")
         _delete_chat_message_records(replacement_original, session)
@@ -634,8 +632,6 @@ def _validate_resend_target(
         .limit(1)
     ).first()
     if latest is None or latest.id != original_assistant.id:
-        raise ChatResendConflictError(
-            "Only the latest complete exchange can be edited and resent"
-        )
+        raise ChatResendConflictError("Only the latest complete exchange can be edited and resent")
 
     return original, original_assistant

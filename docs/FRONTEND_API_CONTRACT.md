@@ -542,9 +542,9 @@ Errors: `404` chunk not found (includes wrong-topic access).
 
 ### 3.6 Analysis Outputs
 
-**`POST /api/topics/{topic_id}/analysis/run?limit_chunks=5`**
+**`POST /api/topics/{topic_id}/analysis/run?limit_chunks=5`** (deprecated)
 
-Runs all 6 analysis types synchronously. Deletes old outputs before running.
+Compatibility-only v1 executor. It runs all 6 analysis types synchronously and deletes old outputs before running. The frontend must not call it.
 ⚠️ Makes real LLM calls. Show API consumption warning in UI.
 
 Response `200`:
@@ -583,11 +583,13 @@ Errors: `404` topic not found.
 
 ---
 
-### 3.6b v0.2 Analysis Runs (NEW — in progress)
+### 3.6b Analysis Runs (authoritative)
+
+See [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md). New frontend analysis actions must create AnalysisRun records; historical `run_id=null` outputs remain readable.
 
 **`POST /api/topics/{topic_id}/analysis/runs`** (201)
 
-Creates and optionally starts a v0.2 staged analysis run.
+Creates and optionally starts the authoritative staged AnalysisRun. The Topic facade resolves one deterministic default Work.
 
 Request (Pydantic model `CreateRunRequest`):
 ```json
@@ -703,7 +705,7 @@ Response `200`:
 ```
 Errors: `404` run not found, `409` run is not in a resumable state.
 
-**`GET /api/topics/{topic_id}/analysis/status`** (v0.2 enhanced)
+**`GET /api/topics/{topic_id}/analysis/status`** (deprecated Job-era compatibility)
 
 Enhanced status response with `v2_available` and `latest_v2_run` fields.
 
@@ -729,13 +731,36 @@ Response `200`:
 
 ---
 
-### 3.7 Analysis Jobs (internal API)
+### 3.6c Work Analysis Numeric Preflight (v0.4)
 
-**`POST /api/topics/{topic_id}/analysis/jobs?job_type=analysis`** (201)
+**`POST /api/works/{work_id}/analysis/estimate`**
+
+Send the exact selection body that will be used to create the Work analysis run. The current Work
+preview UI sends:
+
+```json
+{"mode": "preview", "limit_chunks": 3, "requested_types": ["characters"]}
+```
+
+The response includes `selected_chunk_count`, `estimated_llm_requests`,
+`estimated_total_input_tokens`, `estimated_total_output_tokens`, and `estimate_notes`, plus Work,
+mode, type, and model metadata. The frontend must show the numeric chunk/input/output/total token
+estimate before enabling confirmation. If estimation fails, run creation remains disabled and the
+user can retry. This is a token estimate rather than a currency quote.
+
+The endpoint is preflight-only: it creates no run, performs no LLM request, and persists no analysis
+state.
+
+---
+### 3.7 Analysis Jobs (deprecated compatibility API)
+
+**`POST /api/topics/{topic_id}/analysis/jobs?job_type=analysis`** (202, deprecated)
+
+OpenAPI marks every Job operation deprecated. The current frontend has no Job caller; these routes remain only for historical clients and records.
 
 Valid `job_type`: `parse`, `analysis` (default: `analysis`).
 
-Response `201`:
+Response `202`:
 ```json
 {
   "job": {
@@ -1038,7 +1063,7 @@ Applies recommendation to topic config. Returns updated config + recommendation.
 | Area | API.md says | Actual code | Severity |
 |------|-----------|-------------|----------|
 | Provider prefix | `/api/model-providers` | `/api/providers` | ⚠️ Use `/api/providers` |
-| Jobs API | Listed under "Analysis" section | Separate "Analysis Jobs (internal/dev)" section | Low |
+| Jobs API | Listed under "Analysis" section | Separate deprecated compatibility section | Low |
 | `PUT /api/topics/{id}/provider` | Documented but not implemented | Endpoint does NOT exist | ⚠️ Frontend: don't build this |
 | Job defaults | `ANALYSIS_ALL` | `analysis` | ⚠️ Use `analysis` |
 | `GET /api/storage` (global) | Documented | NOT implemented (topic-level `/api/topics/{id}/storage` exists) | Low |

@@ -291,3 +291,76 @@ class TestEntityBuild:
         r = client.post(f"/api/topics/{tid}/cross-work/build")
         assert r.status_code == 200
         assert r.json()["entity_count"] >= 1
+
+
+class TestEntityScopeSemantics:
+    def test_scoped_request_rebuilds_canonical_all_registry(self, engine, client):
+        tid, rid, wids, cids = _setup_topic_with_works(engine, num_works=2)
+
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CHARACTER,
+                "char_scope",
+                {"name": "Scoped Character"},
+                cids[0],
+                confidence=0.95,
+            )
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.WORLDBUILDING,
+                "place_scope",
+                {"name": "Scoped Place"},
+                cids[1],
+                confidence=0.8,
+            )
+            session.commit()
+
+            from services.cross_work_entity_service import build_entity_registry
+
+            result = build_entity_registry(tid, session, work_ids=[wids[0]])
+            assert result["entity_count"] == 2
+            assert result["warnings"] == [
+                "Entity registry is Topic-wide; requested work_ids did not narrow the rebuild"
+            ]
+
+        work_one = client.get(f"/api/topics/{tid}/entities?work_id={wids[0]}")
+        assert work_one.status_code == 200
+        assert work_one.json()["total"] == 1
+        assert {entity["canonical_name"] for entity in work_one.json()["entities"]} == {
+            "Scoped Character"
+        }
+        assert all(wids[0] in entity["work_ids"] for entity in work_one.json()["entities"])
+
+        work_two = client.get(
+            f"/api/topics/{tid}/entities"
+            f"?work_id={wids[1]}&entity_type=location&q=Place&min_confidence=0.75"
+        )
+        assert work_two.status_code == 200
+        assert work_two.json()["total"] == 1
+        assert work_two.json()["entities"][0]["canonical_name"] == "Scoped Place"
+        assert wids[1] in work_two.json()["entities"][0]["work_ids"]
+
+        excluded = client.get(f"/api/topics/{tid}/entities?work_id={wids[1]}&entity_type=character")
+        assert excluded.status_code == 200
+        assert excluded.json()["entities"] == []
+        assert excluded.json()["total"] == 0
+
+    def test_entity_get_rejects_work_from_another_topic(self, engine, client):
+        tid, _, _, _ = _setup_topic_with_works(engine, num_works=1)
+        with Session(engine) as session:
+            other_topic = Topic(name="Other entity topic", status="created")
+            session.add(other_topic)
+            session.flush()
+            other_work = Work(topic_id=other_topic.id, title="Other Work")
+            session.add(other_work)
+            session.commit()
+            other_work_id = other_work.id
+
+        response = client.get(f"/api/topics/{tid}/entities?work_id={other_work_id}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Work not found in Topic"

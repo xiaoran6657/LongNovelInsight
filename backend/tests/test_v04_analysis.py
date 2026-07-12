@@ -4,7 +4,7 @@ import io
 import json
 from unittest.mock import patch
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from models.document import Document
 from models.model_provider import ModelProvider
@@ -399,3 +399,133 @@ class TestWorkAnalysis:
             assert status["run"]["work_id"] == wid, (
                 f"Run status should include work_id, got {status['run'].get('work_id')}"
             )
+
+    def test_estimate_work_analysis_is_numeric_and_side_effect_free(self, engine, client):
+        tid, wid = _setup_parsed_work(engine, client)
+
+        response = client.post(
+            f"/api/works/{wid}/analysis/estimate",
+            json={"mode": "preview", "limit_chunks": 3, "requested_types": ["characters"]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["work_id"] == wid
+        assert data["topic_id"] == tid
+        assert data["mode"] == "preview"
+        assert data["requested_types"] == ["characters"]
+        assert data["model_name"] == "m"
+        assert data["selected_chunk_count"] == 1
+        assert data["estimated_llm_requests"] == 1
+        assert data["estimated_total_input_tokens"] > data["selected_estimated_tokens"]
+        assert data["estimated_total_output_tokens"] > 0
+        assert data["estimate_notes"]
+
+        from models.analysis_run import AnalysisRun
+
+        with Session(engine) as session:
+            assert session.exec(select(AnalysisRun)).all() == []
+
+    def test_estimate_work_analysis_rejects_invalid_type(self, engine, client):
+        _, wid = _setup_parsed_work(engine, client)
+
+        response = client.post(
+            f"/api/works/{wid}/analysis/estimate",
+            json={"mode": "preview", "requested_types": ["not-a-real-type"]},
+        )
+
+        assert response.status_code == 422
+        assert "Invalid requested_types" in response.json()["detail"]
+
+    def test_estimate_work_analysis_needs_document(self, engine, client):
+        with Session(engine) as session:
+            topic = Topic(name="Estimate No Document", status="created")
+            session.add(topic)
+            session.flush()
+            work = Work(topic_id=topic.id, title="Empty Estimate Work")
+            session.add(work)
+            session.commit()
+            work_id = work.id
+
+        response = client.post(
+            f"/api/works/{work_id}/analysis/estimate",
+            json={"mode": "preview", "limit_chunks": 3},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "No document found for this Work"
+
+    def test_topic_analysis_run_resolves_one_default_work(self, engine, client):
+        topic_id, default_work_id = _setup_parsed_work(engine, client)
+
+        from models.chapter import Chapter
+        from models.chunk import Chunk
+
+        with Session(engine) as session:
+            default_doc = session.exec(
+                select(Document).where(Document.work_id == default_work_id)
+            ).one()
+            default_chunk_ids = {
+                chunk.id
+                for chunk in session.exec(
+                    select(Chunk).where(Chunk.document_id == default_doc.id)
+                ).all()
+            }
+
+            other_work = Work(topic_id=topic_id, title="Other Work", series_index=2)
+            session.add(other_work)
+            session.flush()
+            other_doc = Document(
+                topic_id=topic_id,
+                work_id=other_work.id,
+                original_filename="other.txt",
+                file_size_bytes=100,
+                char_count=100,
+                status="parsed",
+            )
+            session.add(other_doc)
+            session.flush()
+            chapter = Chapter(
+                topic_id=topic_id,
+                document_id=other_doc.id,
+                chapter_index=0,
+                title="Other Chapter",
+                start_char=0,
+                end_char=100,
+                char_count=100,
+            )
+            session.add(chapter)
+            session.flush()
+            other_chunk = Chunk(
+                topic_id=topic_id,
+                document_id=other_doc.id,
+                chapter_id=chapter.id,
+                chapter_index=0,
+                chunk_index=0,
+                text="other work text",
+                start_char=0,
+                end_char=100,
+                char_count=100,
+                estimated_tokens=67,
+            )
+            session.add(other_chunk)
+            session.commit()
+            other_chunk_id = other_chunk.id
+
+        response = client.post(
+            f"/api/topics/{topic_id}/analysis/runs",
+            json={"mode": "full", "start_immediately": False},
+        )
+
+        assert response.status_code == 201
+        run_id = response.json()["run"]["id"]
+
+        from models.analysis_run import AnalysisRun
+
+        with Session(engine) as session:
+            run = session.get(AnalysisRun, run_id)
+            assert run is not None
+            selection = run.get_chunk_selection()
+            assert selection["work_id"] == default_work_id
+            assert set(selection["selected_chunk_ids"]) == default_chunk_ids
+            assert other_chunk_id not in selection["selected_chunk_ids"]

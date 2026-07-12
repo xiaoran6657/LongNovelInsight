@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const TOPIC_ID = "test-topic-1";
 const PROVIDER_ID = "test-provider-1";
@@ -19,7 +19,7 @@ const RUN_BTN = { name: "Start v2 analysis run" };
 const CANCEL_BTN = { name: "Cancel current analysis run" };
 
 /** Shared mocks for a parsed topic with a bound provider ready for v2 analysis. */
-async function mockParsedTopic(page: Parameters<typeof test>[1]["page"]) {
+async function mockParsedTopic(page: Page) {
   // Catch-all for unhandled API calls
   await page.route((url) => url.origin === API_HOST, (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
@@ -176,10 +176,10 @@ test.describe("Analysis v2 – mode selection", () => {
     // Preview should be selected by default
     await expect(page.getByLabel("Preview")).toBeChecked();
 
-    // Limit chunks input should be visible in the v2 AnalysisModeSelector
-    // (LegacyAnalysisPanel also has one; both default to different values)
-    const limitInput = page.getByRole("spinbutton", { name: /Limit chunks:/ }).first();
+    const limitInput = page.getByRole("spinbutton", { name: /Limit chunks:/ });
     await expect(limitInput).toBeVisible();
+    await expect(limitInput).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Run v1 Analysis" })).toHaveCount(0);
   });
 
   test("full mode shows confirmation before running", async ({ page }) => {
@@ -900,15 +900,12 @@ test.describe("Analysis v2 – cost projection", () => {
     await page.goto(`/topics/${TOPIC_ID}`);
     await expect(page.getByRole("heading", { name: "Analysis (v2)" })).toBeVisible({ timeout: 10000 });
 
-    // Cost projection card heading
-    await expect(page.getByRole("heading", { name: "Cost Estimate" })).toBeVisible();
-
-    // Token breakdown labels (use .first() — there are duplicates from the legacy panel)
-    await expect(page.locator("strong", { hasText: "Chunks:" }).first()).toBeVisible();
-    await expect(page.locator("strong", { hasText: "Total tokens:" }).first()).toBeVisible();
-
-    // Credit warning should be visible (appears in both v2 and legacy panels)
-    await expect(page.getByText(/may consume API credits/).first()).toBeVisible();
+    const estimateCard = page.getByRole("heading", { name: "Cost Estimate" }).locator("..");
+    await expect(estimateCard).toHaveCount(1);
+    await expect(estimateCard.locator("strong", { hasText: "Chunks:" })).toHaveCount(1);
+    await expect(estimateCard.locator("strong", { hasText: "Total tokens:" })).toHaveCount(1);
+    await expect(page.getByText(/may consume API credits/)).toHaveCount(1);
+    await expect(page.getByText("Analysis (v1 Legacy)")).toHaveCount(0);
   });
 });
 

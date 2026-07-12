@@ -36,7 +36,7 @@ def _check_chunks(topic_id: str, session: Session) -> None:
         )
 
 
-@topic_router.post("/jobs", status_code=202)
+@topic_router.post("/jobs", status_code=202, deprecated=True)
 def create_analysis_job(
     topic_id: str,
     job_type: str = "analysis",
@@ -85,14 +85,14 @@ def _run_job_in_background(job_id: str) -> None:
         pass
 
 
-@topic_router.get("/jobs")
+@topic_router.get("/jobs", deprecated=True)
 def list_analysis_jobs(topic_id: str, session: Session = Depends(get_session)) -> dict:
     _check_topic(topic_id, session)
     jobs = job_service.get_topic_jobs(topic_id, session)
     return {"jobs": [JobRead.model_validate(j).model_dump() for j in jobs]}
 
 
-@topic_router.get("/status")
+@topic_router.get("/status", deprecated=True)
 def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) -> dict:
     _check_topic(topic_id, session)
     jobs = job_service.get_topic_jobs(topic_id, session)
@@ -155,7 +155,7 @@ def get_analysis_status(topic_id: str, session: Session = Depends(get_session)) 
     }
 
 
-@job_router.get("/{job_id}")
+@job_router.get("/{job_id}", deprecated=True)
 def get_job_detail(job_id: str, session: Session = Depends(get_session)) -> dict:
     job = job_service.get_job(job_id, session)
     if job is None:
@@ -168,7 +168,7 @@ def get_job_detail(job_id: str, session: Session = Depends(get_session)) -> dict
     }
 
 
-@job_router.post("/{job_id}/cancel")
+@job_router.post("/{job_id}/cancel", deprecated=True)
 def cancel_job(job_id: str, session: Session = Depends(get_session)) -> dict:
     job = job_service.cancel_job(job_id, session)
     if job is None:

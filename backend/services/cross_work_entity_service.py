@@ -75,27 +75,24 @@ def build_entity_registry(
 ) -> dict:
     """Build or rebuild the topic-level global entity registry.
 
-    Scans ExtractedAtom rows for character/worldbuilding atoms across all
-    (or specified) Works, normalizes names, merges deterministically, and
-    creates/updates GlobalEntity + EntityMention rows.
+    Scans ExtractedAtom rows for character/worldbuilding atoms across the full Topic,
+    normalizes names, merges deterministically, and creates/updates GlobalEntity +
+    EntityMention rows. A scoped request still rebuilds the canonical Topic-wide registry;
+    work_ids is retained only for backward-compatible callers.
 
     Returns a summary dict with counts and warnings.
     """
     warnings: list[str] = []
+    if work_ids:
+        warnings.append(
+            "Entity registry is Topic-wide; requested work_ids did not narrow the rebuild"
+        )
 
-    # 1. Load atom-like entities across Works
+    # 1. Load atom-like entities across all Works
     atom_base = select(ExtractedAtom).where(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type.in_([AtomType.CHARACTER, AtomType.WORLDBUILDING]),
     )
-    if work_ids:
-        # Filter by chunk → document → work
-        chunk_ids_subq = (
-            select(Chunk.id)
-            .join(Document, Chunk.document_id == Document.id)
-            .where(Document.work_id.in_(work_ids))
-        )
-        atom_base = atom_base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
 
     atoms = session.exec(
         atom_base.order_by(ExtractedAtom.chapter_index, ExtractedAtom.chunk_index)
@@ -105,7 +102,8 @@ def build_entity_registry(
     _clear_registry(topic_id, session)
 
     if not atoms:
-        return {"entity_count": 0, "mention_count": 0, "warnings": []}
+        session.commit()
+        return {"entity_count": 0, "mention_count": 0, "warnings": warnings}
 
     # 2. Build entity groups by normalized key
     # Phase 1: group by stable_id first

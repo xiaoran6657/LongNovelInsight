@@ -238,7 +238,8 @@ Topic          1──*  TimelineItem (v0.4)
 | GET | `/api/works/{id}/chapters` | List Work's chapters |
 | GET | `/api/works/{id}/chunks` | List Work's chunks |
 | GET | `/api/works/{id}/metadata` | Work document metadata |
-| POST | `/api/works/{id}/analysis/runs` | Create v2 analysis run for Work |
+| POST | `/api/works/{id}/analysis/estimate` | Read-only numeric token estimate for the same run selection |
+| POST | `/api/works/{id}/analysis/runs` | Create explicit Work-scoped analysis run |
 | GET | `/api/works/{id}/analysis/runs` | List analysis runs for Work |
 | GET | `/api/works/{id}/analysis/outputs` | List analysis outputs for Work |
 
@@ -257,31 +258,41 @@ Topic          1──*  TimelineItem (v0.4)
 | GET | `/api/topics/{id}/cross-work/runs` | List cross-work runs |
 | GET | `/api/topics/{id}/cross-work/runs/{rid}` | Get cross-work run status |
 
+**Cross-work scope contract:** empty work_ids means the canonical All view. Entity registry builds
+are always Topic-wide. Graph snapshots coexist by normalized scope and replace only the same scope;
+unfiltered graph GET never reads a scoped snapshot. Timeline scoped builds replace only selected
+Works. Scoped run create/list/detail responses expose sorted, deduplicated work_ids, and Work GET
+filters reject IDs outside the Topic.
 ### Analysis Outputs
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/analysis/run` | Run structured analysis (?pipeline=v1\|v2, ?limit_chunks) |
+| POST | `/api/topics/{id}/analysis/run` | Deprecated v1/pipeline=v2 compatibility executor |
 | GET | `/api/topics/{id}/analysis/outputs` | List (?output_type, ?run_id, ?latest_only) |
 | DELETE | `/api/topics/{id}/analysis/outputs` | Delete all (?run_id for targeted) |
 
-### v0.2 Analysis Runs (`/api/analysis/runs` and `/api/topics/{id}/analysis/runs`)
+### Authoritative Analysis Runs
+
+See [Authoritative Analysis Run Contract](../docs/ANALYSIS_RUN_CONTRACT.md). Legacy executors remain callable in v0.4 but are OpenAPI-deprecated and have no frontend caller.
+
+The supported runtime is one backend process. A process-local registry permits one analysis executor per Topic; startup marks orphaned running rows failed and resumable without making automatic LLM calls. Intentionally deferred pending rows are preserved.
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/analysis/runs` | Create and start v2 staged run (201) |
+| POST | `/api/works/{id}/analysis/runs` | Create explicit Work-scoped run (201) |
+| POST | `/api/topics/{id}/analysis/runs` | Create run for deterministic default Work (201) |
 | GET | `/api/topics/{id}/analysis/runs` | List runs for topic (paginated) |
 | GET | `/api/analysis/runs/{id}` | Run status with extraction/merge/final + usage breakdown |
 | POST | `/api/analysis/runs/{id}/cancel` | Cancel pending/running run |
 | POST | `/api/analysis/runs/{id}/retry-failed` | Retry failed chunks, re-merge, re-final |
 | POST | `/api/analysis/runs/{id}/resume` | Resume interrupted run (?retry_failed=true) |
 
-### Analysis Jobs (internal/dev)
+### Analysis Jobs (deprecated compatibility)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/topics/{id}/analysis/jobs` | Create job (?job_type=analysis) |
-| GET | `/api/topics/{id}/analysis/jobs` | List jobs |
-| GET | `/api/topics/{id}/analysis/status` | Status summary (includes latest_v2_run) |
-| GET | `/api/analysis/jobs/{id}` | Job detail with items |
-| POST | `/api/analysis/jobs/{id}/cancel` | Cancel job |
+| POST | `/api/topics/{id}/analysis/jobs` | Deprecated: create background Job (202) |
+| GET | `/api/topics/{id}/analysis/jobs` | Deprecated compatibility list |
+| GET | `/api/topics/{id}/analysis/status` | Deprecated compatibility status facade |
+| GET | `/api/analysis/jobs/{id}` | Deprecated Job detail |
+| POST | `/api/analysis/jobs/{id}/cancel` | Deprecated Job cancellation |
 
 ### Chat
 | Method | Path | Description |

@@ -48,10 +48,13 @@ credentials on the local machine.
 - TXT and EPUB upload, parsing, deletion, and re-upload preserve Work isolation.
 - Analysis results and source evidence remain scoped to the correct Topic and Work.
 - Cross-work entities, graph edges, and timeline items link back to source evidence.
+- Scoped cross-work builds preserve the canonical All view and reject Works outside the Topic.
 - Legacy Topic-level endpoints remain compatible through default Work resolution.
 - Backend tests and Ruff pass in the declared environment.
 - Frontend typecheck, lint, build, and relevant Playwright workflows pass.
 - No default workflow makes a real LLM request without a visible user action.
+- New analysis uses the Work-scoped AnalysisRun lifecycle; Topic creation is a default-Work facade.
+- Backend restart recovery never calls the LLM automatically and leaves intentional pending runs unchanged.
 
 ## Explicit Non-Goals for v0.4
 
@@ -67,8 +70,5 @@ credentials on the local machine.
 
 - Character graph is an edge-table MVP rather than an interactive visualization.
 - Timeline pagination and evidence expansion are limited.
-- Work-level preview analysis requires an explicit API-credit confirmation and hands the created
-  run to the shared status/result UI. A backend numeric estimate endpoint remains planned.
 - Analysis output rendering accepts object or serialized-object content, filters malformed nested
   items, and isolates unexpected card failures so other results remain usable.
-- Process restart recovery for in-process background analysis requires hardening.

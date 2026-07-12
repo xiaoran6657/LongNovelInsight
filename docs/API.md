@@ -8,7 +8,7 @@ Base URL: `http://localhost:8000/api`
 
 All request/response bodies are JSON. IDs are UUID strings.
 
-> v0.1 endpoints marked as **(v1 legacy)**. v0.2 endpoints marked as **(v2 preferred)**.
+> v0.1 execution endpoints are deprecated compatibility APIs. AnalysisRun endpoints are authoritative for new analysis.
 
 ## Health
 
@@ -177,6 +177,46 @@ Bind (or re-bind) a provider to a Topic.
 
 ---
 
+## Work Analysis Estimate
+
+### `POST /api/works/{work_id}/analysis/estimate`
+
+Return a read-only numeric token estimate for the same Work-scoped chunk selection accepted by
+`POST /api/works/{work_id}/analysis/runs`. The endpoint does not create an AnalysisRun, call an
+LLM, or write analysis data.
+
+**Request:**
+```json
+{
+  "mode": "preview",
+  "limit_chunks": 3,
+  "requested_types": ["characters"]
+}
+```
+
+**Response 200:**
+```json
+{
+  "work_id": "uuid",
+  "topic_id": "uuid",
+  "mode": "preview",
+  "requested_types": ["characters"],
+  "model_name": "deepseek-chat",
+  "estimated_llm_requests": 3,
+  "selected_chunk_count": 3,
+  "selected_chars": 18400,
+  "selected_estimated_tokens": 4600,
+  "estimated_total_input_tokens": 8800,
+  "estimated_total_output_tokens": 4597,
+  "estimate_notes": "..."
+}
+```
+
+The estimate uses the selected Work chunks and effective provider settings. It reports token usage,
+not currency, because OpenAI-compatible provider pricing is not represented in project config.
+Errors: `404` Work not found, `409` no document/chunks/provider, `422` invalid selection or type.
+
+---
 ## Documents
 
 ### `POST /api/topics/{topic_id}/documents/upload`
@@ -470,9 +510,11 @@ Test the connection by sending a minimal chat completion request.
 
 ## Analysis Outputs
 
-### `POST /api/topics/{topic_id}/analysis/run`
+### `POST /api/topics/{topic_id}/analysis/run` (deprecated)
 
 Run structured analysis on the first N chunks using the bound LLM provider. Deletes previous outputs before running. v0.1.0 runs synchronously (all 6 types).
+
+Compatibility only. New clients must create an AnalysisRun. `GET /analysis/outputs` remains current because AnalysisRun final projections also use AnalysisOutput.
 
 **Query params:** `limit_chunks` (int, default `5`) — max chunks to analyze.
 
@@ -873,20 +915,20 @@ At least one of `chunk_id` or `query` is required. When both given, `chunk_id` t
 
 ---
 
-## Analysis Jobs (internal / dev)
+## Analysis Jobs (deprecated compatibility API)
 
-> The analysis jobs API tracks task execution. In v0.1.0, jobs run synchronously with real LLM calls (for `analysis` type) or as stubs (for `parse` type). This is an internal API; the frontend should prefer `POST /api/topics/{id}/analysis/run` for analysis.
+> These endpoints are a separate legacy executor and are deprecated in OpenAPI. `POST /analysis/jobs` returns `202` and starts background work that may make real LLM calls. New clients must use AnalysisRun endpoints. Read/control operations remain available for historical Job records during v0.4.
 
 ### `POST /api/topics/{topic_id}/analysis/jobs`
 
-Create and run an analysis stub job.
+Create and start a deprecated background analysis Job. The analysis job type may make real LLM calls.
 
 **Query params:** `job_type` (default `analysis`). Valid types: `parse`, `analysis`.
 
-**Response 201:**
+**Response 202:**
 ```json
 {
-  "job": { "id": "uuid", "topic_id": "uuid", "job_type": "analysis", "status": "succeeded", "progress_current": 6, "progress_total": 6, "message": "Analysis complete (stub)", ... },
+  "job": { "id": "uuid", "topic_id": "uuid", "job_type": "analysis", "status": "pending", "progress_current": 0, "progress_total": 6, ... },
   "items": [ { "id": "uuid", "job_id": "uuid", "item_type": "overview", "status": "succeeded", ... }, ... ]
 }
 ```
@@ -946,7 +988,9 @@ All error responses follow:
 
 ---
 
-## v0.2 Analysis Runs (v2 preferred)
+## Analysis Runs (authoritative)
+
+See [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md) for authoritative paths, output provenance, and the phased deprecation plan.
 
 ### `GET /api/topics/{id}/chunks/meta`
 
@@ -969,7 +1013,7 @@ Lightweight chunk statistics without text content.
 
 ### `POST /api/topics/{id}/analysis/runs` (201)
 
-Create and start a v2 staged analysis run. Runs in background thread.
+Create and start the authoritative staged AnalysisRun lifecycle in a background thread. The Topic facade resolves the deterministic default Work before selecting chunks.
 
 **Request:**
 ```json
@@ -1036,11 +1080,11 @@ Resume an interrupted run. If `retry_failed=true` (default), also retry failed c
 
 ---
 
-## v0.2 Legacy Bridge
+## Deprecated Analysis Compatibility Bridge
 
 ### `POST /api/topics/{id}/analysis/run?pipeline=v2`
 
-Legacy endpoint with `pipeline=v2` creates a v2 AnalysisRun. Default `pipeline=v1` preserves original v0.1 behavior.
+Deprecated endpoint. `pipeline=v2` resolves the default Work and enters the AnalysisRun service; default `pipeline=v1` preserves the independent v0.1 executor. New clients must call `/analysis/runs` directly.
 
 ### `GET /api/topics/{id}/analysis/outputs?run_id=X&latest_only=true`
 

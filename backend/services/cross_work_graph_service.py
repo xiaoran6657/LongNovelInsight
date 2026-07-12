@@ -27,6 +27,8 @@ def build_character_graph(
     Returns a dict with nodes, edges, stats, and snapshot_id.
     The snapshot is persisted to graph_snapshot table.
     """
+    scope_work_ids = _normalize_work_ids(work_ids)
+
     entities = session.exec(
         select(GlobalEntity).where(
             GlobalEntity.topic_id == topic_id,
@@ -34,7 +36,7 @@ def build_character_graph(
         )
     ).all()
 
-    # Clear old snapshots first (even if empty — prevents stale reads)
+    # Replace only the same scope. Scoped builds must never evict the canonical All snapshot.
     old_snapshots = session.exec(
         select(GraphSnapshot).where(
             GraphSnapshot.topic_id == topic_id,
@@ -42,7 +44,8 @@ def build_character_graph(
         )
     ).all()
     for old in old_snapshots:
-        session.delete(old)
+        if _snapshot_work_ids(old) == scope_work_ids:
+            session.delete(old)
     session.flush()
 
     if not entities:
@@ -51,14 +54,16 @@ def build_character_graph(
             topic_id=topic_id,
             graph_type="character_relationship",
             version=1,
-            scope_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
+            scope_json=json.dumps(
+                {"work_ids": scope_work_ids} if scope_work_ids else {}, ensure_ascii=False
+            ),
             nodes_json="[]",
             edges_json="[]",
             stats_json=json.dumps({"node_count": 0, "edge_count": 0}, ensure_ascii=False),
         )
         session.add(snapshot)
         session.commit()
-        return _empty_graph(topic_id, session, snapshot_id=snapshot.id)
+        return _empty_graph(topic_id, session, snapshot_id=snapshot.id, work_ids=scope_work_ids)
 
     # Build entity lookup: stable_id → global_entity_id
     # First collect all mention metadata to map atoms → entities
@@ -88,11 +93,11 @@ def build_character_graph(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type == AtomType.RELATION,
     )
-    if work_ids:
+    if scope_work_ids:
         chunk_ids_subq = (
             select(Chunk.id)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Document.work_id.in_(work_ids))
+            .where(Document.work_id.in_(scope_work_ids))
         )
         rel_base = rel_base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
     relation_atoms = session.exec(rel_base).all()
@@ -141,7 +146,7 @@ def build_character_graph(
     # If no relation atoms, fall back to event co-occurrence
     if not edges:
         edges = _build_cooccurrence_edges(
-            topic_id, session, entity_by_name, entity_by_stable, work_ids
+            topic_id, session, entity_by_name, entity_by_stable, scope_work_ids
         )
 
     # Collect work_ids for edges from evidence atom's chunk → document.work_id
@@ -193,21 +198,13 @@ def build_character_graph(
         for i, (key, e) in enumerate(edges.items())
     ]
 
-    # Clear old snapshots for this topic+type before persisting new one
-    old_snapshots = session.exec(
-        select(GraphSnapshot).where(
-            GraphSnapshot.topic_id == topic_id,
-            GraphSnapshot.graph_type == "character_relationship",
-        )
-    ).all()
-    for old in old_snapshots:
-        session.delete(old)
-
     snapshot = GraphSnapshot(
         topic_id=topic_id,
         graph_type="character_relationship",
         version=1,
-        scope_json=json.dumps({"work_ids": work_ids} if work_ids else {}, ensure_ascii=False),
+        scope_json=json.dumps(
+            {"work_ids": scope_work_ids} if scope_work_ids else {}, ensure_ascii=False
+        ),
         nodes_json=json.dumps(nodes, ensure_ascii=False),
         edges_json=json.dumps(edge_list, ensure_ascii=False),
         stats_json=json.dumps(
@@ -223,6 +220,7 @@ def build_character_graph(
         "nodes": nodes,
         "edges": edge_list,
         "stats": {"node_count": len(nodes), "edge_count": len(edge_list)},
+        "scope": {"work_ids": scope_work_ids},
         "snapshot_id": snapshot.id,
         "generated_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
     }
@@ -239,24 +237,41 @@ def get_latest_character_graph(
     include_evidence: bool = False,
 ) -> dict:
     """Return the latest character graph snapshot, with optional filters."""
-    snapshot = session.exec(
+    snapshots = session.exec(
         select(GraphSnapshot)
         .where(
             GraphSnapshot.topic_id == topic_id,
             GraphSnapshot.graph_type == "character_relationship",
         )
         .order_by(GraphSnapshot.created_at.desc())
-    ).first()
+    ).all()
+    if work_id is None:
+        snapshot = next(
+            (candidate for candidate in snapshots if not _snapshot_work_ids(candidate)),
+            None,
+        )
+    else:
+        snapshot = next(
+            (
+                candidate
+                for candidate in snapshots
+                if not _snapshot_work_ids(candidate) or work_id in _snapshot_work_ids(candidate)
+            ),
+            None,
+        )
 
     if snapshot is None:
-        return _empty_graph(topic_id, session)
+        return _empty_graph(
+            topic_id,
+            session,
+            work_ids=[work_id] if work_id is not None else None,
+        )
 
     nodes = _parse_json_list_obj(snapshot.nodes_json)
     edges = _parse_json_list_obj(snapshot.edges_json)
 
     # Apply filters
     if work_id:
-        nodes = [n for n in nodes if work_id in n.get("work_ids", [])]
         edges = [e for e in edges if work_id in e.get("work_ids", [])]
     if min_confidence is not None:
         edges = [e for e in edges if e.get("confidence", 0) >= min_confidence]
@@ -265,10 +280,9 @@ def get_latest_character_graph(
     if relation_type:
         edges = [e for e in edges if e.get("relation_type") == relation_type]
 
-    # Keep only nodes referenced by remaining edges
-    if edges:
-        edge_node_ids = {e["source"] for e in edges} | {e["target"] for e in edges}
-        nodes = [n for n in nodes if n["id"] in edge_node_ids]
+    # Keep only nodes referenced by remaining edges, including the zero-edge case.
+    edge_node_ids = {e["source"] for e in edges} | {e["target"] for e in edges}
+    nodes = [n for n in nodes if n["id"] in edge_node_ids]
 
     if limit_nodes is not None and len(nodes) > limit_nodes:
         # Keep top nodes by mention_count
@@ -285,7 +299,8 @@ def get_latest_character_graph(
         "graph_type": "character_relationship",
         "nodes": nodes,
         "edges": edges,
-        "stats": _parse_json_dict(snapshot.stats_json),
+        "stats": {"node_count": len(nodes), "edge_count": len(edges)},
+        "scope": {"work_ids": _snapshot_work_ids(snapshot)},
         "snapshot_id": snapshot.id,
         "generated_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
     }
@@ -319,15 +334,16 @@ def _build_cooccurrence_edges(
     work_ids: list[str] | None = None,
 ) -> dict[str, dict]:
     """Build edges from event atom participant co-occurrence."""
+    scope_work_ids = _normalize_work_ids(work_ids)
     event_base = select(ExtractedAtom).where(
         ExtractedAtom.topic_id == topic_id,
         ExtractedAtom.atom_type == AtomType.EVENT,
     )
-    if work_ids:
+    if scope_work_ids:
         chunk_ids_subq = (
             select(Chunk.id)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Document.work_id.in_(work_ids))
+            .where(Document.work_id.in_(scope_work_ids))
         )
         event_base = event_base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
     event_atoms = session.exec(event_base).all()
@@ -382,15 +398,29 @@ def _get_entity(
     return None
 
 
-def _empty_graph(topic_id: str, session: Session, snapshot_id: str | None = None) -> dict:
+def _empty_graph(
+    topic_id: str,
+    session: Session,
+    snapshot_id: str | None = None,
+    work_ids: list[str] | None = None,
+) -> dict:
     return {
         "graph_type": "character_relationship",
         "nodes": [],
         "edges": [],
         "stats": {"node_count": 0, "edge_count": 0},
+        "scope": {"work_ids": _normalize_work_ids(work_ids)},
         "snapshot_id": snapshot_id,
         "generated_at": None,
     }
+
+
+def _normalize_work_ids(work_ids: list[str] | None) -> list[str]:
+    return sorted(set(work_ids or []))
+
+
+def _snapshot_work_ids(snapshot: GraphSnapshot) -> list[str]:
+    return _normalize_work_ids(_parse_json_dict(snapshot.scope_json).get("work_ids"))
 
 
 def _parse_json_list(raw: str) -> list:

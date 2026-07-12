@@ -17,5 +17,12 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "e2e",
+    "tests",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.unit.config.ts"
+  ]
 }

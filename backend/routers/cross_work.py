@@ -10,6 +10,7 @@ from db import get_session
 from models.entity_mention import EntityMention
 from models.global_entity import GlobalEntity
 from models.topic import Topic
+from models.work import Work
 
 router = APIRouter(prefix="/topics/{topic_id}", tags=["cross_work"])
 
@@ -19,6 +20,14 @@ def _check_topic(topic_id: str, session: Session) -> Topic:
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     return topic
+
+
+def _check_work(topic_id: str, work_id: str | None, session: Session) -> None:
+    if work_id is None:
+        return
+    work = session.get(Work, work_id)
+    if work is None or work.topic_id != topic_id:
+        raise HTTPException(status_code=404, detail="Work not found in Topic")
 
 
 @router.get("/entities")
@@ -34,6 +43,7 @@ def list_entities(
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
+    _check_work(topic_id, work_id, session)
 
     base = select(GlobalEntity).where(GlobalEntity.topic_id == topic_id)
 
@@ -201,6 +211,7 @@ def get_character_graph(
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
+    _check_work(topic_id, work_id, session)
 
     from services.cross_work_graph_service import get_latest_character_graph
 
@@ -243,6 +254,7 @@ def get_timeline(
     session: Session = Depends(get_session),
 ) -> dict:
     _check_topic(topic_id, session)
+    _check_work(topic_id, work_id, session)
 
     from services.cross_work_timeline_service import get_timeline as svc_get
 
@@ -289,6 +301,7 @@ def create_cross_work_run(
 
     from services.cross_work_run_service import (
         VALID_MODES,
+        get_cross_work_run_work_ids,
     )
     from services.cross_work_run_service import (
         create_cross_work_run as svc_create,
@@ -315,6 +328,7 @@ def create_cross_work_run(
         "topic_id": run.topic_id,
         "status": run.status,
         "mode": run.mode,
+        "work_ids": get_cross_work_run_work_ids(run),
     }
 
 
@@ -327,7 +341,12 @@ def list_cross_work_runs(
 ) -> dict:
     _check_topic(topic_id, session)
 
-    from services.cross_work_run_service import list_cross_work_runs as svc_list
+    from services.cross_work_run_service import (
+        get_cross_work_run_work_ids,
+    )
+    from services.cross_work_run_service import (
+        list_cross_work_runs as svc_list,
+    )
 
     runs, total = svc_list(session, topic_id, limit=limit, offset=offset)
 
@@ -337,6 +356,7 @@ def list_cross_work_runs(
                 "id": r.id,
                 "status": r.status,
                 "mode": r.mode,
+                "work_ids": get_cross_work_run_work_ids(r),
                 "error": r.error,
                 "started_at": r.started_at.isoformat() if r.started_at else None,
                 "completed_at": r.completed_at.isoformat() if r.completed_at else None,

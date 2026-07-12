@@ -372,3 +372,118 @@ class TestGraphBuild:
             result = build_character_graph(tid, session)
             assert len(result["edges"]) >= 1
             assert result["edges"][0]["relation_type"] == "co_occurrence"
+
+
+class TestGraphScopeSemantics:
+    def test_scoped_snapshot_preserves_all_and_replaces_only_same_scope(self, engine):
+        tid, wids, _ = _setup_entities_and_relations(engine)
+
+        with Session(engine) as session:
+            from services.cross_work_graph_service import (
+                build_character_graph,
+                get_latest_character_graph,
+            )
+
+            all_result = build_character_graph(tid, session)
+            scoped_result = build_character_graph(tid, session, work_ids=[wids[0], wids[0]])
+
+            snapshots = session.exec(
+                select(GraphSnapshot).where(GraphSnapshot.topic_id == tid)
+            ).all()
+            assert len(snapshots) == 2
+            assert sorted(
+                json.loads(snapshot.scope_json).get("work_ids", []) for snapshot in snapshots
+            ) == [
+                [],
+                [wids[0]],
+            ]
+
+            all_view = get_latest_character_graph(tid, session)
+            assert all_view["snapshot_id"] == all_result["snapshot_id"]
+            assert all_view["scope"] == {"work_ids": []}
+            assert len(all_view["edges"]) == 1
+
+            work_view = get_latest_character_graph(tid, session, work_id=wids[0])
+            assert work_view["snapshot_id"] == scoped_result["snapshot_id"]
+            assert work_view["scope"] == {"work_ids": [wids[0]]}
+            assert all(wids[0] in edge["work_ids"] for edge in work_view["edges"])
+            assert {node["id"] for node in work_view["nodes"]} == {
+                endpoint
+                for edge in work_view["edges"]
+                for endpoint in (edge["source"], edge["target"])
+            }
+            assert work_view["stats"] == {
+                "node_count": len(work_view["nodes"]),
+                "edge_count": len(work_view["edges"]),
+            }
+
+            replacement = build_character_graph(tid, session, work_ids=[wids[0]])
+            snapshots = session.exec(
+                select(GraphSnapshot).where(GraphSnapshot.topic_id == tid)
+            ).all()
+            assert len(snapshots) == 2
+            assert replacement["snapshot_id"] != scoped_result["snapshot_id"]
+            assert (
+                get_latest_character_graph(tid, session)["snapshot_id"] == all_result["snapshot_id"]
+            )
+
+    def test_filtered_graph_falls_back_to_all_without_using_incompatible_scope(self, engine):
+        tid, wids, _ = _setup_entities_and_relations(engine)
+
+        with Session(engine) as session:
+            from services.cross_work_graph_service import (
+                build_character_graph,
+                get_latest_character_graph,
+            )
+
+            all_result = build_character_graph(tid, session)
+            build_character_graph(tid, session, work_ids=[wids[0]])
+
+            work_two_view = get_latest_character_graph(tid, session, work_id=wids[1])
+            assert work_two_view["snapshot_id"] == all_result["snapshot_id"]
+            assert work_two_view["edges"] == []
+            assert work_two_view["nodes"] == []
+            assert work_two_view["stats"] == {"node_count": 0, "edge_count": 0}
+
+    def test_graph_get_filters_have_non_vacuous_assertions(self, engine, client):
+        tid, wids, _ = _setup_entities_and_relations(engine)
+        response = client.post(f"/api/topics/{tid}/graphs/build")
+        assert response.status_code == 200
+
+        filtered = client.get(
+            f"/api/topics/{tid}/graphs/characters"
+            "?min_confidence=0.9&min_weight=2&relation_type=enemy"
+        )
+        assert filtered.status_code == 200
+        assert filtered.json()["edges"] == []
+        assert filtered.json()["nodes"] == []
+        assert filtered.json()["stats"] == {"node_count": 0, "edge_count": 0}
+
+        with_evidence = client.get(
+            f"/api/topics/{tid}/graphs/characters"
+            f"?work_id={wids[0]}&relation_type=ally&include_evidence=true"
+        )
+        assert with_evidence.status_code == 200
+        data = with_evidence.json()
+        assert len(data["edges"]) == 1
+        assert data["edges"][0]["relation_type"] == "ally"
+        assert data["edges"][0]["evidence"]
+
+        without_evidence = client.get(f"/api/topics/{tid}/graphs/characters?work_id={wids[0]}")
+        assert "evidence" not in without_evidence.json()["edges"][0]
+
+
+def test_graph_get_rejects_work_from_another_topic(engine, client):
+    tid, _, _ = _setup_entities_and_relations(engine)
+    with Session(engine) as session:
+        other_topic = Topic(name="Other graph topic", status="created")
+        session.add(other_topic)
+        session.flush()
+        other_work = Work(topic_id=other_topic.id, title="Other graph Work")
+        session.add(other_work)
+        session.commit()
+        other_work_id = other_work.id
+
+    response = client.get(f"/api/topics/{tid}/graphs/characters?work_id={other_work_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Work not found in Topic"

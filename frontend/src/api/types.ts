@@ -204,34 +204,6 @@ export interface AnalysisOutput {
   updated_at: string;
 }
 
-export interface Job {
-  id: string;
-  topic_id: string;
-  job_type: string;
-  status: string;
-  progress_current: number;
-  progress_total: number;
-  message: string | null;
-  error_message: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface JobItem {
-  id: string;
-  job_id: string;
-  item_type: string;
-  status: string;
-  progress_current: number;
-  progress_total: number;
-  message: string | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 // Topic Provider Config
 export interface TopicProviderConfigData {
   id?: string;
@@ -376,6 +348,21 @@ export interface AnalysisRunCreateRequest {
   start_immediately?: boolean;
 }
 
+export type WorkAnalysisEstimate = {
+  work_id: string;
+  topic_id: string;
+  mode: AnalysisMode;
+  requested_types: string[];
+  model_name: string | null;
+  estimated_llm_requests: number;
+  selected_chunk_count: number;
+  selected_chars: number;
+  selected_estimated_tokens: number;
+  estimated_total_input_tokens: number;
+  estimated_total_output_tokens: number;
+  estimate_notes: string;
+};
+
 export interface ExtractionSummary {
   id: string;
   chunk_id: string;
@@ -490,37 +477,6 @@ export interface RunResumeResponse {
 
 export interface RunCancelResponse {
   run: { id: string; status: string };
-}
-
-export interface LatestV2RunSummary {
-  id: string;
-  mode: AnalysisMode;
-  status: AnalysisRunStatus;
-  progress_current: number;
-  progress_total: number;
-  extraction_succeeded: number;
-  extraction_failed: number;
-  merge_succeeded: number;
-  merge_failed: number;
-  final_succeeded?: number;
-  final_failed?: number;
-  total_tokens: number;
-  model_used: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  created_at: string | null;
-}
-
-// Updated v0.2 AnalysisStatusResponse
-export interface AnalysisStatusV2Response {
-  topic_id: string;
-  has_jobs: boolean;
-  has_outputs: boolean;
-  latest_job: Job | null;
-  analysis_types_completed: string[];
-  output_counts_by_type: Record<string, number>;
-  latest_v2_run: LatestV2RunSummary | null;
-  v2_available: boolean;
 }
 
 // ── v0.3 Document Metadata ──

@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from db import get_session
 from models.analysis_run import AnalysisRun
@@ -72,6 +72,9 @@ def create_run(
 ) -> dict:
     _check_topic(topic_id, session)
 
+    from services.work_service import ensure_default_work
+
+    work = ensure_default_work(topic_id, session)
     try:
         run = analysis_run_service.create_analysis_run(
             session,
@@ -84,6 +87,7 @@ def create_run(
             chapter_index_start=body.chapter_index_start,
             chapter_index_end=body.chapter_index_end,
             force=body.force,
+            work_id=work.id,
         )
     except ValueError as e:
         msg = str(e)
@@ -94,6 +98,7 @@ def create_run(
             "not parsed",
             "parse document",
             "already running",
+            "no document",
         )
         if any(kw in msg.lower() for kw in conflict_keywords):
             raise HTTPException(status_code=409, detail=msg)
@@ -172,29 +177,19 @@ def cancel_run(run_id: str, session: Session = Depends(get_session)) -> dict:
 
 @run_router.post("/{run_id}/retry-failed")
 def retry_failed_chunks(run_id: str, session: Session = Depends(get_session)) -> dict:
-    from models.local_extraction import LocalExtraction
-
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AnalysisRun not found")
-    if run.status in ("pending", "running"):
-        raise HTTPException(status_code=409, detail="Run is already active")
-    if run.status not in ("partial_success", "failed"):
-        raise HTTPException(status_code=409, detail="Run has no failed extractions to retry")
-
-    failed_exts = session.exec(
-        select(LocalExtraction)
-        .where(LocalExtraction.run_id == run_id)
-        .where(LocalExtraction.status == "failed")
-    ).all()
-    if not failed_exts:
-        raise HTTPException(status_code=409, detail="No failed extractions found to retry")
-
-    run.status = "running"
-    session.add(run)
-    session.commit()
-
-    analysis_run_service.start_retry_failed(run_id)
+    try:
+        started = analysis_run_service.start_retry_failed(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not started:
+        raise HTTPException(
+            status_code=409,
+            detail="Another analysis executor is active for this topic",
+        )
+    session.refresh(run)
     return {
         "run": {"id": run.id, "status": run.status},
         "message": "Retry started in background",
@@ -210,16 +205,16 @@ def resume_run(
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AnalysisRun not found")
-    if run.status in ("pending", "running"):
-        raise HTTPException(status_code=409, detail="Run is already active")
-    if run.status == "cancelled":
-        raise HTTPException(status_code=409, detail="Cannot resume a cancelled run")
-
-    run.status = "running"
-    session.add(run)
-    session.commit()
-
-    analysis_run_service.start_resume(run_id, retry_failed=retry_failed)
+    try:
+        started = analysis_run_service.start_resume(run_id, retry_failed=retry_failed)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not started:
+        raise HTTPException(
+            status_code=409,
+            detail="Another analysis executor is active for this topic",
+        )
+    session.refresh(run)
     return {
         "run": {"id": run.id, "status": run.status},
         "message": f"Resume started in background (retry_failed={retry_failed})",

@@ -146,3 +146,105 @@ class TestCrossWorkRun:
         r = client.get(f"/api/topics/{tid}/cross-work/runs/{rid}")
         assert r.status_code == 200
         assert r.json()["status"] in ("pending", "running", "succeeded")
+
+
+class TestCrossWorkRunScope:
+    def test_scope_is_canonical_and_survives_execution(self, engine):
+        from models.work import Work
+        from services.cross_work_run_service import (
+            create_cross_work_run,
+            execute_cross_work_run,
+            get_cross_work_run_status,
+            get_cross_work_run_work_ids,
+        )
+
+        with Session(engine) as session:
+            topic = Topic(name="Scoped run topic", status="created")
+            session.add(topic)
+            session.flush()
+            work_one = Work(topic_id=topic.id, title="Work One", series_index=1)
+            work_two = Work(topic_id=topic.id, title="Work Two", series_index=2)
+            session.add(work_one)
+            session.add(work_two)
+            session.commit()
+            tid = topic.id
+            expected_scope = sorted([work_one.id, work_two.id])
+
+            run = create_cross_work_run(
+                session,
+                tid,
+                mode="entities_only",
+                work_ids=[work_two.id, work_one.id, work_one.id],
+            )
+            run_id = run.id
+            assert get_cross_work_run_work_ids(run) == expected_scope
+
+        execute_cross_work_run(run_id, engine=engine)
+
+        with Session(engine) as session:
+            status = get_cross_work_run_status(session, run_id)
+            assert status is not None
+            assert status["status"] == "succeeded"
+            assert status["work_ids"] == expected_scope
+            assert status["stats"]["scope"] == {"work_ids": expected_scope}
+
+    def test_scope_rejects_foreign_or_unknown_work_ids(self, engine, client):
+        from models.work import Work
+
+        with Session(engine) as session:
+            topic = Topic(name="Run scope topic", status="created")
+            other_topic = Topic(name="Foreign run scope topic", status="created")
+            session.add(topic)
+            session.add(other_topic)
+            session.flush()
+            foreign_work = Work(topic_id=other_topic.id, title="Foreign Work")
+            session.add(foreign_work)
+            session.commit()
+            topic_id = topic.id
+            foreign_work_id = foreign_work.id
+
+        response = client.post(
+            f"/api/topics/{topic_id}/cross-work/runs",
+            json={"mode": "graph_only", "work_ids": [foreign_work_id]},
+        )
+        assert response.status_code == 422
+        assert "work_ids must belong to the Topic" in response.json()["detail"]
+
+    def test_create_and_list_gets_expose_canonical_scope(self, engine, client):
+        from unittest.mock import patch
+
+        from models.work import Work
+
+        with Session(engine) as session:
+            topic = Topic(name="Run scope API topic", status="created")
+            session.add(topic)
+            session.flush()
+            work_one = Work(topic_id=topic.id, title="API Work One")
+            work_two = Work(topic_id=topic.id, title="API Work Two")
+            session.add(work_one)
+            session.add(work_two)
+            session.commit()
+            topic_id = topic.id
+            expected_scope = sorted([work_one.id, work_two.id])
+
+        with patch("services.cross_work_run_service.start_cross_work_run"):
+            created = client.post(
+                f"/api/topics/{topic_id}/cross-work/runs",
+                json={
+                    "mode": "graph_only",
+                    "work_ids": [work_two.id, work_one.id, work_two.id],
+                },
+            )
+        assert created.status_code == 201
+        assert created.json()["work_ids"] == expected_scope
+        run_id = created.json()["id"]
+
+        listed = client.get(f"/api/topics/{topic_id}/cross-work/runs")
+        assert listed.status_code == 200
+        matching = next(run for run in listed.json()["runs"] if run["id"] == run_id)
+        assert matching["work_ids"] == expected_scope
+
+        detail = client.get(f"/api/topics/{topic_id}/cross-work/runs/{run_id}")
+        assert detail.status_code == 200
+        assert detail.json()["work_ids"] == expected_scope
+        assert detail.json()["stats"]["scope"] == {"work_ids": expected_scope}

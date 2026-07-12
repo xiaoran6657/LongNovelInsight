@@ -9,6 +9,21 @@ from models.chunk import Chunk
 from models.document import Document
 from models.enums import AnalysisMode
 
+DEFAULT_ANALYSIS_TYPES = [
+    "overview",
+    "characters",
+    "relations",
+    "events",
+    "causality",
+    "themes",
+]
+VALID_ANALYSIS_TYPES = {
+    *DEFAULT_ANALYSIS_TYPES,
+    "worldbuilding",
+    "foreshadowing",
+}
+FINAL_ANALYSIS_TYPES = set(DEFAULT_ANALYSIS_TYPES)
+
 # ── Chunk meta ──
 
 
@@ -267,6 +282,17 @@ def validate_analysis_mode(mode: str) -> None:
     """Raise ValueError if mode is not a valid AnalysisMode."""
     if mode not in {m.value for m in AnalysisMode}:
         raise ValueError(f"Invalid mode '{mode}'. Must be: preview, range, full, incremental")
+
+
+def normalize_requested_types(requested_types: list[str] | None) -> list[str]:
+    """Return default analysis types and reject unknown requested types."""
+    types = requested_types or DEFAULT_ANALYSIS_TYPES.copy()
+    invalid = [
+        analysis_type for analysis_type in types if analysis_type not in VALID_ANALYSIS_TYPES
+    ]
+    if invalid:
+        raise ValueError(f"Invalid requested_types: {invalid}")
+    return types
 
 
 # ── Cost estimation ──

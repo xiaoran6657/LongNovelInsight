@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const TOPIC_ID = "test-topic-1";
 const PROVIDER_ID = "test-provider-1";
@@ -12,7 +12,7 @@ function apiRoute(pathPattern: string | RegExp) {
 }
 
 /** Shared mocks for a parsed EPUB topic ready for v0.3 feature testing. */
-async function mockParsedEpubTopic(page: Parameters<typeof test>[1]["page"]) {
+async function mockParsedEpubTopic(page: Page) {
   // Catch-all for unhandled API calls
   await page.route((url) => url.origin === API_HOST, (route) => {
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });

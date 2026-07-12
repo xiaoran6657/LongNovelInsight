@@ -1,9 +1,9 @@
-interface Props {
+type Props = {
   selectedChunks: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   note: string;
-}
+};
 
 function fmt(n: number): string {
   return n.toLocaleString();

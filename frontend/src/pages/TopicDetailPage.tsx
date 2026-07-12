@@ -26,7 +26,6 @@ import ChunksMetaPanel from "../features/analysis/ChunksMetaPanel";
 import ChunkRangeSelector from "../features/analysis/ChunkRangeSelector";
 import type { ChunkRange } from "../features/analysis/ChunkRangeSelector";
 import type { AnalysisMode } from "../api/types";
-import LegacyAnalysisPanel from "../features/analysis/LegacyAnalysisPanel";
 import AnalysisRunPanel from "../features/analysis/AnalysisRunPanel";
 import AnalysisRunHistory from "../features/analysis/AnalysisRunHistory";
 import AnalysisOutputsPanel from "../features/analysis/AnalysisOutputsPanel";
@@ -427,13 +426,6 @@ export default function TopicDetailPage() {
       <EntityEvidencePanel topicId={topic.id} />
 
       <SimilarScenesPanel topicId={topic.id} />
-
-      <LegacyAnalysisPanel
-        topicId={topic.id}
-        hasDoc={hasDoc}
-        isParsed={doc?.status === "parsed"}
-        boundProvider={!!boundProvider}
-      />
 
       <div className="card">
         <h3>Chat</h3>

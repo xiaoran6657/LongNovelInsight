@@ -49,9 +49,7 @@ def delete_topic(topic_id: str, session: Session) -> dict:
         return {"deleted": False, "freed_bytes": 0}
 
     # Delete retrieval traces before their optional chat message/session references.
-    traces = session.exec(
-        select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)
-    ).all()
+    traces = session.exec(select(RetrievalTrace).where(RetrievalTrace.topic_id == topic_id)).all()
     for trace in traces:
         session.delete(trace)
 
@@ -102,14 +100,10 @@ def delete_topic(topic_id: str, session: Session) -> dict:
         session.delete(tpc)
 
     # Delete cross-work derived data before Works and the Topic.
-    mentions = session.exec(
-        select(EntityMention).where(EntityMention.topic_id == topic_id)
-    ).all()
+    mentions = session.exec(select(EntityMention).where(EntityMention.topic_id == topic_id)).all()
     for mention in mentions:
         session.delete(mention)
-    entities = session.exec(
-        select(GlobalEntity).where(GlobalEntity.topic_id == topic_id)
-    ).all()
+    entities = session.exec(select(GlobalEntity).where(GlobalEntity.topic_id == topic_id)).all()
     for entity in entities:
         session.delete(entity)
     graphs = session.exec(select(GraphSnapshot).where(GraphSnapshot.topic_id == topic_id)).all()

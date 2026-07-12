@@ -25,12 +25,14 @@ def build_timeline(
 
     Returns a dict with item count and any warnings.
     """
-    # Clear existing timeline for this topic
+    # Replace only the requested scope. An All build replaces the canonical full timeline.
     from sqlmodel import delete
 
-    session.exec(
-        delete(TimelineItem).where(TimelineItem.topic_id == topic_id)  # type: ignore[arg-type]
-    )
+    scope_work_ids = sorted(set(work_ids or []))
+    delete_statement = delete(TimelineItem).where(TimelineItem.topic_id == topic_id)
+    if scope_work_ids:
+        delete_statement = delete_statement.where(TimelineItem.work_id.in_(scope_work_ids))
+    session.exec(delete_statement)  # type: ignore[arg-type]
     session.flush()
 
     # Load event atoms
@@ -41,11 +43,11 @@ def build_timeline(
         ExtractedAtom.atom_type == AtomType.EVENT,
     )
 
-    if work_ids:
+    if scope_work_ids:
         chunk_ids_subq = (
             select(ChunkModel.id)
             .join(Document, ChunkModel.document_id == Document.id)
-            .where(Document.work_id.in_(work_ids))
+            .where(Document.work_id.in_(scope_work_ids))
         )
         base = base.where(ExtractedAtom.chunk_id.in_(chunk_ids_subq))
 
@@ -54,7 +56,12 @@ def build_timeline(
     ).all()
 
     if not event_atoms:
-        return {"item_count": 0, "warnings": []}
+        session.commit()
+        return {
+            "item_count": 0,
+            "warnings": [],
+            "scope": {"work_ids": scope_work_ids},
+        }
 
     # Build work_index lookup for ordering
     docs = session.exec(select(Document).where(Document.topic_id == topic_id)).all()
@@ -142,7 +149,11 @@ def build_timeline(
 
     session.commit()
 
-    return {"item_count": items_created, "warnings": []}
+    return {
+        "item_count": items_created,
+        "warnings": [],
+        "scope": {"work_ids": scope_work_ids},
+    }
 
 
 def get_timeline(

@@ -225,3 +225,83 @@ class TestTimelineBuild:
         assert r.status_code == 200
         # Confidence is 0.9, all filtered out
         assert len(r.json()["items"]) == 0
+
+
+class TestTimelineScopeSemantics:
+    def test_empty_scoped_rebuild_clears_only_selected_work_and_commits(self, engine):
+        tid, canonical_work_id = _setup_timeline_data(engine)
+
+        with Session(engine) as session:
+            from services.cross_work_timeline_service import build_timeline
+
+            build_timeline(tid, session)
+            scoped_work = Work(topic_id=tid, title="Scoped empty Work", series_index=2)
+            session.add(scoped_work)
+            session.flush()
+            stale = TimelineItem(
+                topic_id=tid,
+                work_id=scoped_work.id,
+                title="Stale scoped item",
+                sequence_index=2_000_000,
+                confidence=0.5,
+            )
+            session.add(stale)
+            session.commit()
+            scoped_work_id = scoped_work.id
+
+            result = build_timeline(tid, session, work_ids=[scoped_work_id])
+            assert result == {
+                "item_count": 0,
+                "warnings": [],
+                "scope": {"work_ids": [scoped_work_id]},
+            }
+
+        with Session(engine) as session:
+            items = session.exec(select(TimelineItem).where(TimelineItem.topic_id == tid)).all()
+            assert len(items) == 2
+            assert {item.work_id for item in items} == {canonical_work_id}
+            assert all(item.title != "Stale scoped item" for item in items)
+
+    def test_timeline_get_filters_totals_and_pagination_exactly(self, engine, client):
+        tid, work_id = _setup_timeline_data(engine)
+        assert client.post(f"/api/topics/{tid}/timeline/build").status_code == 200
+
+        first_page = client.get(
+            f"/api/topics/{tid}/timeline?work_id={work_id}&min_confidence=0.9&limit=1&offset=0"
+        )
+        assert first_page.status_code == 200
+        data = first_page.json()
+        assert data["total"] == 2
+        assert data["limit"] == 1
+        assert data["offset"] == 0
+        assert len(data["items"]) == 1
+        assert data["items"][0]["work_id"] == work_id
+        assert data["items"][0]["confidence"] >= 0.9
+
+        second_page = client.get(
+            f"/api/topics/{tid}/timeline?work_id={work_id}&min_confidence=0.9&limit=1&offset=1"
+        )
+        assert second_page.status_code == 200
+        assert second_page.json()["total"] == 2
+        assert len(second_page.json()["items"]) == 1
+        assert second_page.json()["items"][0]["id"] != data["items"][0]["id"]
+
+        excluded = client.get(f"/api/topics/{tid}/timeline?work_id={work_id}&min_confidence=0.91")
+        assert excluded.status_code == 200
+        assert excluded.json()["total"] == 0
+        assert excluded.json()["items"] == []
+
+    def test_timeline_get_rejects_work_from_another_topic(self, engine, client):
+        tid, _ = _setup_timeline_data(engine)
+        with Session(engine) as session:
+            other_topic = Topic(name="Other timeline topic", status="created")
+            session.add(other_topic)
+            session.flush()
+            other_work = Work(topic_id=other_topic.id, title="Other timeline Work")
+            session.add(other_work)
+            session.commit()
+            other_work_id = other_work.id
+
+        response = client.get(f"/api/topics/{tid}/timeline?work_id={other_work_id}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Work not found in Topic"

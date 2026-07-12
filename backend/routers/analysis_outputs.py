@@ -20,7 +20,7 @@ def _check_topic(topic_id: str, session: Session) -> Topic:
     return topic
 
 
-@router.post("/run")
+@router.post("/run", deprecated=True)
 def run_analysis(
     topic_id: str,
     limit_chunks: int = 5,
@@ -31,13 +31,16 @@ def run_analysis(
 
     if pipeline == "v2":
         from services import analysis_run_service as v2_service
+        from services.work_service import ensure_default_work
 
+        work = ensure_default_work(topic_id, session)
         try:
             run = v2_service.create_analysis_run(
                 session,
                 topic_id,
                 mode="preview",
                 limit_chunks=limit_chunks,
+                work_id=work.id,
             )
         except ValueError as e:
             msg = str(e)
@@ -47,6 +50,7 @@ def run_analysis(
                 "not parsed",
                 "parse document",
                 "already running",
+                "no document",
             )
             status = 409 if any(kw in msg.lower() for kw in conflict_keywords) else 422
             raise HTTPException(status_code=status, detail=msg)
@@ -101,7 +105,7 @@ def run_analysis(
     }
 
 
-@router.post("/run-async", status_code=201)
+@router.post("/run-async", status_code=201, deprecated=True)
 def run_analysis_async(
     topic_id: str,
     limit_chunks: int = 5,
@@ -155,7 +159,7 @@ def run_analysis_async(
     }
 
 
-@router.post("/run/{output_type}")
+@router.post("/run/{output_type}", deprecated=True)
 def run_single_type_analysis(
     topic_id: str,
     output_type: str,

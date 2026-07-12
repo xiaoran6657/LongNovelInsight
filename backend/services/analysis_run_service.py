@@ -3,9 +3,12 @@
 import json
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from typing import Any
 
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, func, select
 
 from models.analysis_run import AnalysisRun
@@ -13,6 +16,14 @@ from models.enums import AnalysisMode, JobStatus
 from models.local_extraction import LocalExtraction
 from services import atom_normalizer as _atom_normalizer
 from services import local_extraction_worker as _extraction_worker
+
+_EXECUTOR_STATE_LOCK = threading.RLock()
+_ACTIVE_EXECUTORS_BY_TOPIC: dict[str, str] = {}
+_ACTIVE_EXECUTOR_RUNS: set[str] = set()
+INTERRUPTED_RUN_MESSAGE = (
+    "Analysis run was interrupted by a backend restart. Resume it explicitly to "
+    "continue without re-running succeeded chunks."
+)
 
 
 def _now() -> datetime:
@@ -35,11 +46,43 @@ def create_analysis_run(
     force: bool = False,
     work_id: str | None = None,
 ) -> AnalysisRun:
+    """Create one pending run while serializing the active-run check and insert."""
+    with _EXECUTOR_STATE_LOCK:
+        return _create_analysis_run(
+            session,
+            topic_id,
+            mode=mode,
+            requested_types=requested_types,
+            limit_chunks=limit_chunks,
+            chunk_index_start=chunk_index_start,
+            chunk_index_end=chunk_index_end,
+            chapter_index_start=chapter_index_start,
+            chapter_index_end=chapter_index_end,
+            force=force,
+            work_id=work_id,
+        )
+
+
+def _create_analysis_run(
+    session: Session,
+    topic_id: str,
+    mode: str = AnalysisMode.PREVIEW,
+    requested_types: list[str] | None = None,
+    limit_chunks: int | None = None,
+    chunk_index_start: int | None = None,
+    chunk_index_end: int | None = None,
+    chapter_index_start: int | None = None,
+    chapter_index_end: int | None = None,
+    force: bool = False,
+    work_id: str | None = None,
+) -> AnalysisRun:
     """Create an AnalysisRun and persist it.
 
     When work_id is provided, chunks are filtered to that Work's document only.
     """
     from services.analysis_selection_service import (
+        FINAL_ANALYSIS_TYPES,
+        normalize_requested_types,
         select_chunks_for_analysis,
         validate_analysis_mode,
     )
@@ -47,7 +90,9 @@ def create_analysis_run(
 
     validate_analysis_mode(mode)
 
-    # Guard: check for existing active run for this topic
+    # Guard both persisted active state and an executor finishing its terminal commit.
+    if topic_id in _ACTIVE_EXECUTORS_BY_TOPIC:
+        raise ValueError("Analysis is already running for this topic")
     active_run = session.exec(
         select(AnalysisRun)
         .where(AnalysisRun.topic_id == topic_id)
@@ -99,38 +144,15 @@ def create_analysis_run(
     if not effective or not effective.is_ready:
         raise ValueError("No provider configured for this topic")
 
-    types = requested_types or [
-        "overview",
-        "characters",
-        "relations",
-        "events",
-        "causality",
-        "themes",
-    ]
-
-    # Strict validation: reject unknown requested_types
-    _valid_merge_types = {
-        "overview",
-        "characters",
-        "relations",
-        "events",
-        "causality",
-        "themes",
-        "worldbuilding",
-        "foreshadowing",
-    }
-    invalid = [t for t in types if t not in _valid_merge_types]
-    if invalid:
-        raise ValueError(f"Invalid requested_types: {invalid}")
+    types = normalize_requested_types(requested_types)
 
     # Map requested types to merge types (same names for v0.2)
-    merge_requested_types = [t for t in types if t in _valid_merge_types]
+    merge_requested_types = types.copy()
     extraction_total = len(selected)
     merge_total = len(merge_requested_types)
 
     # Final types: subset that maps to v0.1-compatible output types
-    _final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
-    final_requested_types = [t for t in merge_requested_types if t in _final_types]
+    final_requested_types = [t for t in merge_requested_types if t in FINAL_ANALYSIS_TYPES]
     final_total = len(final_requested_types)
     progress_total = extraction_total + merge_total + final_total
 
@@ -165,15 +187,57 @@ def create_analysis_run(
     return run
 
 
-def start_analysis_run(run_id: str) -> None:
-    """Start a background thread to execute the analysis run."""
-    thread = threading.Thread(
-        target=_execute_run,
-        args=(run_id,),
-        name=f"analysis-run-{run_id[:8]}",
-        daemon=True,
-    )
-    thread.start()
+def start_analysis_run(run_id: str, engine: Engine | None = None) -> bool:
+    """Start a pending run once; return False when it is not startable."""
+    engine = _resolve_engine(engine)
+    with _EXECUTOR_STATE_LOCK:
+        with Session(engine) as session:
+            run = session.get(AnalysisRun, run_id)
+            if run is None:
+                raise ValueError(f"AnalysisRun not found: {run_id}")
+            if run.status != JobStatus.PENDING or not _executor_is_available(run):
+                return False
+            return _launch_registered_executor(
+                run,
+                _execute_run,
+                (),
+                engine,
+                name_prefix="analysis-run",
+            )
+
+
+def recover_interrupted_analysis_runs(engine: Engine | None = None) -> list[str]:
+    """Mark orphaned active runs resumable without making automatic LLM calls."""
+    engine = _resolve_engine(engine)
+    recovered: list[str] = []
+    recovered_at = _now()
+    with _EXECUTOR_STATE_LOCK:
+        with Session(engine) as session:
+            runs = session.exec(
+                select(AnalysisRun).where(AnalysisRun.status == JobStatus.RUNNING)
+            ).all()
+            for run in runs:
+                if run.id in _ACTIVE_EXECUTOR_RUNS:
+                    continue
+                previous_status = run.status
+                metadata = run.get_metadata()
+                metadata["startup_recovery"] = {
+                    "previous_status": previous_status,
+                    "recovered_at": recovered_at.isoformat(),
+                    "reason": "backend_restart",
+                    "action": "marked_failed",
+                    "resume_available": True,
+                }
+                run.set_metadata(metadata)
+                run.status = JobStatus.FAILED
+                run.error_message = INTERRUPTED_RUN_MESSAGE
+                run.finished_at = recovered_at
+                run.updated_at = recovered_at
+                session.add(run)
+                recovered.append(run.id)
+            if recovered:
+                session.commit()
+    return recovered
 
 
 # ── Execution ──
@@ -239,17 +303,17 @@ def _mask_api_keys_in_error(session: Session, error: str) -> str:
     return result
 
 
-def _execute_run_impl(run_id: str, engine) -> None:
+def _execute_run_impl(run_id: str, engine: Engine) -> None:
     from models.chapter import Chapter
     from models.chunk import Chunk
 
     with Session(engine) as session:
         run = session.get(AnalysisRun, run_id)
-        if run is None or run.status in (JobStatus.CANCELLED,):
+        if run is None or run.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             return
 
         run.status = JobStatus.RUNNING
-        run.started_at = _now()
+        run.started_at = run.started_at or _now()
         session.add(run)
         session.commit()
 
@@ -1301,26 +1365,69 @@ def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True
     return run
 
 
-def start_retry_failed(run_id: str) -> None:
-    """Start background retry of failed chunks for a run."""
-    thread = threading.Thread(
-        target=_execute_retry,
-        args=(run_id,),
-        name=f"analysis-retry-{run_id[:8]}",
-        daemon=True,
-    )
-    thread.start()
+def start_retry_failed(run_id: str, engine: Engine | None = None) -> bool:
+    """Atomically transition and start one retry executor for a run."""
+    engine = _resolve_engine(engine)
+    with _EXECUTOR_STATE_LOCK:
+        with Session(engine) as session:
+            run = session.get(AnalysisRun, run_id)
+            if run is None:
+                raise ValueError(f"AnalysisRun not found: {run_id}")
+            if run.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                raise ValueError("Run is already active")
+            if run.status not in (JobStatus.PARTIAL_SUCCESS, JobStatus.FAILED):
+                raise ValueError("Run has no failed extractions to retry")
+            failed = session.exec(
+                select(LocalExtraction)
+                .where(LocalExtraction.run_id == run_id)
+                .where(LocalExtraction.status == "failed")
+            ).first()
+            if failed is None:
+                raise ValueError("No failed extractions found to retry")
+            if not _executor_is_available(run):
+                return False
+            run.status = JobStatus.RUNNING
+            run.error_message = None
+            run.finished_at = None
+            session.add(run)
+            session.commit()
+            return _launch_registered_executor(
+                run,
+                _execute_retry,
+                (),
+                engine,
+                name_prefix="analysis-retry",
+            )
 
 
-def start_resume(run_id: str, retry_failed: bool = True) -> None:
-    """Start background resume of an interrupted run."""
-    thread = threading.Thread(
-        target=_execute_resume,
-        args=(run_id, retry_failed),
-        name=f"analysis-resume-{run_id[:8]}",
-        daemon=True,
-    )
-    thread.start()
+def start_resume(run_id: str, retry_failed: bool = True, engine: Engine | None = None) -> bool:
+    """Atomically transition and start one resume executor for a run."""
+    engine = _resolve_engine(engine)
+    with _EXECUTOR_STATE_LOCK:
+        with Session(engine) as session:
+            run = session.get(AnalysisRun, run_id)
+            if run is None:
+                raise ValueError(f"AnalysisRun not found: {run_id}")
+            if run.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                raise ValueError("Run is already active")
+            if run.status == JobStatus.CANCELLED:
+                raise ValueError("Cannot resume a cancelled run")
+            if run.status == JobStatus.SUCCEEDED:
+                raise ValueError("Run is already complete")
+            if not _executor_is_available(run):
+                return False
+            run.status = JobStatus.RUNNING
+            run.error_message = None
+            run.finished_at = None
+            session.add(run)
+            session.commit()
+            return _launch_registered_executor(
+                run,
+                _execute_resume,
+                (retry_failed,),
+                engine,
+                name_prefix="analysis-resume",
+            )
 
 
 def _execute_retry(run_id: str, engine=None) -> None:
@@ -1345,3 +1452,63 @@ def _execute_resume(run_id: str, retry_failed: bool, engine=None) -> None:
             resume_analysis_run(session, run_id, retry_failed=retry_failed)
     except Exception as e:
         _fail_run(run_id, engine, str(e))
+
+
+def _resolve_engine(engine: Engine | None = None) -> Engine:
+    if engine is not None:
+        return engine
+    from db import engine as db_engine
+
+    return db_engine
+
+
+def _executor_is_available(run: AnalysisRun) -> bool:
+    active_run_id = _ACTIVE_EXECUTORS_BY_TOPIC.get(run.topic_id)
+    return run.id not in _ACTIVE_EXECUTOR_RUNS and active_run_id is None
+
+
+def _launch_registered_executor(
+    run: AnalysisRun,
+    target: Callable[..., None],
+    target_args: tuple[Any, ...],
+    engine: Engine,
+    *,
+    name_prefix: str,
+) -> bool:
+    if not _executor_is_available(run):
+        return False
+    _ACTIVE_EXECUTOR_RUNS.add(run.id)
+    _ACTIVE_EXECUTORS_BY_TOPIC[run.topic_id] = run.id
+    thread = threading.Thread(
+        target=_run_registered_executor,
+        args=(run.topic_id, run.id, target, target_args, engine),
+        name=f"{name_prefix}-{run.id[:8]}",
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except Exception as exc:
+        _release_executor(run.topic_id, run.id)
+        _fail_run(run.id, engine, f"Failed to start analysis executor: {exc}")
+        raise
+    return True
+
+
+def _run_registered_executor(
+    topic_id: str,
+    run_id: str,
+    target: Callable[..., None],
+    target_args: tuple[Any, ...],
+    engine: Engine,
+) -> None:
+    try:
+        target(run_id, *target_args, engine=engine)
+    finally:
+        _release_executor(topic_id, run_id)
+
+
+def _release_executor(topic_id: str, run_id: str) -> None:
+    with _EXECUTOR_STATE_LOCK:
+        _ACTIVE_EXECUTOR_RUNS.discard(run_id)
+        if _ACTIVE_EXECUTORS_BY_TOPIC.get(topic_id) == run_id:
+            del _ACTIVE_EXECUTORS_BY_TOPIC[topic_id]
