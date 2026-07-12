@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../queryKeys";
 import {
   createChatSession,
   listChatSessions,
@@ -46,14 +47,14 @@ export default function TopicChatPage() {
 
   // Topic info (for back link title)
   const topicQuery = useQuery({
-    queryKey: ["topic", topicId],
+    queryKey: queryKeys.topics.detail(topicId),
     queryFn: () => getTopic(topicId!),
     enabled: !!topicId,
   });
 
   // Session list
   const sessionsQuery = useQuery({
-    queryKey: ["chatSessions", topicId],
+    queryKey: queryKeys.chat.sessions(topicId),
     queryFn: () => listChatSessions(topicId!),
     enabled: !!topicId,
   });
@@ -63,7 +64,7 @@ export default function TopicChatPage() {
 
   // Messages for active session
   const messagesQuery = useQuery({
-    queryKey: ["chatMessages", activeSessionId],
+    queryKey: queryKeys.chat.messages(activeSessionId),
     queryFn: () => listChatMessages(activeSessionId!),
     enabled: !!activeSessionId,
   });
@@ -78,7 +79,7 @@ export default function TopicChatPage() {
   const newSessionMut = useMutation({
     mutationFn: (title: string) => createChatSession(topicId!, title),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["chatSessions", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions(topicId) });
       setActiveSessionId(data.id);
       setNewTitle("");
     },
@@ -89,7 +90,7 @@ export default function TopicChatPage() {
   const deleteMut = useMutation({
     mutationFn: (sid: string) => deleteChatSession(sid),
     onSuccess: (_data, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["chatSessions", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions(topicId) });
       if (activeSessionId === deletedId) setActiveSessionId(null);
     },
   });
@@ -103,12 +104,12 @@ export default function TopicChatPage() {
     onMutate: async ({ content }) => {
       setDraft("");
       await queryClient.cancelQueries({
-        queryKey: ["chatMessages", activeSessionId],
+        queryKey: queryKeys.chat.messages(activeSessionId),
       });
       const prev = queryClient.getQueryData<{
         messages: ChatMessageRead[];
         total: number;
-      }>(["chatMessages", activeSessionId]);
+      }>(queryKeys.chat.messages(activeSessionId));
       const opt: ChatMessageRead = {
         id: `optimistic-${++optimisticIdRef.current}`,
         session_id: activeSessionId!,
@@ -122,7 +123,7 @@ export default function TopicChatPage() {
         model_used: null,
         created_at: new Date().toISOString(),
       };
-      queryClient.setQueryData(["chatMessages", activeSessionId], {
+      queryClient.setQueryData(queryKeys.chat.messages(activeSessionId), {
         messages: [...(prev?.messages ?? []), opt],
         total: (prev?.total ?? 0) + 1,
       });
@@ -131,14 +132,14 @@ export default function TopicChatPage() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) {
         queryClient.setQueryData(
-          ["chatMessages", activeSessionId],
+          queryKeys.chat.messages(activeSessionId),
           ctx.prev
         );
       }
     },
     onSettled: () => {
       queryClient.invalidateQueries({
-        queryKey: ["chatMessages", activeSessionId],
+        queryKey: queryKeys.chat.messages(activeSessionId),
       });
     },
   });
@@ -148,7 +149,7 @@ export default function TopicChatPage() {
     mutationFn: (msgId: string) => deleteChatMessage(msgId),
     onSettled: () => {
       queryClient.invalidateQueries({
-        queryKey: ["chatMessages", activeSessionId],
+        queryKey: queryKeys.chat.messages(activeSessionId),
       });
     },
   });
@@ -175,7 +176,7 @@ export default function TopicChatPage() {
     onMutate: async ({ sid, oldMsgId }) => {
       setEditResendError(null);
       await queryClient.cancelQueries({
-        queryKey: ["chatMessages", sid],
+        queryKey: queryKeys.chat.messages(sid),
       });
       return { sid, oldMsgId };
     },
@@ -187,7 +188,7 @@ export default function TopicChatPage() {
     },
     onSettled: (_data, _error, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["chatMessages", vars.sid],
+        queryKey: queryKeys.chat.messages(vars.sid),
       });
     },
   });
@@ -239,14 +240,14 @@ export default function TopicChatPage() {
 
   // Effective provider config for right panel
   const effConfigQuery = useQuery({
-    queryKey: ["effectiveConfig", topicId],
+    queryKey: queryKeys.topicConfig.effective(topicId),
     queryFn: () => getEffectiveConfig(topicId!),
     enabled: !!topicId && rightPanelOpen,
   });
 
   // Chunks with text for source tab (limited to avoid rendering hundreds of KB)
   const chunksQuery = useQuery({
-    queryKey: ["chunksWithText", topicId],
+    queryKey: queryKeys.chunks.list(topicId, { includeText: true, limit: 20 }),
     queryFn: () => listChunks(topicId!, { include_text: true, limit: 20 }),
     enabled: !!topicId && rightPanelOpen && rightTab === "source",
   });
@@ -257,7 +258,7 @@ export default function TopicChatPage() {
 
   // Provider presets for model dropdown
   const presetsQuery = useQuery({
-    queryKey: ["providerPresets"],
+    queryKey: queryKeys.providers.presets,
     queryFn: listProviderPresets,
     enabled: rightPanelOpen,
   });
@@ -272,7 +273,7 @@ export default function TopicChatPage() {
 
   // Init edit state from stored overrides, not effective config
   const storedConfigQuery = useQuery({
-    queryKey: ["provider-config-chat", topicId],
+    queryKey: queryKeys.topicConfig.stored(topicId),
     queryFn: () => getTopicProviderConfig(topicId!),
     enabled: !!topicId,
   });
@@ -304,8 +305,8 @@ export default function TopicChatPage() {
       setConfigDirty(false);
       configDirtyRef.current = false;
       setConfigSaveError("");
-      queryClient.invalidateQueries({ queryKey: ["effectiveConfig", topicId] });
-      queryClient.invalidateQueries({ queryKey: ["provider-config-chat", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topicConfig.effective(topicId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topicConfig.stored(topicId) });
     },
     onError: (err) => {
       setConfigSaveError(err instanceof Error ? err.message : "Save failed");

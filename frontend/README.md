@@ -10,7 +10,7 @@ npm install
 npm run dev           # → http://localhost:5173
 npm run typecheck     # TypeScript check
 npm run lint          # ESLint across source, E2E, unit tests, and configs
-npm run test:unit     # Pure-logic Playwright tests (no browser fixture)
+npm run test:unit     # Pure-logic Playwright tests (12 tests, no browser fixture)
 npm run build         # Production build → dist/
 npm run check         # All three checks at once
 npm run e2e           # Playwright end-to-end tests (53 tests: 41 baseline + 12 v0.4)
@@ -41,7 +41,7 @@ frontend/
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
 ├── playwright.config.ts      # Playwright e2e config (53 tests)
-├── playwright.unit.config.ts # Pure-logic unit config (8 tests)
+├── playwright.unit.config.ts # Pure-logic unit config (12 tests)
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
 ├── eslint.config.js          # typescript-eslint + recommended
 ├── .env.example              # VITE_API_BASE_URL template
@@ -244,6 +244,7 @@ The frontend creates only staged AnalysisRun records: Local Extraction → Deter
 - **Real LLM warnings**: Buttons for Provider Test, Run Analysis, and Send Message show API consumption warnings.
 - **Chat page**: Collapsible 3-panel layout with draggable dividers. Message copy/edit/delete. Right panel: provider config, chat usage stats, source text viewer.
 - **Optimistic updates**: User messages appear instantly via query cache manipulation with rollback.
+- **Centralized query keys**: Topic Detail and Chat share typed factories; chunk response-shape options are part of canonical keys.
 - **Provider preset integration**: Base URL / Model dropdowns with manual override.
 
 ## Scripts
@@ -255,7 +256,7 @@ The frontend creates only staged AnalysisRun records: Local Extraction → Deter
 | `preview` | `vite preview` | Preview production build |
 | `typecheck` | `tsc --noEmit` | Strict TypeScript check for source, E2E, unit tests, and configs |
 | `lint` | explicit source/E2E/test/config paths | ESLint all maintained frontend TypeScript/JavaScript |
-| `test:unit` | `playwright test --config playwright.unit.config.ts` | Run 8 pure-logic tests without browser fixtures |
+| `test:unit` | `playwright test --config playwright.unit.config.ts` | Run 12 pure-logic tests without browser fixtures |
 | `check` | typecheck + lint + unit + build | All non-E2E frontend checks |
 | `e2e` | `playwright test` | Run 53 mocked Playwright E2E tests |
 | `e2e:ui` | `playwright test --ui` | Run Playwright in UI mode |

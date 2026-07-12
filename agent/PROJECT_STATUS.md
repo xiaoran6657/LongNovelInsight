@@ -5,7 +5,7 @@
 - **Verified:** 2026-07-13, Asia/Shanghai
 - **Takeover baseline:** `3db6b68`; current publication branch: `codex/repository-takeover`
 - **Branch:** `codex/repository-takeover`
-- **Current increment:** FE-TEST-001 frontend quality coverage completed on 2026-07-13
+- **Current increment:** FE-CACHE-001 centralized Topic Detail/Chat query keys completed on 2026-07-13
 - **Current development version:** `v0.4.0-dev`
 - **Latest Git tag:** `v0.3.0` (`v0.3.1` and `v0.4.0` are not tagged)
 - **Release state:** v0.4 implementation exists, but release validation is not complete
@@ -37,10 +37,10 @@
 - `npm ci`: pass; repaired a missing local Rollup optional binary.
 - Typecheck: pass across source, E2E, unit tests, and Vite/Playwright configs.
 - ESLint: pass across source, E2E, unit tests, and maintained config files.
-- Production build: pass, 158 modules, 458.20 kB JS / 131.78 kB gzip.
+- Production build: pass, 159 modules, 458.98 kB JS / 131.99 kB gzip.
 - Playwright discovery: 53 tests in 6 files.
-- Pure-logic unit suite: 8 passed in 1.2 seconds; no browser fixture.
-- Full Playwright execution: 53 passed in 17.6 seconds.
+- Pure-logic unit suite: 12 passed in 1.4 seconds; no browser fixture.
+- Full Playwright execution: 53 passed in 18.1 seconds.
 - Security updates: Vite 6.4.3, React Router 7.18.1, Babel 7.29.7, js-yaml 4.3.0.
 - `npm audit`: 0 vulnerabilities across 245 dependencies.
 
@@ -62,7 +62,7 @@
 - Work analysis estimates are token-based; currency estimates remain unavailable because provider pricing is not modeled.
 - Chat pair association still relies on timestamps rather than explicit turn/reply IDs.
 - Several backend and frontend modules are large multi-agent conflict hotspots.
-- Pure tests currently cover analysis selection and formatting; UI-adjacent normalization and run-state helpers remain future extraction candidates.
+- Pure tests cover analysis selection, formatting, and query-key matching; UI-adjacent normalization and run-state helpers remain future extraction candidates.
 
 ## Release Blockers
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../queryKeys";
 import LoadingBlock from "../components/LoadingBlock";
 import ErrorBlock from "../components/ErrorBlock";
 import {
@@ -55,7 +56,7 @@ export default function TopicDetailPage() {
   function handleRunTerminal() {
     clearStorage();
     if (topicId) {
-      queryClient.invalidateQueries({ queryKey: ["works", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.works.list(topicId) });
     }
   }
 
@@ -137,30 +138,30 @@ export default function TopicDetailPage() {
     isError: topicError,
     error: topicErr,
   } = useQuery({
-    queryKey: ["topic", topicId],
+    queryKey: queryKeys.topics.detail(topicId),
     queryFn: () => getTopic(topicId!),
     enabled: !!topicId,
   });
 
   const { data: providerData } = useQuery({
-    queryKey: ["providers"],
+    queryKey: queryKeys.providers.all,
     queryFn: listProviders,
   });
 
   const { data: effectiveConfig } = useQuery({
-    queryKey: ["effective-config", topicId],
+    queryKey: queryKeys.topicConfig.effective(topicId),
     queryFn: () => getEffectiveConfig(topicId!),
     enabled: !!topicId,
   });
 
   const { data: storedConfigData } = useQuery({
-    queryKey: ["provider-config", topicId],
+    queryKey: queryKeys.topicConfig.stored(topicId),
     queryFn: () => getTopicProviderConfig(topicId!),
     enabled: !!topicId,
   });
 
   const { data: presetData } = useQuery({
-    queryKey: ["provider-presets"],
+    queryKey: queryKeys.providers.presets,
     queryFn: listProviderPresets,
   });
 
@@ -189,8 +190,8 @@ export default function TopicDetailPage() {
         analysis_parallelism_override: editParallel ? Number(editParallel) : null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["effective-config", topicId] });
-      queryClient.invalidateQueries({ queryKey: ["provider-config", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topicConfig.effective(topicId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topicConfig.stored(topicId) });
       setConfigDirty(false);
       setConfigSaveError("");
     },
@@ -200,9 +201,9 @@ export default function TopicDetailPage() {
   const bindMut = useMutation({
     mutationFn: (providerId: string) => bindProvider(topicId!, providerId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["topic", topicId] });
-      queryClient.invalidateQueries({ queryKey: ["topics"] });
-      queryClient.invalidateQueries({ queryKey: ["effective-config", topicId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topics.detail(topicId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topics.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.topicConfig.effective(topicId) });
       setBindError("");
       setBindProviderId("");
     },
@@ -210,7 +211,7 @@ export default function TopicDetailPage() {
   });
 
   const { data: doc, isLoading: docLoading, isError: docError, error: docErr } = useQuery({
-    queryKey: ["document", topicId],
+    queryKey: queryKeys.documents.current(topicId),
     queryFn: () => getCurrentDocument(topicId!),
     enabled: !!topicId,
     retry: false,
@@ -219,19 +220,19 @@ export default function TopicDetailPage() {
   const hasDoc = !!doc && !docError && !("detail" in (doc as unknown as object));
 
   const { data: chapterData } = useQuery({
-    queryKey: ["chapters", topicId],
+    queryKey: queryKeys.chapters.list(topicId),
     queryFn: () => listChapters(topicId!),
     enabled: !!topicId && hasDoc,
   });
 
   const { data: chunksMeta } = useQuery({
-    queryKey: ["chunks-meta", topicId],
+    queryKey: queryKeys.chunks.meta(topicId),
     queryFn: () => getChunksMeta(topicId!),
     enabled: !!topicId && hasDoc,
   });
 
   const { data: chunkData } = useQuery({
-    queryKey: ["chunks", topicId, showChunkText],
+    queryKey: queryKeys.chunks.list(topicId, { includeText: showChunkText, limit: 20 }),
     queryFn: () => listChunks(topicId!, { include_text: showChunkText, limit: 20 }),
     enabled: !!topicId && hasDoc,
   });

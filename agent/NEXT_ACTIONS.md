@@ -30,7 +30,7 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | ID | Status | Area | Task |
 | --- | --- | --- | --- |
 | FE-TEST-001 | done | frontend | Typecheck and lint E2E/config files; add pure-logic unit tests |
-| FE-CACHE-001 | ready | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
+| FE-CACHE-001 | done | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
 | CHAT-002 | ready | backend | Add explicit turn/reply linkage and stable ordering for chat message pairs |
 | E2E-001 | ready | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
 | DB-001 | ready | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |

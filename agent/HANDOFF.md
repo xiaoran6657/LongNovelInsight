@@ -2,65 +2,67 @@
 
 ## Objective
 
-Complete FE-TEST-001: bring E2E and frontend configuration files under strict TypeScript and ESLint
-gates, add high-value pure-logic tests without a new dependency, and publish the accumulated
-v0.4.0-dev baseline hardening to codex/repository-takeover.
+Complete FE-CACHE-001: centralize TanStack Query keys shared by Topic Detail and Chat, preserve
+partial invalidation compatibility, prevent response-shape cache collisions, and publish the
+verified increment to codex/repository-takeover.
 
 ## Status
 
-FE-TEST-001 completed and fully verified on 2026-07-13. The authorized publication scope contains
-the accumulated P0, CHAT-001, COST-001, RUN-001, RUN-002, CROSS-001, and FE-TEST-001 work. The
-takeover baseline is commit 3db6b68; current publication state is recorded in Git history on
-codex/repository-takeover.
+FE-CACHE-001 completed and fully verified on 2026-07-13. The worktree started clean at commit
+9f30e95. This handoff and the frontend query-key increment are the complete authorized publication
+scope for the next commit on codex/repository-takeover.
 
 ## Ownership
 
-- Primary agent: configuration design, implementation, integration, full gates, and publication.
-- Frontend config audit agent: TypeScript/ESLint inclusion gaps and dependency-free runner choice.
-- Pure-logic audit agent: test candidates, edge cases, and test matrix.
+- Primary agent: key contract, migration, unit tests, full gates, documentation, and publication.
+- Query-key inventory agent: blocked by the Windows approval stream before file access.
+- Query-key test agent: TanStack partial-match behavior, normalization, and isolation test matrix.
+
+## Query-Key Contract
+
+- Existing root strings remain stable so untouched component prefix invalidations keep working.
+- Undefined and null IDs normalize to an explicit null segment.
+- Topic Detail and Chat share the same topic, provider preset, effective config, and stored config
+  keys.
+- Chunk lists use the hierarchy chunks / Topic / list / normalized options.
+- includeText, limit, and offset are canonical key fields, preventing text and summary responses
+  from sharing cache entries.
+- The chunks / Topic prefix invalidates every list shape for that Topic without affecting another
+  Topic.
+- Chat optimistic reads, writes, cancellation, rollback, and invalidation all use the identical
+  session message key.
 
 ## Changes
 
-- Expand tsconfig coverage from src-only to source, E2E, unit tests, Vite config, and both
-  Playwright configs.
-- Expand ESLint from src-only to every maintained frontend source, test, and config file, while
-  ignoring generated Playwright outputs.
-- Reuse the existing Playwright runner with a unit-only config; no browser fixture and no new
-  dependency are required.
-- Add eight tests for analysis selection, range validation, token estimation, byte formatting,
-  JSON preview behavior, invalid timestamps, and explicit timezone offsets.
-- Replace incorrect E2E helper type extraction with the public Playwright Page type so route
-  callback inference remains strict.
-- Make Playwright CI detection type-safe without relying on undeclared @types/node.
-- Reject negative completed ranges and correctly recognize ISO offsets such as +08:00.
-- Align frontend README, project status, queue, and this handoff.
+- Add frontend/src/queryKeys.ts with small typed factories for Topic, provider/config, document,
+  chapter, chunk, Work, and Chat resources used by the two pages.
+- Replace every literal TanStack key in TopicDetailPage and TopicChatPage.
+- Merge the prior effectiveConfig/providerPresets/provider-config-chat aliases into the same keys
+  already used by Topic Detail.
+- Replace chunksWithText with a response-shape-aware chunk list key.
+- Add four pure tests using a real QueryClient for exact keys, option normalization, Topic prefix
+  invalidation, and Chat session isolation.
+- Update frontend README, project status, queue, and this handoff.
 
 ## Verification
 
-- Frontend strict typecheck: pass across source, six E2E files, two unit files, and config files.
+- Frontend strict typecheck: pass.
 - Expanded ESLint: pass.
-- Pure-logic unit suite: 8 passed in 1.2 seconds.
-- Production build: pass; 158 modules, 458.20 kB JS / 131.78 kB gzip.
-- Full mocked Playwright suite: 53 passed in 17.6 seconds.
+- Pure-logic unit suite: 12 passed in 1.4 seconds.
+- Production build: pass; 159 modules, 458.98 kB JS / 131.99 kB gzip.
+- Full mocked Playwright suite: 53 passed in 18.1 seconds.
+- Literal-key audit: no raw query keys remain in TopicDetailPage or TopicChatPage.
 - Latest backend gate remains current from CROSS-001: Ruff pass; 755 passed, 6 deselected.
 - No dependency was added and no real LLM request was made.
 
-## Publication Scope
-
-The whole dirty worktree belongs to the user-authorized accumulated v0.4 baseline increment. Stage
-only the explicit tracked and untracked files shown by Git status. Never stage data, databases,
-environment files, caches, Playwright reports, build output, or uploaded sources. Push over the
-configured 127.0.0.1:7897 proxy to origin/codex/repository-takeover.
-
 ## Open Risks
 
-- AnalysisRun executor ownership remains process-local; multiple backend processes sharing one
-  SQLite database are unsupported in v0.4.
-- Deprecated v1/Job executors remain callable for compatibility and can create historical
-  run_id=NULL outputs.
-- Timeline scoped refreshes preserve unselected Works and can represent mixed refresh times.
+- Query keys outside Topic Detail and Chat remain literal and can be migrated incrementally when
+  their subsystems are next changed; their root shapes remain compatible with this factory.
+- AnalysisRun executor ownership remains process-local.
+- Deprecated v1/Job executors remain callable for v0.4 compatibility.
 - scripts/integration_smoke.py remains unexecuted because it can make real LLM calls.
 
 ## Next Action
 
-Start FE-CACHE-001: centralize TanStack Query key factories across Topic Detail and Chat.
+Start CHAT-002: add explicit turn/reply linkage and stable ordering for chat message pairs.
