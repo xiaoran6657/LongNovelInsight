@@ -3,13 +3,13 @@
 ## Verified Snapshot
 
 - **Verified:** 2026-07-13, Asia/Shanghai
-- **Release/main commit:** `057093c`; `main`, `origin/main`, and annotated tag `v0.4.0` resolve to
-  the same commit
-- **Working branch:** `codex/post-release-audit-fixes`
+- **Release tag commit:** annotated tag `v0.4.0` remains at `057093c`
+- **Main state:** `main` and `origin/main` include remediation implementation commit `8eb25fa`
+- **Working branch:** `main`
 - **Current increment:** post-release correctness remediation for entity/graph integrity,
   Work-scoped analysis context, and multi-Work storage accounting
-- **Working-tree state:** implementation, tests, and coordination updates are not committed or
-  published
+- **Delivery state:** remediation implementation commit `8eb25fa` is published on `main` and
+  `codex/post-release-audit-fixes`
 - **Current release version:** `v0.4.0`; active maintenance line: `v0.4.x`
 
 ## Current Remediation
@@ -75,6 +75,6 @@
 
 ## Delivery State
 
-The v0.4.0 published tag is unchanged. The post-release remediation passes all backend gates but is
-not yet part of `main` or a v0.4.1 release. Review and explicit Git authorization are required before
-staging, committing, or pushing it.
+The v0.4.0 published tag remains unchanged at `057093c`. The verified post-release remediation is
+now part of `main` through implementation commit `8eb25fa`; it has not been tagged or published as
+a v0.4.1 release.

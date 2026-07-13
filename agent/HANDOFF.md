@@ -9,9 +9,9 @@ and refresh stale coordination state.
 
 ## Status
 
-Implementation and documentation are complete in `codex/post-release-audit-fixes` and all backend
-quality gates pass. The work is intentionally uncommitted and unpublished because this task did not
-authorize Git staging, commit, or push. No real LLM request was made.
+Implementation and documentation are complete, all backend quality gates pass, and implementation
+commit `8eb25fa` is published on both `main` and `codex/post-release-audit-fixes`. The `v0.4.0` tag
+remains unchanged. No real LLM request was made.
 
 ## Changed Scope
 
@@ -60,7 +60,5 @@ Run from `backend/` unless noted:
 
 ## Exact Next Action
 
-Review the post-release remediation diff. If accepted, obtain explicit authorization to stage only
-the listed code, tests, and documentation, commit it on `codex/post-release-audit-fixes`, and push
-that branch. After delivery, select one `ready` v0.4.x item from `agent/NEXT_ACTIONS.md`; do not begin
-v0.5 work without an explicit scope change.
+Select and explicitly authorize one `ready` v0.4.x item from `agent/NEXT_ACTIONS.md`. Do not begin
+v0.5 work or promote a v0.4.1 release without an explicit scope change and release authorization.

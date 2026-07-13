@@ -14,8 +14,8 @@ itself authorize implementation, dependency changes, or Git publication.
 | STORAGE-001 | done | backend | Maintain and startup-backfill Topic.storage_bytes as the aggregate of all Work source Documents |
 | STATUS-001 | done | docs | Refresh post-release branch state, archive the v0.4.0 completion queue, and create a v0.4.x queue |
 
-The current remediation is implemented and fully backend-verified in the working tree. It remains
-uncommitted and unpublished pending explicit Git authorization.
+The remediation is fully backend-verified and published to `main` in implementation commit
+`8eb25fa`.
 
 ## Ready v0.4.x Maintenance Queue
 
