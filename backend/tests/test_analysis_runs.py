@@ -2600,6 +2600,7 @@ def test_retry_persists_usage_fields(engine):
     from models.local_extraction import LocalExtraction
     from models.model_provider import ModelProvider
     from models.topic import Topic
+    from models.work import Work
     from services.analysis_run_service import retry_failed_extractions
 
     with Session(engine) as session:
@@ -2675,6 +2676,33 @@ def test_retry_persists_usage_fields(engine):
         session.add(run)
         session.commit()
 
+    with Session(engine) as session:
+        other_work = Work(topic_id=tid, title="Other Retry Work", series_index=2)
+        session.add(other_work)
+        session.flush()
+        other_doc = Document(
+            topic_id=tid,
+            work_id=other_work.id,
+            original_filename="other.txt",
+            file_size_bytes=10,
+            char_count=10,
+            status="parsed",
+        )
+        session.add(other_doc)
+        session.flush()
+        session.add(
+            Chapter(
+                topic_id=tid,
+                document_id=other_doc.id,
+                chapter_index=0,
+                title="Wrong Retry Chapter",
+                start_char=0,
+                end_char=10,
+                char_count=10,
+            )
+        )
+        session.commit()
+
     # Now retry
     class RetryMockResult:
         ok = True
@@ -2715,12 +2743,20 @@ def test_retry_persists_usage_fields(engine):
         cumulative_prompt_cache_miss_tokens = 250
         usage_unavailable_attempts = 0
 
+    captured_chapter_titles: list[str] = []
+
+    def retry_extract(**kwargs: object) -> RetryMockResult:
+        captured_chapter_titles.append(str(kwargs["chapter_title"]))
+        return RetryMockResult()
+
     with patch(
         "services.local_extraction_worker.run_local_extraction_for_chunk",
-        return_value=RetryMockResult(),
+        side_effect=retry_extract,
     ):
         with Session(engine) as session:
             retry_failed_extractions(session, rid)
+
+    assert captured_chapter_titles == ["Ch1"]
 
     with Session(engine) as session:
         exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == rid)).all()
@@ -2749,6 +2785,7 @@ def test_resume_updates_run_usage_breakdown(engine):
     from models.local_extraction import LocalExtraction
     from models.model_provider import ModelProvider
     from models.topic import Topic
+    from models.work import Work
     from services.analysis_run_service import resume_analysis_run
 
     with Session(engine) as session:
@@ -2838,6 +2875,33 @@ def test_resume_updates_run_usage_breakdown(engine):
         # c1 has no extraction (missing)
         session.commit()
 
+    with Session(engine) as session:
+        other_work = Work(topic_id=tid, title="Other Resume Work", series_index=2)
+        session.add(other_work)
+        session.flush()
+        other_doc = Document(
+            topic_id=tid,
+            work_id=other_work.id,
+            original_filename="other.txt",
+            file_size_bytes=50,
+            char_count=50,
+            status="parsed",
+        )
+        session.add(other_doc)
+        session.flush()
+        session.add(
+            Chapter(
+                topic_id=tid,
+                document_id=other_doc.id,
+                chapter_index=0,
+                title="Wrong Resume Chapter",
+                start_char=0,
+                end_char=50,
+                char_count=50,
+            )
+        )
+        session.commit()
+
     class ResumeMockResult:
         ok = True
         content_json = MOCK_EXTRACTION_JSON
@@ -2877,12 +2941,20 @@ def test_resume_updates_run_usage_breakdown(engine):
         cumulative_prompt_cache_miss_tokens = 150
         usage_unavailable_attempts = 0
 
+    captured_chapter_titles: list[str] = []
+
+    def resume_extract(**kwargs: object) -> ResumeMockResult:
+        captured_chapter_titles.append(str(kwargs["chapter_title"]))
+        return ResumeMockResult()
+
     with patch(
         "services.local_extraction_worker.run_local_extraction_for_chunk",
-        return_value=ResumeMockResult(),
+        side_effect=resume_extract,
     ):
         with Session(engine) as session:
             resume_analysis_run(session, rid, retry_failed=False)
+
+    assert captured_chapter_titles == ["Ch1"]
 
     with Session(engine) as session:
         from models.analysis_run import AnalysisRun

@@ -220,8 +220,10 @@ def _persist_parse(topic_id: str, doc: Document, source: SourceDocument, session
     # Update topic
     topic = session.get(Topic, topic_id)
     if topic is not None:
-        topic.storage_bytes = doc.file_size_bytes
-        session.add(topic)
+        from services.document_service import refresh_topic_storage_bytes
+
+        session.flush()
+        refresh_topic_storage_bytes(topic_id, session)
 
     session.commit()
 

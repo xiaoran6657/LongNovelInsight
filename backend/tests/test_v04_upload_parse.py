@@ -55,6 +55,59 @@ class TestWorkUpload:
         assert r.status_code == 201
         assert r.json()["file_type"] == "epub"
 
+    def test_topic_storage_bytes_aggregate_across_works_and_delete(self, engine, client):
+        first_work_id = _setup_work(engine, client)
+        with Session(engine) as session:
+            first_work = session.get(Work, first_work_id)
+            assert first_work is not None
+            second_work = Work(
+                topic_id=first_work.topic_id,
+                title="Second Storage Work",
+                series_index=2,
+            )
+            session.add(second_work)
+            session.commit()
+            topic_id = first_work.topic_id
+            second_work_id = second_work.id
+
+        txt_bytes = "第一章\nTXT 内容。\n".encode()
+        epub_bytes = _minimal_epub()
+        txt_upload = client.post(
+            f"/api/works/{first_work_id}/documents/upload",
+            files={"file": ("first.txt", io.BytesIO(txt_bytes), "text/plain")},
+        )
+        epub_upload = client.post(
+            f"/api/works/{second_work_id}/documents/upload",
+            files={
+                "file": (
+                    "second.epub",
+                    io.BytesIO(epub_bytes),
+                    "application/epub+zip",
+                )
+            },
+        )
+        assert txt_upload.status_code == 201
+        assert epub_upload.status_code == 201
+
+        with Session(engine) as session:
+            topic = session.get(Topic, topic_id)
+            assert topic is not None
+            assert topic.storage_bytes == len(txt_bytes) + len(epub_bytes)
+
+        assert client.post(f"/api/works/{first_work_id}/parse").status_code == 200
+        with Session(engine) as session:
+            topic = session.get(Topic, topic_id)
+            assert topic is not None
+            assert topic.storage_bytes == len(txt_bytes) + len(epub_bytes)
+
+        deleted = client.delete(f"/api/topics/{topic_id}/documents/current")
+        assert deleted.status_code == 200
+        assert deleted.json()["freed_bytes"] == len(txt_bytes)
+        with Session(engine) as session:
+            topic = session.get(Topic, topic_id)
+            assert topic is not None
+            assert topic.storage_bytes == len(epub_bytes)
+
     def test_second_upload_to_work_409(self, engine, client):
         wid = _setup_work(engine, client)
         client.post(

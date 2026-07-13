@@ -487,3 +487,25 @@ def test_graph_get_rejects_work_from_another_topic(engine, client):
     response = client.get(f"/api/topics/{tid}/graphs/characters?work_id={other_work_id}")
     assert response.status_code == 404
     assert response.json()["detail"] == "Work not found in Topic"
+
+
+def test_graph_snapshot_reference_validation_rejects_malformed_records():
+    from services.cross_work_entity_service import graph_snapshot_references_are_valid
+
+    live_ids = {"alice", "bob"}
+    assert graph_snapshot_references_are_valid(
+        '[{"id":"alice"},{"id":"bob"}]',
+        '[{"source":"alice","target":"bob"}]',
+        live_ids,
+    )
+    assert not graph_snapshot_references_are_valid("[{}]", "[]", live_ids)
+    assert not graph_snapshot_references_are_valid(
+        '[{"id":"alice"}]',
+        '[{"source":"alice"}]',
+        live_ids,
+    )
+    assert not graph_snapshot_references_are_valid(
+        '[{"id":"alice"}]',
+        '[{"source":"alice","target":"bob"}]',
+        live_ids,
+    )

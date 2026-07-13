@@ -73,6 +73,21 @@ def _get_doc_by_work(work_id: str, session: Session) -> Document | None:
     return session.exec(select(Document).where(Document.work_id == work_id)).first()
 
 
+def refresh_topic_storage_bytes(topic_id: str, session: Session) -> int:
+    """Refresh the cached source-document byte total across every Work in a Topic."""
+    topic = session.get(Topic, topic_id)
+    if topic is None:
+        return 0
+
+    sizes = session.exec(
+        select(Document.file_size_bytes).where(Document.topic_id == topic_id)
+    ).all()
+    total = sum(size or 0 for size in sizes)
+    topic.storage_bytes = total
+    session.add(topic)
+    return total
+
+
 def _delete_document_derived_data(
     topic_id: str, session: Session, document_id: str | None = None
 ) -> None:
@@ -331,9 +346,8 @@ def _upload_txt(
         metadata_json=None,
     )
     session.add(doc)
-
-    topic.storage_bytes = len(content)
-    session.add(topic)
+    session.flush()
+    refresh_topic_storage_bytes(topic_id, session)
     _update_work_status(work, "uploaded", session)
 
     session.commit()
@@ -382,9 +396,8 @@ def _upload_epub(
         metadata_json=metadata_json,
     )
     session.add(doc)
-
-    topic.storage_bytes = len(content)
-    session.add(topic)
+    session.flush()
+    refresh_topic_storage_bytes(topic_id, session)
     _update_work_status(work, "uploaded", session)
 
     session.commit()
@@ -435,11 +448,10 @@ def delete_current_document(topic_id: str, session: Session) -> dict:
     storage.safe_delete_file(config.DATA_DIR / doc.storage_path)
     storage.safe_delete_empty_dirs(storage.get_source_dir(topic_id))
 
-    freed = topic.storage_bytes
-    topic.storage_bytes = 0
-    session.add(topic)
-
+    freed = doc.file_size_bytes
     session.delete(doc)
+    session.flush()
+    refresh_topic_storage_bytes(topic_id, session)
     session.commit()
     return {"deleted": True, "freed_bytes": freed}
 

@@ -9,7 +9,11 @@ from models.analysis_run import AnalysisRun
 from models.enums import JobStatus
 from models.local_extraction import LocalExtraction
 from services import atom_normalizer, local_extraction_worker
-from services.analysis_run_execution_service import resolve_api_key, serialize_attempts
+from services.analysis_run_execution_service import (
+    load_chapter_titles_by_chunk_id,
+    resolve_api_key,
+    serialize_attempts,
+)
 
 
 def _now() -> datetime:
@@ -105,7 +109,6 @@ def clear_atoms_for_chunk(session: Session, run_id: str, chunk_id: str) -> int:
 
 def retry_failed_extractions(session: Session, run_id: str) -> dict:
     """Retry failed extraction rows, then rebuild merge and final outputs."""
-    from models.chapter import Chapter
     from models.chunk import Chunk
 
     run = session.get(AnalysisRun, run_id)
@@ -135,12 +138,10 @@ def retry_failed_extractions(session: Session, run_id: str) -> dict:
     max_tokens = config.get("max_output_tokens") or 3072
     thinking_mode = config.get("thinking_mode", "disabled")
 
-    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-    chapter_map = {chapter.chapter_index: chapter.title for chapter in chapters}
-
     chunk_ids = {extraction.chunk_id for extraction in failed_extractions if extraction.chunk_id}
     chunks = session.exec(select(Chunk).where(Chunk.id.in_(chunk_ids))).all()  # noqa: E711
     chunk_map = {chunk.id: chunk for chunk in chunks}
+    chapter_titles_by_chunk_id = load_chapter_titles_by_chunk_id(session, chunks)
 
     retried = 0
     retry_succeeded = 0
@@ -164,7 +165,7 @@ def retry_failed_extractions(session: Session, run_id: str) -> dict:
             thinking_mode=thinking_mode,
             chapter_index=chunk.chapter_index,
             chunk_index=chunk.chunk_index,
-            chapter_title=chapter_map.get(chunk.chapter_index),
+            chapter_title=chapter_titles_by_chunk_id.get(chunk.id),
         )
 
         clear_atoms_for_chunk(session, run_id, chunk.id)
@@ -311,7 +312,6 @@ def resume_analysis_run(
     retry_failed: bool = True,
 ) -> AnalysisRun:
     """Run missing chunks and optionally retry failures without rerunning success."""
-    from models.chapter import Chapter
     from models.chunk import Chunk
 
     run = session.get(AnalysisRun, run_id)
@@ -348,6 +348,7 @@ def resume_analysis_run(
 
     chunks = session.exec(select(Chunk).where(Chunk.id.in_(to_run))).all()  # noqa: E711
     chunk_map = {chunk.id: chunk for chunk in chunks}
+    chapter_titles_by_chunk_id = load_chapter_titles_by_chunk_id(session, chunks)
 
     config = run.get_effective_config()
     api_key = resolve_api_key(session, run.topic_id)
@@ -356,9 +357,6 @@ def resume_analysis_run(
     temperature = config.get("temperature") or 0.1
     max_tokens = config.get("max_output_tokens") or 3072
     thinking_mode = config.get("thinking_mode", "disabled")
-
-    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-    chapter_map = {chapter.chapter_index: chapter.title for chapter in chapters}
 
     for chunk_id in to_run:
         chunk = chunk_map.get(chunk_id)
@@ -379,7 +377,7 @@ def resume_analysis_run(
             thinking_mode=thinking_mode,
             chapter_index=chunk.chapter_index,
             chunk_index=chunk.chunk_index,
-            chapter_title=chapter_map.get(chunk.chapter_index),
+            chapter_title=chapter_titles_by_chunk_id.get(chunk.id),
         )
 
         extraction = session.exec(

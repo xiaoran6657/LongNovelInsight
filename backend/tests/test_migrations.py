@@ -1,7 +1,7 @@
 """End-to-end tests for the ordered database migration registry."""
 
 from sqlalchemy import event, inspect, text
-from sqlmodel import create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from migrations import ORDERED_MIGRATIONS, Migration, run_migrations, upgrade_schema
 
@@ -151,11 +151,109 @@ def _legacy_engine(tmp_path):
     return engine
 
 
+def _pre_patch_v040_engine(tmp_path):
+    """Create current-schema rows with data corruption produced by the v0.4.0 services."""
+    import models  # noqa: F401
+    from models.document import Document
+    from models.global_entity import GlobalEntity
+    from models.graph_snapshot import GraphSnapshot
+    from models.topic import Topic
+    from models.work import Work
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'pre_patch_v040.sqlite'}")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_document_work_id "
+                "ON document(work_id) WHERE work_id IS NOT NULL"
+            )
+        )
+    with Session(engine) as session:
+        topic = Topic(id="t-v040", name="Pre-patch Topic", storage_bytes=1)
+        work_one = Work(id="w-v040-1", topic_id=topic.id, title="One", series_index=1)
+        work_two = Work(id="w-v040-2", topic_id=topic.id, title="Two", series_index=2)
+        session.add(topic)
+        session.add(work_one)
+        session.add(work_two)
+        session.add(
+            Document(
+                id="d-v040-1",
+                topic_id=topic.id,
+                work_id=work_one.id,
+                original_filename="one.txt",
+                file_size_bytes=100,
+            )
+        )
+        session.add(
+            Document(
+                id="d-v040-2",
+                topic_id=topic.id,
+                work_id=work_two.id,
+                original_filename="two.epub",
+                file_type="epub",
+                file_size_bytes=250,
+            )
+        )
+        for entity_id, name in (("live-a", "Alice"), ("live-b", "Bob")):
+            session.add(
+                GlobalEntity(
+                    id=entity_id,
+                    topic_id=topic.id,
+                    entity_type="character",
+                    canonical_name=name,
+                )
+            )
+        session.add_all(
+            (
+                GraphSnapshot(
+                    id="valid",
+                    topic_id=topic.id,
+                    graph_type="character_relationship",
+                    nodes_json='[{"id":"live-a"},{"id":"live-b"}]',
+                    edges_json='[{"source":"live-a","target":"live-b"}]',
+                ),
+                GraphSnapshot(
+                    id="dangling",
+                    topic_id=topic.id,
+                    graph_type="character_relationship",
+                    nodes_json='[{"id":"removed-a"}]',
+                    edges_json="[]",
+                ),
+                GraphSnapshot(
+                    id="missing-node-id",
+                    topic_id=topic.id,
+                    graph_type="character_relationship",
+                    nodes_json="[{}]",
+                    edges_json="[]",
+                ),
+                GraphSnapshot(
+                    id="missing-edge-target",
+                    topic_id=topic.id,
+                    graph_type="character_relationship",
+                    nodes_json='[{"id":"live-a"}]',
+                    edges_json='[{"source":"live-a"}]',
+                ),
+                GraphSnapshot(
+                    id="endpoint-not-in-nodes",
+                    topic_id=topic.id,
+                    graph_type="character_relationship",
+                    nodes_json='[{"id":"live-a"}]',
+                    edges_json='[{"source":"live-a","target":"live-b"}]',
+                ),
+            )
+        )
+        session.commit()
+    return engine
+
+
 def test_registry_ids_are_unique_and_ordered():
     ids = [migration.id for migration in ORDERED_MIGRATIONS]
     assert len(ids) == len(set(ids))
     assert ids == sorted(ids)
     assert ids.index("005_source_locators") < ids.index("010_work_schema")
+    assert ids.index("010_work_schema") < ids.index("012_graph_snapshot_integrity")
+    assert ids.index("012_graph_snapshot_integrity") < ids.index("013_topic_storage_totals")
 
 
 def test_runner_preserves_order_and_stops_on_failure(engine):
@@ -275,3 +373,20 @@ def test_full_legacy_upgrade_is_idempotent_and_preserves_data(tmp_path):
             == 0
         )
         assert list(conn.execute(text("PRAGMA foreign_key_check"))) == []
+
+
+def test_pre_patch_v040_upgrade_repairs_graphs_and_storage_idempotently(tmp_path):
+    from models.graph_snapshot import GraphSnapshot
+    from models.topic import Topic
+
+    engine = _pre_patch_v040_engine(tmp_path)
+
+    upgrade_schema(engine)
+    upgrade_schema(engine)
+
+    with Session(engine) as session:
+        topic = session.get(Topic, "t-v040")
+        assert topic is not None
+        assert topic.storage_bytes == 350
+        snapshot_ids = set(session.exec(select(GraphSnapshot.id)).all())
+        assert snapshot_ids == {"valid"}

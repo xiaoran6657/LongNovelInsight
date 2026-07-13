@@ -410,3 +410,53 @@ concern makes drift detectable and keeps compatibility history from appearing as
   context is needed.
 - Documentation verification compares the API map with the generated OpenAPI method/path set and
   checks local Markdown links.
+
+---
+
+## 2026-07-13 — ADR-024: Entity Identity Continuity and Graph Reference Integrity
+
+**Decision:** A Topic-wide GlobalEntity registry rebuild attempts to reuse each existing entity ID
+when stable IDs, normalized canonical identity, or normalized aliases show that the rebuilt group
+represents the same entity. Stable IDs are persisted in entity metadata as well as mention
+metadata. After rebuilding, every retained character-relationship GraphSnapshot is checked against
+the live registry. A snapshot with malformed serialized records or any missing node/source/target
+entity reference is deleted.
+
+**Rationale:** Graph scopes are independently retained, but graph nodes and edges use GlobalEntity
+IDs as evidence-bearing references. Recreating every entity with a new UUID makes otherwise valid
+All or scoped snapshots dangle after an entities-only or differently scoped full run. ID reuse
+preserves valid projections; selective invalidation prevents a stale projection from pretending to
+have live mentions when an entity was genuinely removed or changed beyond recognition.
+
+**Consequences:**
+- Stable-ID overlap has priority over normalized canonical-name and alias fallback; matching is
+  deterministic and one prior ID can be reused by at most one rebuilt group.
+- An entity merge or split can remove prior IDs. Every snapshot referencing a removed ID is
+  invalidated and must be rebuilt before it can be served again.
+- Empty entity rebuilds clear the registry and invalidate all dependent character-relationship
+  snapshots.
+- Scoped cross-work runs still rebuild the canonical Topic-wide registry under ADR-020; they do not
+  introduce independently versioned entity scopes.
+
+---
+
+## 2026-07-13 — ADR-025: Replayable Repair of Persisted Derived-State Caches
+
+**Decision:** Ordered startup migrations repair two v0.4.0 derived-state caches on every replay.
+Character-relationship snapshots are retained only when nodes have unique non-empty string IDs,
+edges have non-empty string source and target IDs present in the node set, and all node IDs resolve
+to the Topic's live GlobalEntity registry. `Topic.storage_bytes` is recomputed as the sum of all
+persisted source Document byte sizes for that Topic.
+
+**Rationale:** Correct mutation paths do not repair data already persisted by an older release.
+Waiting for a user to rebuild entities or mutate a document would continue serving dangling graph
+evidence or stale Dashboard totals after upgrade. These records are deterministic projections of
+other local rows, so startup can repair them without source-file access or an LLM request.
+
+**Consequences:**
+- The repairs are idempotent and remain in the replayable ordered registry after the v0.4 Work
+  schema migration.
+- Invalid graph snapshots are deleted rather than guessed or rewritten; users can deterministically
+  rebuild them from the live entity registry and extracted atoms.
+- Empty graph snapshots remain valid when they contain empty node and edge arrays.
+- Storage repair trusts persisted Document metadata and does not scan or alter files under `data/`.

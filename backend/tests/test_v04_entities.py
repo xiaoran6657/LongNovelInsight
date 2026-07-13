@@ -2,7 +2,7 @@
 
 import json
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from models.chapter import Chapter
 from models.chunk import Chunk
@@ -349,6 +349,104 @@ class TestEntityScopeSemantics:
         assert excluded.status_code == 200
         assert excluded.json()["entities"] == []
         assert excluded.json()["total"] == 0
+
+    def test_entity_rebuild_keeps_preserved_graph_references_valid(self, engine):
+        tid, rid, wids, cids = _setup_topic_with_works(engine, num_works=2)
+
+        with Session(engine) as session:
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CHARACTER,
+                "char_alice",
+                {"name": "Alice"},
+                cids[0],
+            )
+            bob = _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.CHARACTER,
+                "char_bob",
+                {"name": "Bob"},
+                cids[1],
+            )
+            _create_atom(
+                session,
+                rid,
+                tid,
+                AtomType.RELATION,
+                "rel_alice_bob",
+                {
+                    "character_a": "Alice",
+                    "character_b": "Bob",
+                    "relation_type": "ally",
+                },
+                cids[0],
+            )
+            session.commit()
+            bob_atom_id = bob.id
+
+        from models.cross_work_run import CrossWorkRun
+        from models.global_entity import GlobalEntity
+        from models.graph_snapshot import GraphSnapshot
+        from services.cross_work_run_service import create_cross_work_run, execute_cross_work_run
+
+        def execute(mode: str, work_ids: list[str] | None = None) -> None:
+            with Session(engine) as session:
+                run = create_cross_work_run(session, tid, mode=mode, work_ids=work_ids)
+                run_id = run.id
+            execute_cross_work_run(run_id, engine=engine)
+            with Session(engine) as session:
+                completed = session.get(CrossWorkRun, run_id)
+                assert completed is not None
+                assert completed.status == "succeeded", completed.error
+
+        execute("full")
+
+        with Session(engine) as session:
+            all_snapshot = next(
+                snapshot
+                for snapshot in session.exec(
+                    select(GraphSnapshot).where(GraphSnapshot.topic_id == tid)
+                ).all()
+                if json.loads(snapshot.scope_json).get("work_ids", []) == []
+            )
+            all_snapshot_id = all_snapshot.id
+            preserved_ids = {node["id"] for node in json.loads(all_snapshot.nodes_json)}
+            assert preserved_ids
+
+        execute("entities_only")
+        execute("full", work_ids=[wids[0]])
+
+        with Session(engine) as session:
+            live_ids = set(
+                session.exec(select(GlobalEntity.id).where(GlobalEntity.topic_id == tid)).all()
+            )
+            all_snapshot = session.get(GraphSnapshot, all_snapshot_id)
+            assert all_snapshot is not None
+            node_ids = {node["id"] for node in json.loads(all_snapshot.nodes_json)}
+            edge_ids = {
+                entity_id
+                for edge in json.loads(all_snapshot.edges_json)
+                for entity_id in (edge["source"], edge["target"])
+            }
+            assert node_ids == preserved_ids
+            assert node_ids | edge_ids <= live_ids
+
+            bob_atom = session.get(ExtractedAtom, bob_atom_id)
+            assert bob_atom is not None
+            session.delete(bob_atom)
+            session.commit()
+
+            from services.cross_work_entity_service import build_entity_registry
+
+            result = build_entity_registry(tid, session)
+            assert result["invalidated_graph_snapshot_count"] == 2
+            assert (
+                session.exec(select(GraphSnapshot).where(GraphSnapshot.topic_id == tid)).all() == []
+            )
 
     def test_entity_get_rejects_work_from_another_topic(self, engine, client):
         tid, _, _, _ = _setup_topic_with_works(engine, num_works=1)

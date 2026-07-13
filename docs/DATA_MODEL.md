@@ -82,7 +82,7 @@ One story universe or research workspace.
 | --- | --- |
 | `id`, `name`, `description` | Identity and user metadata |
 | `provider_id` | Optional bound ModelProvider |
-| `status`, `storage_bytes` | Aggregate UI state and cached storage total |
+| `status`, `storage_bytes` | Aggregate UI state and sum of persisted source Document byte sizes |
 | `created_at`, `updated_at` | Lifecycle timestamps |
 
 Topic creation also creates a deterministic default Work. Legacy Topic-level source and analysis
@@ -243,7 +243,8 @@ product runtime, so normal v0.4 workflows do not populate this table.
 
 The canonical Topic-wide entity registry. It stores type, canonical name, aliases, contributing
 Work IDs, mention/evidence counts, confidence, merge strategy, and metadata. It is not partitioned
-into independently versioned scoped registries.
+into independently versioned scoped registries. Rebuilds preserve IDs for identity-equivalent
+groups when possible; graph snapshots containing removed entity IDs are invalidated.
 
 ### `entity_mention`
 
@@ -290,6 +291,8 @@ Notable repair rules include:
 - the historical Topic-unique Document constraint is detected through SQLite unique constraints;
 - migrations are idempotent and stop on failure;
 - foreign-key checks run after schema rebuilds, and connection-wide enforcement is restored.
+- startup removes malformed or dangling character-relationship snapshots using the live entity
+  registry and backfills every Topic's cached source-byte aggregate from Document rows.
 
 Tests for migration behavior use genuine historical DDL and temporary SQLite files. They validate
 data preservation, replay, FTS, foreign keys, Work/Chat backfills, and failure-stop ordering.

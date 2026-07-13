@@ -146,7 +146,9 @@ Each migration receives its target Engine, is idempotent, and stops the sequence
 registry is replayable rather than tracked by a one-time version ledger because Work and Chat
 migrations also repair partial or newly introduced null data. SQLite foreign keys are enabled on
 every pooled connection. Startup recovery never calls the LLM and leaves intentional `pending`
-runs unchanged.
+runs unchanged. Startup migrations also recompute cached Topic source-byte totals and remove
+persisted character-relationship snapshots whose required node/edge fields or GlobalEntity
+references are invalid.
 
 See [DATA_MODEL.md](DATA_MODEL.md) for tables and [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md)
 for recovery invariants.
@@ -234,6 +236,12 @@ Cross-work entity, graph, and timeline builders are deterministic and make no LL
 - Work IDs are sorted, deduplicated, and validated as members of the Topic.
 - GlobalEntity and EntityMention form one canonical Topic-wide registry; an entity build is not
   narrowed by a scoped run request.
+- Registry rebuilds reuse a GlobalEntity ID when stable identity evidence still resolves to the
+  same entity. After each rebuild, any retained graph snapshot with a node or edge reference that
+  no longer resolves to the live registry is invalidated rather than served with dangling evidence
+  links.
+- The replayable startup migration applies the same validation to snapshots persisted by earlier
+  versions, so an upgrade does not require a manual entity rebuild.
 - GraphSnapshot is partitioned by normalized scope. A rebuild replaces only the same scope, and an
   unfiltered GET reads only All.
 - TimelineItem is Topic-owned but Work-partitioned. A scoped rebuild replaces only selected Works.

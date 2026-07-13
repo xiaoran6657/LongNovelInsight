@@ -2,49 +2,33 @@
 
 Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 
-## P0 — Complete the v0.4.0 Release Baseline
+`ready` identifies a scoped v0.4.x candidate that can be selected by the user. It does not by
+itself authorize implementation, dependency changes, or Git publication.
 
-| ID | Status | Owner | Task | Acceptance |
+## Current Post-Release Remediation
+
+| ID | Status | Area | Task |
+| --- | --- | --- | --- |
+| CROSS-001 | done | backend | Preserve valid entity references across retained graph scopes and repair pre-patch snapshots on startup |
+| RUN-003 | done | backend | Resolve AnalysisRun chapter titles from the selected chunks in initial, retry, and resume paths |
+| STORAGE-001 | done | backend | Maintain and startup-backfill Topic.storage_bytes as the aggregate of all Work source Documents |
+| STATUS-001 | done | docs | Refresh post-release branch state, archive the v0.4.0 completion queue, and create a v0.4.x queue |
+
+The current remediation is implemented and fully backend-verified in the working tree. It remains
+uncommitted and unpublished pending explicit Git authorization.
+
+## Ready v0.4.x Maintenance Queue
+
+| ID | Status | Area | Task | Acceptance Boundary |
 | --- | --- | --- | --- | --- |
-| BASE-001 | done | primary | Install declared backend dependencies in Conda | `beautifulsoup4 4.15.0` installed on 2026-07-12 |
-| BASE-002 | done | primary | Run full backend suite after BASE-001 | 730 passed; 6 integration tests deselected; Ruff lint and format pass |
-| BASE-003 | done | primary | Run full Playwright suite | 52 tests passed with mocked APIs in 19.3 seconds on 2026-07-12 |
-| BASE-004 | done | frontend | Upgrade vulnerable Vite and React Router versions | Frontend gates pass; npm audit reports 0 vulnerabilities across 245 dependencies |
-| BASE-005 | done | primary | Review takeover diff and documentation links | Version, hygiene, secret, forbidden-tech, diff, and local-link scans pass on 2026-07-12 |
+| CHAT-003 | ready | frontend/backend | Add Work-scoped chat evidence filtering | Chat retrieval and citations remain inside the selected Work without changing Topic/session ownership |
+| USAGE-001 | ready | backend | Complete retry attempt-history usage merging | Retry metadata retains deterministic per-attempt token and cost-estimate history without real provider calls in tests |
+| GRAPH-001 | ready | frontend | Add an interactive relationship graph projection | Use the existing graph endpoint and current frontend stack; preserve table/evidence access and add no visualization dependency without approval |
+| TIMELINE-001 | ready | frontend/backend | Add timeline pagination and evidence expansion | Pagination totals and Work filters stay exact; evidence remains source-linked |
+| A11Y-001 | ready | frontend | Run a narrow-window responsive and keyboard accessibility pass | Core Work, analysis, chat, graph, and timeline flows remain usable at narrow widths and by keyboard |
 
-## P1 — Correctness and User Trust
+## Scope Guard
 
-| ID | Status | Area | Task |
-| --- | --- | --- | --- |
-| UI-001 | done | frontend | Wire active Work filtering into Entities, Graph, and Timeline query parameters and keys |
-| UI-002 | done | frontend/backend | Add API-credit confirmation and run/result handoff to Work analysis |
-| UI-003 | done | frontend | Normalize untrusted analysis JSON and add per-output error boundaries |
-| COST-001 | done | frontend/backend | Expose a Work analysis estimate endpoint and show a numeric preflight estimate |
-| CHAT-001 | done | frontend/backend | Replace destructive edit-resend sequencing with an atomic server transaction |
-| RUN-001 | done | backend | Define one authoritative analysis-run path and a deprecation plan for jobs/legacy outputs |
-| RUN-002 | done | backend | Add startup recovery and single-executor guarantees for interrupted runs |
-| CROSS-001 | done | backend | Harden All vs scoped cross-work snapshot semantics and GET filter assertions |
-
-## P2 — Quality and Maintainability
-
-| ID | Status | Area | Task |
-| --- | --- | --- | --- |
-| FE-TEST-001 | done | frontend | Typecheck and lint E2E/config files; add pure-logic unit tests |
-| FE-CACHE-001 | done | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
-| CHAT-002 | done | backend | Add explicit turn/reply linkage and stable ordering for chat message pairs |
-| E2E-001 | done | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
-| DB-001 | done | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |
-| DOC-001 | done | docs | Consolidate current v0.4 API, architecture, and LLM pipeline documentation |
-| REFACTOR-001 | done | both | Split the largest service/components along existing domain boundaries without new frameworks |
-| REL-001 | done | release | Run the final v0.4.0 release-readiness audit and draft release notes without tagging or publishing |
-| REL-002 | done | release | Promote final version metadata and create the v0.4.0 release commit, tag, and publication after explicit approval |
-
-## Later v0.4.x Candidates
-
-- Interactive relationship graph visualization.
-- Timeline pagination and evidence expansion.
-- Work-scoped chat evidence filtering.
-- Complete retry attempt-history merging.
-- Narrow-window responsive layout and keyboard accessibility pass.
-
-Roadmap items beyond v0.4 require explicit scope approval before implementation.
+Completed v0.4.0 delivery details are archived in
+[`archive/v0.4.0_COMPLETED.md`](archive/v0.4.0_COMPLETED.md). Roadmap items beyond v0.4 require an
+explicit user scope change before implementation.

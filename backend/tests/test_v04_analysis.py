@@ -232,7 +232,7 @@ class TestWorkAnalysis:
                 topic_id=topic.id,
                 document_id=d1.id,
                 chapter_index=0,
-                title="Ch1",
+                title="Work 1 Chapter",
                 start_char=0,
                 end_char=50,
                 char_count=50,
@@ -241,7 +241,7 @@ class TestWorkAnalysis:
                 topic_id=topic.id,
                 document_id=d2.id,
                 chapter_index=0,
-                title="Ch1",
+                title="Work 2 Chapter",
                 start_char=0,
                 end_char=50,
                 char_count=50,
@@ -285,9 +285,11 @@ class TestWorkAnalysis:
 
         # Run analysis for Work 1
         called_chunks = []
+        called_chapter_titles = []
 
         def mock_extract(**kwargs):
             called_chunks.append(kwargs["chunk_id"])
+            called_chapter_titles.append(kwargs["chapter_title"])
             return MockExtractionResult(chunk_id=kwargs["chunk_id"])
 
         with patch(
@@ -312,6 +314,7 @@ class TestWorkAnalysis:
         # Only Work 1's chunk should be analyzed
         assert ck1_id in called_chunks, "Work 1's chunk should be analyzed"
         assert ck2_id not in called_chunks, "Work 2's chunk should NOT be analyzed"
+        assert called_chapter_titles == ["Work 1 Chapter"]
 
     def test_run_status_includes_work_id(self, engine):
         """Run status response should include work_id from chunk selection."""

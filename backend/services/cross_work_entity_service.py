@@ -15,6 +15,7 @@ from models.entity_mention import EntityMention
 from models.enums import AtomType
 from models.extracted_atom import ExtractedAtom
 from models.global_entity import GlobalEntity
+from models.graph_snapshot import GraphSnapshot
 
 
 def _normalize_name(name: str) -> str:
@@ -98,12 +99,22 @@ def build_entity_registry(
         atom_base.order_by(ExtractedAtom.chapter_index, ExtractedAtom.chunk_index)
     ).all()
 
-    # Always clear old registry before building or returning empty
-    _clear_registry(topic_id, session)
-
     if not atoms:
+        _clear_registry(topic_id, session)
+        invalidated_snapshot_count = _invalidate_graph_snapshots_with_missing_entities(
+            topic_id, session, set()
+        )
+        if invalidated_snapshot_count:
+            warnings.append(
+                f"Invalidated {invalidated_snapshot_count} graph snapshot(s) with removed entities"
+            )
         session.commit()
-        return {"entity_count": 0, "mention_count": 0, "warnings": warnings}
+        return {
+            "entity_count": 0,
+            "mention_count": 0,
+            "invalidated_graph_snapshot_count": invalidated_snapshot_count,
+            "warnings": warnings,
+        }
 
     # 2. Build entity groups by normalized key
     # Phase 1: group by stable_id first
@@ -180,9 +191,13 @@ def build_entity_registry(
                 "merge_strategy": "exact",
             }
 
+    reusable_entity_ids = _match_existing_entity_ids(topic_id, session, resolved)
+    _clear_registry(topic_id, session)
+
     # 4. Write GlobalEntity + EntityMention rows
     entity_count = 0
     mention_count = 0
+    live_entity_ids: set[str] = set()
     for key, info in resolved.items():
         group_atoms = info["atoms"]
 
@@ -194,19 +209,28 @@ def build_entity_registry(
             confidence = 0.92  # exact stable_id or name match
             merge_strategy = "exact"
 
+        entity_fields = {
+            "topic_id": topic_id,
+            "entity_type": info["entity_type"],
+            "canonical_name": info["canonical_name"],
+            "aliases_json": json.dumps(info["aliases"], ensure_ascii=False),
+            "work_ids_json": json.dumps(sorted(info["work_ids"]), ensure_ascii=False),
+            "mention_count": len(group_atoms),
+            "evidence_count": sum(1 for a in group_atoms if _parse_json_list(a.evidence_quotes)),
+            "confidence": confidence,
+            "merge_strategy": merge_strategy,
+            "metadata_json": json.dumps(
+                {"stable_ids": sorted(info["stable_ids"])}, ensure_ascii=False
+            ),
+        }
+        reusable_id = reusable_entity_ids.get(key)
         ge = GlobalEntity(
-            topic_id=topic_id,
-            entity_type=info["entity_type"],
-            canonical_name=info["canonical_name"],
-            aliases_json=json.dumps(info["aliases"], ensure_ascii=False),
-            work_ids_json=json.dumps(sorted(info["work_ids"]), ensure_ascii=False),
-            mention_count=len(group_atoms),
-            evidence_count=sum(1 for a in group_atoms if _parse_json_list(a.evidence_quotes)),
-            confidence=confidence,
-            merge_strategy=merge_strategy,
+            **entity_fields,
+            **({"id": reusable_id} if reusable_id is not None else {}),
         )
         session.add(ge)
         session.flush()
+        live_entity_ids.add(ge.id)
         entity_count += 1
 
         # Mentions
@@ -232,14 +256,20 @@ def build_entity_registry(
             session.add(em)
             mention_count += 1
 
-    session.commit()
+    invalidated_snapshot_count = _invalidate_graph_snapshots_with_missing_entities(
+        topic_id, session, live_entity_ids
+    )
+    if invalidated_snapshot_count:
+        warnings.append(
+            f"Invalidated {invalidated_snapshot_count} graph snapshot(s) with removed entities"
+        )
 
-    if not warnings:
-        pass  # no warnings
+    session.commit()
 
     return {
         "entity_count": entity_count,
         "mention_count": mention_count,
+        "invalidated_graph_snapshot_count": invalidated_snapshot_count,
         "warnings": warnings,
     }
 
@@ -296,6 +326,171 @@ def _parse_json_list(raw: str) -> list:
         return parsed if isinstance(parsed, list) else []
     except (json.JSONDecodeError, TypeError):
         return []
+
+
+def _parse_json_dict(raw: str | None) -> dict:
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _match_existing_entity_ids(
+    topic_id: str,
+    session: Session,
+    resolved: dict[str, dict],
+) -> dict[str, str]:
+    """Reuse IDs for identity-equivalent entity groups so retained graph snapshots stay valid."""
+    existing_entities = session.exec(
+        select(GlobalEntity).where(GlobalEntity.topic_id == topic_id).order_by(GlobalEntity.id)
+    ).all()
+    existing_mentions = session.exec(
+        select(EntityMention).where(EntityMention.topic_id == topic_id)
+    ).all()
+
+    stable_ids_by_entity: dict[str, set[str]] = {entity.id: set() for entity in existing_entities}
+    for entity in existing_entities:
+        metadata_stable_ids = _parse_json_dict(entity.metadata_json).get("stable_ids", [])
+        if isinstance(metadata_stable_ids, list):
+            stable_ids_by_entity[entity.id].update(
+                stable_id for stable_id in metadata_stable_ids if isinstance(stable_id, str)
+            )
+    for mention in existing_mentions:
+        stable_id = _parse_json_dict(mention.metadata_json).get("stable_id")
+        if isinstance(stable_id, str):
+            stable_ids_by_entity.setdefault(mention.global_entity_id, set()).add(stable_id)
+
+    existing_identity = []
+    for entity in existing_entities:
+        names = {_normalize_name(entity.canonical_name)}
+        names.update(
+            _normalize_name(alias)
+            for alias in _parse_json_list(entity.aliases_json)
+            if isinstance(alias, str)
+        )
+        existing_identity.append(
+            {
+                "id": entity.id,
+                "entity_type": entity.entity_type,
+                "canonical_name": _normalize_name(entity.canonical_name),
+                "names": {name for name in names if name},
+                "stable_ids": stable_ids_by_entity.get(entity.id, set()),
+            }
+        )
+
+    reusable: dict[str, str] = {}
+    used_existing_ids: set[str] = set()
+    for key, info in resolved.items():
+        new_stable_ids = set(info["stable_ids"])
+        new_canonical_name = _normalize_name(info["canonical_name"])
+        new_names = {new_canonical_name}
+        new_names.update(
+            _normalize_name(alias) for alias in info["aliases"] if isinstance(alias, str)
+        )
+        new_names.discard("")
+
+        candidates: list[tuple[int, str]] = []
+        for existing in existing_identity:
+            if (
+                existing["id"] in used_existing_ids
+                or existing["entity_type"] != info["entity_type"]
+            ):
+                continue
+
+            stable_overlap = new_stable_ids & existing["stable_ids"]
+            if stable_overlap:
+                score = 100 + len(stable_overlap)
+            elif new_canonical_name and new_canonical_name == existing["canonical_name"]:
+                score = 50
+            elif new_names & existing["names"]:
+                score = 25
+            else:
+                continue
+            candidates.append((score, existing["id"]))
+
+        if candidates:
+            ranked_candidates = sorted(
+                candidates,
+                key=lambda candidate: (-candidate[0], candidate[1]),
+            )
+            _, reusable_id = ranked_candidates[0]
+            reusable[key] = reusable_id
+            used_existing_ids.add(reusable_id)
+
+    return reusable
+
+
+def _invalidate_graph_snapshots_with_missing_entities(
+    topic_id: str,
+    session: Session,
+    live_entity_ids: set[str],
+) -> int:
+    """Delete only snapshots whose serialized node/edge references no longer resolve."""
+    snapshots = session.exec(
+        select(GraphSnapshot).where(
+            GraphSnapshot.topic_id == topic_id,
+            GraphSnapshot.graph_type == "character_relationship",
+        )
+    ).all()
+    invalidated = 0
+    for snapshot in snapshots:
+        if not graph_snapshot_references_are_valid(
+            snapshot.nodes_json,
+            snapshot.edges_json,
+            live_entity_ids,
+        ):
+            session.delete(snapshot)
+            invalidated += 1
+
+    session.flush()
+    return invalidated
+
+
+def graph_snapshot_references_are_valid(
+    nodes_json: str,
+    edges_json: str,
+    live_entity_ids: set[str],
+) -> bool:
+    """Return whether a serialized graph is structurally valid and entity-linked."""
+    nodes = _parse_json_object_list(nodes_json)
+    edges = _parse_json_object_list(edges_json)
+    if nodes is None or edges is None:
+        return False
+
+    node_ids: list[str] = []
+    for node in nodes:
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            return False
+        node_ids.append(node_id)
+    node_id_set = set(node_ids)
+    if len(node_id_set) != len(node_ids) or not node_id_set.issubset(live_entity_ids):
+        return False
+
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if not isinstance(source, str) or not source:
+            return False
+        if not isinstance(target, str) or not target:
+            return False
+        if source not in node_id_set or target not in node_id_set:
+            return False
+
+    return True
+
+
+def _parse_json_object_list(raw: str) -> list[dict] | None:
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        return None
+    return parsed
 
 
 def _clear_registry(topic_id: str, session: Session) -> None:

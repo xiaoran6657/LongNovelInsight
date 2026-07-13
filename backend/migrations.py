@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import event, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, select
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +317,53 @@ def migrate_chat_message_linkage_columns(engine: Engine) -> None:
         )
 
 
+def migrate_graph_snapshot_integrity(engine: Engine) -> None:
+    """Remove persisted graph snapshots that cannot resolve to the live entity registry."""
+    from models.global_entity import GlobalEntity
+    from models.graph_snapshot import GraphSnapshot
+    from services.cross_work_entity_service import graph_snapshot_references_are_valid
+
+    with Session(engine) as session:
+        snapshots = session.exec(
+            select(GraphSnapshot).where(GraphSnapshot.graph_type == "character_relationship")
+        ).all()
+        live_ids_by_topic: dict[str, set[str]] = {}
+        invalidated = 0
+        for snapshot in snapshots:
+            if snapshot.topic_id not in live_ids_by_topic:
+                live_ids_by_topic[snapshot.topic_id] = set(
+                    session.exec(
+                        select(GlobalEntity.id).where(GlobalEntity.topic_id == snapshot.topic_id)
+                    ).all()
+                )
+            if not graph_snapshot_references_are_valid(
+                snapshot.nodes_json,
+                snapshot.edges_json,
+                live_ids_by_topic[snapshot.topic_id],
+            ):
+                session.delete(snapshot)
+                invalidated += 1
+        session.commit()
+        if invalidated:
+            logger.info(
+                "graph snapshot integrity migration: invalidated %d snapshot(s)",
+                invalidated,
+            )
+
+
+def migrate_topic_storage_totals(engine: Engine) -> None:
+    """Recompute every Topic's cached source-document byte total."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE topic SET storage_bytes = COALESCE(("
+                "SELECT SUM(COALESCE(document.file_size_bytes, 0)) "
+                "FROM document WHERE document.topic_id = topic.id"
+                "), 0)"
+            )
+        )
+
+
 ORDERED_MIGRATIONS: tuple[Migration, ...] = (
     Migration("001_chat_usage", "Add chat token usage columns", migrate_chat_message_usage_columns),
     Migration(
@@ -344,6 +391,16 @@ ORDERED_MIGRATIONS: tuple[Migration, ...] = (
     ),
     Migration(
         "011_chat_linkage", "Add explicit chat turn linkage", migrate_chat_message_linkage_columns
+    ),
+    Migration(
+        "012_graph_snapshot_integrity",
+        "Remove malformed or dangling graph snapshots",
+        migrate_graph_snapshot_integrity,
+    ),
+    Migration(
+        "013_topic_storage_totals",
+        "Backfill aggregate Topic source storage",
+        migrate_topic_storage_totals,
     ),
 )
 

@@ -2,74 +2,65 @@
 
 ## Objective
 
-Complete REL-002 by promoting final v0.4.0 version metadata, revalidating the release candidate,
-creating and pushing the release commit and annotated tag, and publishing the GitHub Release after
-the user's explicit authorization.
+Remediate the post-v0.4.0 audit and follow-up persistence findings without widening the v0.4.x
+product boundary: preserve evidence-linked graph references across rebuilds and upgrades, isolate
+AnalysisRun chapter titles by Work, aggregate Topic storage across Works for new and existing data,
+and refresh stale coordination state.
 
 ## Status
 
-REL-002 completed on 2026-07-13. v0.4.0 is published from `codex/repository-takeover`, the
-annotated `v0.4.0` tag identifies the release commit, and the GitHub Release is public at
-`https://github.com/xiaoran6657/LongNovelInsight/releases/tag/v0.4.0`.
+Implementation and documentation are complete in `codex/post-release-audit-fixes` and all backend
+quality gates pass. The work is intentionally uncommitted and unpublished because this task did not
+authorize Git staging, commit, or push. No real LLM request was made.
 
-The release commit contains the previously uncommitted CHAT-002, E2E-001, DB-001, DOC-001,
-REFACTOR-001, REL-001, and REL-002 work. No real LLM request was made.
+## Changed Scope
 
-## Ownership
+- `backend/services/cross_work_entity_service.py`: reuse identity-equivalent GlobalEntity IDs,
+  persist stable-ID metadata, and invalidate retained graph snapshots with malformed or missing
+  entity references.
+- `backend/services/analysis_run_execution_service.py` and
+  `backend/services/analysis_run_continuation_service.py`: use chunk-to-chapter identity for initial,
+  retry, and resume prompt titles.
+- `backend/services/document_service.py` and `backend/services/parser_service.py`: recalculate the
+  Topic source-byte aggregate after every relevant document mutation.
+- `backend/migrations.py`: append replayable graph-integrity and Topic-storage backfill migrations.
+- `backend/tests/test_migrations.py`, `test_v04_graph.py`, `test_v04_entities.py`,
+  `test_v04_analysis.py`, `test_analysis_runs.py`, and `test_v04_upload_parse.py`: add pre-patch
+  upgrade fixtures, strict malformed-record checks, and orchestration-level regressions.
+- `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `agent/DECISIONS.md`: document the entity ID
+  continuity and dependent-snapshot invalidation contract.
+- `agent/PROJECT_STATUS.md`, `agent/NEXT_ACTIONS.md`, and `agent/archive/v0.4.0_COMPLETED.md`: record
+  the actual branch/main state, archive the release queue, and expose new v0.4.x candidates.
 
-- Primary agent: final version promotion, release documentation, complete quality gates, explicit
-  staging review, commit, branch/tag push through the configured proxy, GitHub Release, and handoff.
-- No subagents were used for REL-002.
+## Verification
 
-## Release Contents
+Run from `backend/` unless noted:
 
-- Explicit chat turn/reply linkage, stable ordering, and deterministic legacy backfill.
-- Isolated backend-integrated Work upload/parse/AnalysisRun smoke coverage.
-- Ordered, replayable, Engine-scoped SQLite migrations with old-schema fixtures.
-- Consolidated current API, architecture, data, frontend, and LLM pipeline documentation.
-- AnalysisRun lifecycle/execution/continuation service boundaries and split analysis-output
-  renderers with pure-logic coverage.
-- Final `0.4.0` backend/frontend/health/package/test/documentation identifiers.
-- v0.4.0 release notes, upgrade guidance, known limitations, and verified release evidence.
-
-## Final Verification
-
-### Backend
-
-- `conda run -n LongNovelInsight python -m pytest -v`: 762 passed, 6 integration tests deselected
-  in 348.67 seconds.
+- Initial focused services and tests: Ruff lint/format pass; 107 tests passed in 53.14 seconds.
+- Upgrade/integrity focused services and tests: Ruff lint/format pass; 41 tests passed in 20.61
+  seconds.
 - `conda run -n LongNovelInsight ruff check .`: pass.
 - `conda run -n LongNovelInsight ruff format --check .`: 137 files already formatted.
-- `conda run -n LongNovelInsight python -m pip check`: no broken requirements.
+- `conda run -n LongNovelInsight python -m pytest -v`: 766 passed, 6 deselected, in 351.90 seconds.
+- Frontend gates were not rerun because no frontend file or dependency changed; the v0.4.0 audit
+  baseline on commit `057093c` remains typecheck/lint/build/unit/Playwright clean.
 
-### Frontend
+## Open Risks
 
-- `npm run check`: typecheck, ESLint, 17 pure-logic tests, and production build pass.
-- Unit suite: 17 passed in 1.3 seconds.
-- Production build: 164 modules, 459.06 kB JS / 132.03 kB gzip.
-- `npm run e2e`: 53 passed in 21.1 seconds.
-- `npm audit --audit-level=low`: 0 vulnerabilities across 245 dependencies.
+- Entity continuity fallback by normalized canonical name or alias is necessarily heuristic. Stable
+  IDs take priority, matching is deterministic, and any unmatched old reference causes snapshot
+  invalidation rather than silent dangling data.
+- Startup deletes invalid persisted graph projections rather than fabricating entity mappings. The
+  underlying entities and evidence remain intact, but a deleted projection must be rebuilt before
+  graph GET can return it.
+- Storage backfill uses persisted Document byte metadata and does not reconcile missing or manually
+  altered source files on disk.
+- The published `v0.4.0` tag does not contain these fixes and must remain immutable. Any maintenance
+  release promotion requires a separately authorized release task.
 
-### Release Hygiene
+## Exact Next Action
 
-- All maintained current-version declarations resolve to `0.4.0`.
-- Runtime OpenAPI and `docs/API.md` match across 83 method/path operations.
-- Repository-local Markdown links, tracked data paths, product/document secrets, forbidden source
-  dependencies, generated artifacts, conflict markers, unmerged paths, and patch whitespace pass.
-- The only key-shaped repository match is an intentional masked test fixture.
-- All 13 previously untracked files were reviewed as intended release files before staging.
-
-## Known Limitations
-
-- AnalysisRun executor ownership is process-local; multiple backend processes sharing one SQLite
-  database remain unsupported.
-- Deprecated v1/Job analysis routes remain callable for compatibility.
-- Relationship visualization remains an edge table and timeline pagination is deferred.
-- Browser E2E uses mocked APIs; the backend suite contains the default-safe integrated Work smoke.
-- The opt-in live-provider smoke was not run because it can spend real provider credit.
-
-## Next Action
-
-No v0.4.0 release blocker remains. Select and explicitly authorize a later v0.4.x candidate from
-`agent/NEXT_ACTIONS.md`, or begin a separately scoped v0.4.1 maintenance plan. Do not start v0.5
-roadmap work without the user's explicit scope change.
+Review the post-release remediation diff. If accepted, obtain explicit authorization to stage only
+the listed code, tests, and documentation, commit it on `codex/post-release-audit-fixes`, and push
+that branch. After delivery, select one `ready` v0.4.x item from `agent/NEXT_ACTIONS.md`; do not begin
+v0.5 work without an explicit scope change.

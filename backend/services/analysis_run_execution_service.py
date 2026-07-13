@@ -11,6 +11,8 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from models.analysis_run import AnalysisRun
+from models.chapter import Chapter
+from models.chunk import Chunk
 from models.enums import JobStatus
 from models.local_extraction import LocalExtraction
 from services import atom_normalizer, local_extraction_worker
@@ -20,15 +22,30 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def load_chapter_titles_by_chunk_id(
+    session: Session,
+    chunks: list[Chunk],
+) -> dict[str, str]:
+    """Resolve chapter titles by the selected Chunk's explicit chapter foreign key."""
+    chapter_ids = {chunk.chapter_id for chunk in chunks if chunk.chapter_id}
+    if not chapter_ids:
+        return {}
+
+    chapters = session.exec(select(Chapter).where(Chapter.id.in_(chapter_ids))).all()
+    title_by_chapter_id = {chapter.id: chapter.title for chapter in chapters}
+    return {
+        chunk.id: title_by_chapter_id[chunk.chapter_id]
+        for chunk in chunks
+        if chunk.chapter_id in title_by_chapter_id
+    }
+
+
 def execute_run_impl(
     run_id: str,
     engine: Engine,
     executor_factory: Callable[..., Any],
 ) -> None:
     """Execute the initial extraction, merge, and final stages for one run."""
-    from models.chapter import Chapter
-    from models.chunk import Chunk
-
     with Session(engine) as session:
         run = session.get(AnalysisRun, run_id)
         if run is None or run.status not in (JobStatus.PENDING, JobStatus.RUNNING):
@@ -76,8 +93,7 @@ def execute_run_impl(
             session.commit()
             return
 
-        chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-        chapter_map = {chapter.chapter_index: chapter.title for chapter in chapters}
+        chapter_titles_by_chunk_id = load_chapter_titles_by_chunk_id(session, selected)
 
     stage_start = time.monotonic()
     extraction_start = stage_start
@@ -103,7 +119,7 @@ def execute_run_impl(
                 thinking_mode=thinking_mode,
                 chapter_index=chunk.chapter_index,
                 chunk_index=chunk.chunk_index,
-                chapter_title=chapter_map.get(chunk.chapter_index),
+                chapter_title=chapter_titles_by_chunk_id.get(chunk.id),
             )
             futures[future] = chunk.id
 
