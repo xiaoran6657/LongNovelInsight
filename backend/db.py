@@ -1,14 +1,26 @@
-import logging
+"""Database engine, sessions, schema creation, and ordered migration startup."""
+
 from collections.abc import Generator
 
-from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.engine import Engine
+from sqlmodel import Session, create_engine
 
 import models  # noqa: F401 — ensure all table models register with SQLModel.metadata
 from config import DATA_DIR, DB_PATH
-
-logger = logging.getLogger(__name__)
+from migrations import (
+    migrate_analysis_artifact,
+    migrate_analysis_output_run_id,
+    migrate_analysis_run_final_columns,
+    migrate_chat_message_linkage_columns,
+    migrate_chat_message_usage_columns,
+    migrate_chunk_fts,
+    migrate_embedding_cache,
+    migrate_local_extraction_usage_columns,
+    migrate_retrieval_trace,
+    migrate_v03_source_locator_columns,
+    migrate_v04_work_tables,
+    upgrade_schema,
+)
 
 engine = create_engine(
     f"sqlite:///{DB_PATH}",
@@ -22,247 +34,52 @@ def get_session() -> Generator[Session, None, None]:
         yield session
 
 
-def _add_missing_columns(table: str, columns: list[tuple[str, str]]) -> None:
-    existing = {column["name"] for column in sa_inspect(engine).get_columns(table)}
-    missing = [(name, definition) for name, definition in columns if name not in existing]
-    if not missing:
-        return
-
-    with engine.begin() as conn:
-        for name, definition in missing:
-            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}'))
-
-
+# Compatibility aliases for focused legacy tests and local maintenance commands.
+# New orchestration uses migrations.run_migrations and passes an Engine explicitly.
 def _migrate_chat_message_usage_columns() -> None:
-    """Add token usage columns to chat_message if they don't exist yet."""
-    columns = [
-        ("prompt_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("completion_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("total_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("model_used", "TEXT"),
-    ]
-    _add_missing_columns("chat_message", columns)
+    migrate_chat_message_usage_columns(engine)
+
+
+def _migrate_chat_message_linkage_columns(_engine: Engine | None = None) -> None:
+    migrate_chat_message_linkage_columns(_engine or engine)
 
 
 def _migrate_analysis_output_run_id() -> None:
-    """Add run_id column to analysis_output if it doesn't exist yet."""
-    _add_missing_columns("analysis_output", [("run_id", "TEXT")])
+    migrate_analysis_output_run_id(engine)
 
 
 def _migrate_analysis_run_final_columns() -> None:
-    """Add final_total/final_succeeded/final_failed to analysis_run if missing."""
-    columns = [
-        ("final_total", "INTEGER NOT NULL DEFAULT 0"),
-        ("final_succeeded", "INTEGER NOT NULL DEFAULT 0"),
-        ("final_failed", "INTEGER NOT NULL DEFAULT 0"),
-        ("final_skipped", "INTEGER NOT NULL DEFAULT 0"),
-    ]
-    _add_missing_columns("analysis_run", columns)
+    migrate_analysis_run_final_columns(engine)
 
 
 def _migrate_analysis_artifact() -> None:
-    """Create analysis_artifact table if it doesn't exist."""
-    from models.analysis_artifact import AnalysisArtifact
-
-    SQLModel.metadata.create_all(
-        engine,
-        tables=[AnalysisArtifact.__table__],  # type: ignore[arg-type]
-    )
+    migrate_analysis_artifact(engine)
 
 
 def _migrate_v03_source_locator_columns() -> None:
-    """Add v0.3 source locator and metadata columns (nullable)."""
-    migrations = [
-        ("document", "metadata_json", "TEXT"),
-        ("chapter", "source_href", "TEXT"),
-        ("chapter", "nav_order", "INTEGER"),
-        ("chapter", "metadata_json", "TEXT"),
-        ("chunk", "source_locator_json", "TEXT"),
-    ]
-    by_table: dict[str, list[tuple[str, str]]] = {}
-    for table, column, column_type in migrations:
-        by_table.setdefault(table, []).append((column, column_type))
-    for table, columns in by_table.items():
-        _add_missing_columns(table, columns)
+    migrate_v03_source_locator_columns(engine)
 
 
 def _migrate_retrieval_trace() -> None:
-    """Create retrieval_trace table if it doesn't exist."""
-    from models.retrieval_trace import RetrievalTrace
-
-    SQLModel.metadata.create_all(
-        engine,
-        tables=[RetrievalTrace.__table__],  # type: ignore[arg-type]
-    )
+    migrate_retrieval_trace(engine)
 
 
 def _migrate_chunk_fts() -> None:
-    """Ensure the FTS5 virtual table exists (idempotent)."""
-    from services.fts_service import ensure_chunk_fts_table
-
-    with Session(engine) as session:
-        ensure_chunk_fts_table(session)
+    migrate_chunk_fts(engine)
 
 
 def _migrate_embedding_cache() -> None:
-    """Create embedding_cache table if it doesn't exist."""
-    from models.embedding_cache import EmbeddingCache
-
-    SQLModel.metadata.create_all(
-        engine,
-        tables=[EmbeddingCache.__table__],  # type: ignore[arg-type]
-    )
+    migrate_embedding_cache(engine)
 
 
 def _migrate_local_extraction_usage_columns() -> None:
-    """Add cumulative usage and attempt tracking columns to local_extraction if missing."""
-    columns = [
-        ("reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("prompt_cache_hit_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("prompt_cache_miss_tokens", "INTEGER NOT NULL DEFAULT 0"),
-        ("usage_unavailable_attempts", "INTEGER NOT NULL DEFAULT 0"),
-        ("attempt_usage_json", "TEXT"),
-    ]
-    _add_missing_columns("local_extraction", columns)
+    migrate_local_extraction_usage_columns(engine)
 
 
-def _migrate_v04_work_tables(_engine=None) -> None:
-    """v0.4 multi-Work schema: work table, document rebuild, cross-work tables.
-
-    Idempotent — safe to run multiple times. The schema guard only skips the
-    table rebuild; remaining tables, indexes, and data backfill always run.
-    """
-    eng = _engine or engine
-
-    # ── Schema check ──
-    insp = sa_inspect(eng)
-    indexes = {i["name"] for i in insp.get_indexes("document")}
-    has_new_index = "ix_document_work_id" in indexes
-    has_old_unique = any(
-        "topic_id" in (i.get("column_names") or []) and i.get("unique", False)
-        for i in insp.get_indexes("document")
-    )
-    schema_ok = has_new_index and not has_old_unique
-
-    # Broken-state repair: index exists but old UNIQUE still present.
-    if has_new_index and has_old_unique:
-        logger.warning(
-            "v0.4 migration: ix_document_work_id exists but topic_id UNIQUE "
-            "still present — redoing table rebuild"
-        )
-        with eng.connect() as conn:
-            conn.connection.dbapi_connection.execute("DROP INDEX IF EXISTS ix_document_work_id")
-        schema_ok = False
-
-    # ── Table rebuild (only if schema not yet migrated) ──
-    if not schema_ok:
-        from models.work import Work
-
-        SQLModel.metadata.create_all(eng, tables=[Work.__table__])  # type: ignore[arg-type]
-
-        with eng.connect() as conn:
-            raw = conn.connection.dbapi_connection
-            raw.execute("PRAGMA foreign_keys = OFF")
-            raw.execute("BEGIN")
-            try:
-                raw.execute("DROP TABLE IF EXISTS document_new")
-                raw.execute(
-                    """CREATE TABLE document_new (
-                    id TEXT PRIMARY KEY,
-                    topic_id TEXT NOT NULL REFERENCES topic(id),
-                    work_id TEXT REFERENCES work(id),
-                    original_filename TEXT NOT NULL DEFAULT '',
-                    stored_filename TEXT NOT NULL DEFAULT 'original.txt',
-                    file_type TEXT NOT NULL DEFAULT 'txt',
-                    content_type TEXT,
-                    encoding TEXT NOT NULL DEFAULT 'utf-8',
-                    file_size_bytes INTEGER NOT NULL DEFAULT 0,
-                    char_count INTEGER NOT NULL DEFAULT 0,
-                    storage_path TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT,
-                    status TEXT NOT NULL DEFAULT 'uploaded',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )"""
-                )
-                raw.execute(
-                    """INSERT INTO document_new (
-                    id, topic_id, work_id, original_filename, stored_filename,
-                    file_type, content_type, encoding, file_size_bytes, char_count,
-                    storage_path, metadata_json, status, created_at, updated_at
-                ) SELECT
-                    id, topic_id, NULL, original_filename, stored_filename,
-                    file_type, content_type, encoding, file_size_bytes, char_count,
-                    storage_path, metadata_json, status, created_at, updated_at
-                FROM document"""
-                )
-                raw.execute("DROP TABLE document")
-                raw.execute("ALTER TABLE document_new RENAME TO document")
-                raw.execute("COMMIT")
-            except Exception:
-                raw.execute("ROLLBACK")
-                raise
-            finally:
-                raw.execute("PRAGMA foreign_keys = ON")
-
-        with eng.connect() as conn:
-            raw = conn.connection.dbapi_connection
-            fk_result = list(raw.execute("PRAGMA foreign_key_check"))
-            if fk_result:
-                violations = "; ".join(str(r) for r in fk_result[:10])
-                logger.error("v0.4 migration FK violations: %s", violations)
-                raise RuntimeError(f"v0.4 migration failed: {len(fk_result)} FK violations")
-
-    # ── Always: ensure work table + remaining tables exist ──
-    from models.work import Work
-
-    SQLModel.metadata.create_all(eng, tables=[Work.__table__])  # type: ignore[arg-type]
-
-    from models.cross_work_run import CrossWorkRun
-    from models.entity_mention import EntityMention
-    from models.global_entity import GlobalEntity
-    from models.graph_snapshot import GraphSnapshot
-    from models.timeline_item import TimelineItem
-
-    SQLModel.metadata.create_all(
-        eng,
-        tables=[
-            GlobalEntity.__table__,  # type: ignore[arg-type]
-            EntityMention.__table__,  # type: ignore[arg-type]
-            CrossWorkRun.__table__,  # type: ignore[arg-type]
-            GraphSnapshot.__table__,  # type: ignore[arg-type]
-            TimelineItem.__table__,  # type: ignore[arg-type]
-        ],
-    )
-
-    # ── Always: ensure partial unique index exists ──
-    with eng.connect() as conn:
-        conn.connection.dbapi_connection.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_document_work_id "
-            "ON document(work_id) WHERE work_id IS NOT NULL"
-        )
-
-    # ── Always: backfill NULL work_ids using shared helper ──
-    from sqlmodel import Session
-
-    from services.work_service import backfill_all_null_work_ids
-
-    with Session(eng) as session:
-        count = backfill_all_null_work_ids(session)
-        if count > 0:
-            logger.info("v0.4 migration: backfilled %d documents with work_id", count)
+def _migrate_v04_work_tables(_engine: Engine | None = None) -> None:
+    migrate_v04_work_tables(_engine or engine)
 
 
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SQLModel.metadata.create_all(engine)
-    _migrate_chat_message_usage_columns()
-    _migrate_analysis_output_run_id()
-    _migrate_analysis_run_final_columns()
-    _migrate_analysis_artifact()
-    _migrate_v03_source_locator_columns()
-    _migrate_retrieval_trace()
-    _migrate_chunk_fts()
-    _migrate_embedding_cache()
-    _migrate_local_extraction_usage_columns()
-    _migrate_v04_work_tables()
+    upgrade_schema(engine)

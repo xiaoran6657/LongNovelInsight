@@ -3,8 +3,8 @@
 ## Project
 
 LongNovelInsight is a local-first, single-user tool for LLM-assisted long-novel analysis.
-The current development line is **v0.4.0-dev**. ChatGPT Codex is the primary engineering
-agent for ongoing maintenance and delivery.
+The current release is **v0.4.0** and the active maintenance line is **v0.4.x**. ChatGPT Codex is
+the primary engineering agent for ongoing maintenance and delivery.
 
 ## Sources of Truth
 

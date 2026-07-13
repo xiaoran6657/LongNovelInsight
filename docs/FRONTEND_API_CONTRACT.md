@@ -1,1105 +1,201 @@
-# Frontend API Contract — v0.3 Baseline
+# Frontend API Integration Contract — v0.4.0
 
-This is the historical v0.3 integration contract. The current v0.4 contract is defined by the
-FastAPI OpenAPI schema and `frontend/src/api/`; v0.4 consolidation is tracked in
-`agent/NEXT_ACTIONS.md`.
+This document defines how the current React frontend consumes the backend. It intentionally does
+not duplicate every request and response schema.
 
-> Auto-generated from actual backend code (routers/ + models/), not from docs/API.md alone.
-> If a discrepancy is found between this document and backend behavior, the backend code is the authority.
+- Runtime OpenAPI at `/docs` or `/openapi.json` is the exact schema authority.
+- [API.md](API.md) is the complete human endpoint map.
+- [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md) owns analysis lifecycle and deprecation.
+- `frontend/src/api/types.ts` is the frontend compile-time representation, not an independent API
+  specification.
 
-## 1. Base URL & Environment
+## Transport and Errors
 
-| Item | Value |
-|------|-------|
-| Default backend URL | `http://127.0.0.1:8000` |
-| Frontend env var | `VITE_API_BASE_URL=http://127.0.0.1:8000` |
-| API prefix | `/api` |
-| CORS allowed origin | `http://localhost:5173` (configured in `backend/main.py`) |
-| CORS methods | `*` (all) |
-| CORS headers | `*` (all) |
+`frontend/src/api/client.ts` provides the shared `apiRequest<T>` wrapper.
 
-**CORS status:** ✅ Already configured. If frontend runs on `http://127.0.0.1:5173`, add it to `allow_origins` in `backend/main.py` as well (`"http://127.0.0.1:5173"`).
+- Base URL: `VITE_API_BASE_URL`, default `http://127.0.0.1:8000`.
+- The wrapper strips trailing slashes from the configured base URL.
+- JSON requests set `Content-Type: application/json`; uploads use `FormData` so the browser owns
+  the multipart boundary.
+- Non-2xx responses become `ApiError(status, detail)`.
+- FastAPI `detail` may be a string, validation array, or object; the wrapper normalizes it to a
+  displayable string.
+- Network failures use status `0`. Aborted requests report `Request aborted`.
+- `204`, an explicit zero content length, and an empty body resolve as `undefined`.
 
-## 2. Status Values (All Lowercase)
+The backend permits both Vite development origins: `http://localhost:5173` and
+`http://127.0.0.1:5173`.
 
-### Topic Status
-| Value | Meaning |
-|-------|---------|
-| `created` | Topic just created |
-| `uploaded` | Document uploaded |
-| `parsed` | Document parsed into chapters/chunks |
-| `analyzing` | Analysis in progress |
-| `ready` | Analysis complete |
-| `failed` | Error state |
+## Frontend-Owned Endpoint Families
 
-### Document Status
-| Value | Meaning |
-|-------|---------|
-| `uploaded` | File received and saved |
-| `parsing` | Parse in progress |
-| `parsed` | Parse complete |
-| `failed` | Parse error |
+Each module under `frontend/src/api/` owns one domain. New calls must be added to the matching
+module and use the shared wrapper.
 
-### Job Status
-| Value | Meaning |
-|-------|---------|
-| `pending` | Job created, not started |
-| `running` | Job in progress |
-| `succeeded` | All items completed |
-| `failed` | One or more items failed |
-| `cancelled` | Cancelled by user |
-| `partial_success` | v0.2 AnalysisRun only — some chunks/types succeeded while others failed |
+| Module | Current responsibility |
+| --- | --- |
+| `health.ts` | Backend health |
+| `providers.ts` | Provider CRUD, presets, detection, explicit connection test |
+| `topics.ts` | Topic CRUD, provider binding, effective Topic configuration |
+| `works.ts` | Work CRUD, Work upload/parse/source reads, estimate, runs, outputs |
+| `documents.ts`, `parse.ts` | Topic default-Work compatibility facades |
+| `analysis.ts` | Topic facade creation/listing, run detail/control, outputs |
+| `search.ts`, `retrieve.ts`, `entities.ts` | Source search, retrieval, evidence, similar scenes |
+| `crossWork.ts`, `graphs.ts`, `timeline.ts` | Cross-work derived views and builds |
+| `chat.ts` | Session/message CRUD, send, and atomic resend |
 
-### Analysis Type (output_type / item_type)
-| Value | LLM Prompt File |
-|-------|----------------|
-| `overview` | `prompts/overview.md` |
-| `characters` | `prompts/characters.md` |
-| `relations` | `prompts/relations.md` |
-| `events` | `prompts/events.md` |
-| `causality` | `prompts/causality.md` |
-| `themes` | `prompts/themes.md` |
+The frontend has no client for deprecated Job endpoints or legacy analysis executors.
 
-### Job Type
-| Value | Meaning |
-|-------|---------|
-| `parse` | Parse job (stub, no LLM) |
-| `analysis` | Analysis job (real LLM calls) |
+## Topic and Work Scope
 
-## 3. API Endpoints
+A Topic is a story universe or workspace. A Work is one novel or volume inside it. All new source
+and analysis UI must carry an explicit `workId`.
 
-### 3.1 Health
+- List/create Works through `/api/topics/{topic_id}/works`.
+- Read/update/delete a Work through `/api/works/{work_id}`.
+- Upload, parse, chapters, chunks, metadata, estimate, runs, and outputs use `/api/works/{work_id}`.
+- A Work has at most one source Document.
+- Deleting a non-empty Work returns `409`; the UI must not imply that derived data will be silently
+  discarded.
+- Topic-level document and parse routes remain default-Work facades for compatibility. New Work UI
+  must not use them when an explicit Work is available.
 
-**`GET /api/health`**
+Search and retrieve accept optional Work filters. A frontend filter must send only Work IDs from
+the current Topic and must keep the filter in the relevant query key.
 
-Response `200`:
+## AnalysisRun Flow
+
+New analysis follows one visible, credit-aware sequence:
+
+1. Select one Work and a mode: `preview`, `range`, `full`, or `incremental`.
+2. Call `POST /api/works/{work_id}/analysis/estimate` with the same selection body that will be used
+   to create the run.
+3. Display numeric input/output/total token estimates and provider/model context.
+4. Require explicit user confirmation because the next action may spend provider credit.
+5. Call `POST /api/works/{work_id}/analysis/runs`.
+6. Poll `GET /api/analysis/runs/{run_id}` until a terminal status.
+7. Refresh Work run history and Work outputs.
+
+The estimate is read-only: it creates no run and makes no LLM request. It is not a currency quote
+and actual usage can differ because model output and retries vary.
+
+The Topic Overview may use `POST /api/topics/{topic_id}/analysis/runs`; that route resolves one
+deterministic default Work and enters the same lifecycle. It must never be used to imply a
+multi-Work combined analysis.
+
+### Status and control
+
+AnalysisRun statuses are lowercase strings: `pending`, `running`, `succeeded`, `failed`,
+`cancelled`, or `partial_success`.
+
+- Cancel: `POST /api/analysis/runs/{run_id}/cancel`.
+- Retry failed chunks: `POST /api/analysis/runs/{run_id}/retry-failed`.
+- Resume an interrupted run: `POST /api/analysis/runs/{run_id}/resume?retry_failed=true|false`.
+
+Control responses acknowledge background work; the UI must use subsequent run detail, not mutable
+human message text, as the state authority. Backend restart can convert an orphaned `running` row
+to `failed` with recovery metadata. It never resumes automatically.
+
+### Outputs
+
+Current final outputs have non-null `run_id`. Work output reads omit internal `merge_*` rows and
+exclude historical Topic-wide outputs. Topic output reads may contain both current and historical
+rows, so rendering must tolerate `run_id = null`.
+
+`content_json` is untrusted persisted JSON. The UI must continue to:
+
+- parse object or serialized-object content;
+- filter malformed nested collections;
+- isolate an unexpected output card failure so sibling cards remain usable;
+- avoid assuming every requested atom family has a final UI projection.
+
+## Cross-Work Scope
+
+Cross-work build and GET filters follow one shared rule: an omitted or empty `work_ids` list means
+the canonical All scope.
+
+- Normalize selected Work IDs by sorting and deduplicating them.
+- Reject or clear selections when the active Topic changes.
+- Entity registry data is canonical Topic-wide even when a run request carries a scope.
+- Graph snapshots are stored per normalized scope. Unfiltered graph GET reads only All; a filtered
+  GET may read a compatible scoped snapshot with All fallback.
+- Timeline writes are Work-partitioned. A scoped rebuild replaces only the selected Works.
+- A foreign-Topic Work filter returns `404`; it is not an empty result.
+
+The frontend must label All versus selected Works explicitly and include the normalized filter in
+query keys. A scoped refresh must not invalidate or overwrite unrelated scoped cache entries by
+accident.
+
+## Chat Contract
+
+Chat is Topic-scoped and evidence-grounded.
+
+- Create/list sessions under `/api/topics/{topic_id}/chat/sessions`.
+- List/send messages under `/api/chat/sessions/{session_id}/messages`.
+- Edit and regenerate a pair with
+  `POST /api/chat/sessions/{session_id}/messages/{user_message_id}/resend`.
+- Delete a session or message only through the server-owned delete routes.
+
+Each new user/assistant pair has explicit linkage:
+
+| Field | Meaning |
+| --- | --- |
+| `turn_id` | Shared logical exchange identifier |
+| `sequence_index` | Stable session-local turn order, shared by the pair |
+| `reply_to_message_id` | Assistant link to its user message |
+
+New UI logic must pair messages by these fields, not by timestamp adjacency. Nullable linkage must
+remain supported for historical rows.
+
+`evidence_json` may be a structured object/list, a legacy string array, malformed JSON, or null.
+The renderer must normalize each item before use. Evidence scores are method-dependent ranking
+values, not probabilities and not guaranteed to be in `[0, 1]`.
+
+Atomic resend sends:
+
 ```json
 {
-  "status": "ok",
-  "version": "0.4.0-dev",
-  "topic_count": 3,
-  "total_disk_usage_bytes": 5242880
-}
-```
-Frontend use: Display connection status, version, topic count on Dashboard.
-
----
-
-### 3.2 Providers (`/api/providers`)
-
-**`GET /api/providers`**
-
-Response `200`:
-```json
-{
-  "providers": [
-    {
-      "id": "uuid",
-      "name": "My DeepSeek",
-      "provider_type": "openai_compatible",
-      "base_url": "https://api.deepseek.com",
-      "model_name": "deepseek-chat",
-      "context_window": 1000000,
-      "max_output_tokens": 8192,
-      "temperature": 0.2,
-      "is_default": true,
-      "masked_api_key": "sk-...abcd",
-      "created_at": "2026-05-10T12:00:00Z",
-      "updated_at": "2026-05-10T12:00:00Z"
-    }
-  ]
-}
-```
-⚠️ `api_key` is NEVER returned. Only `masked_api_key`.
-
-**`POST /api/providers`** (201)
-
-Request:
-```json
-{
-  "name": "My DeepSeek",
-  "provider_type": "openai_compatible",
-  "base_url": "https://api.deepseek.com",
-  "api_key": "sk-...",
-  "model_name": "deepseek-chat",
-  "context_window": 1000000,
-  "max_output_tokens": 8192,
-  "temperature": 0.2,
-  "is_default": true
-}
-```
-Response `201`: Same shape as GET single provider.
-Errors: `422` (validation: name empty, provider_type ≠ openai_compatible, base_url empty, api_key empty, model_name empty, temperature not in [0,2], context_window ≤ 0, max_output_tokens ≤ 0), `409` (name duplicate).
-
-**`GET /api/providers/{provider_id}`**
-
-Response `200`: Single provider object. `404` if not found.
-
-**`PATCH /api/providers/{provider_id}`**
-
-Request: Any subset of provider fields (all optional).
-Response `200`: Updated provider object.
-Errors: `404` not found, `409` name conflict, `422` invalid provider_type.
-
-**`DELETE /api/providers/{provider_id}`**
-
-Response `200`: `{ "deleted": true }`
-Errors: `404` not found, `409` in use by a Topic.
-
-**`POST /api/providers/{provider_id}/test`**
-
-Response `200`:
-```json
-{
-  "success": true,
-  "provider_id": "uuid",
-  "model_name": "deepseek-chat",
-  "latency_ms": 450,
-  "message": "Connection successful"
-}
-```
-On failure: `200` with `"success": false` and error message (api_key sanitized). `404` provider not found.
-
-⚠️ This endpoint makes a real API call to the LLM provider. Show warning in UI.
-
----
-
-### 3.3 Topics
-
-**`GET /api/topics`**
-
-Response `200`:
-```json
-{
-  "topics": [
-    {
-      "id": "uuid",
-      "name": "Three Kingdoms",
-      "description": "...",
-      "provider_id": "uuid or null",
-      "storage_bytes": 1048576,
-      "status": "created",
-      "document": {
-        "id": "uuid",
-        "original_filename": "novel.txt",
-        "status": "parsed",
-        "file_size_bytes": 1048576,
-        "char_count": 500000
-      },
-      "analysis_summary": {
-        "overview": "completed",
-        "characters": "completed"
-      },
-      "disk_usage_bytes": 1048576,
-      "created_at": "2026-05-10T12:00:00Z",
-      "updated_at": "2026-05-10T12:00:00Z"
-    }
-  ]
-}
-```
-Note: `document` is `null` if no document uploaded. `analysis_summary` is `{}` if no analysis run. Keys in `analysis_summary` are AnalysisType values (`overview`, `characters`, etc.), values are `"completed"`.
-
-**`POST /api/topics`** (201)
-
-Request:
-```json
-{
-  "name": "My Analysis",
-  "description": "Optional description",
-  "provider_id": "uuid or null"
-}
-```
-Response `201`: Full topic object (same shape as list item).
-Errors: `404` if provider_id given but not found.
-
-**`GET /api/topics/{topic_id}`**
-
-Response `200`: Full topic detail (same shape as list item, with real document/analysis_summary).
-Errors: `404`.
-
-**`DELETE /api/topics/{topic_id}`**
-
-Response `200`: `{ "deleted": true, "freed_bytes": 1048576 }`
-Errors: `404`.
-⚠️ Full cascade: deletes document, chapters, chunks, analysis outputs, chat sessions + messages, jobs + items, and `data/topics/{id}/` directory.
-
----
-
-### 3.4 Documents
-
-**`POST /api/topics/{topic_id}/documents/upload`** (201)
-
-Request: `multipart/form-data` with field `file` (`.txt` or `.epub`, max 200MB).
-
-**TXT:** Accepts UTF-8, UTF-8-SIG, GB18030, GBK, GB2312, UTF-16. All normalized to UTF-8.
-**EPUB:** Validates zip container + `META-INF/container.xml`. Does NOT parse chapters.
-`char_count = 0` for EPUB until parsed. `encoding = "epub"` for EPUB files.
-
-TXT Response `201`:
-```json
-{
-  "id": "uuid",
-  "topic_id": "uuid",
-  "original_filename": "novel.txt",
-  "stored_filename": "original.txt",
-  "file_type": "txt",
-  "content_type": "text/plain",
-  "encoding": "gbk",
-  "file_size_bytes": 1048576,
-  "char_count": 500000,
-  "storage_path": "topics/{topic_id}/source/original.txt",
-  "metadata_json": null,
-  "status": "uploaded",
-  "created_at": "...",
-  "updated_at": "..."
+  "content": "edited user question",
+  "expected_assistant_message_id": "message-id",
+  "work_ids": ["optional-work-id"]
 }
 ```
 
-EPUB Response `201`:
-```json
-{
-  "id": "uuid",
-  "topic_id": "uuid",
-  "original_filename": "novel.epub",
-  "stored_filename": "original.epub",
-  "file_type": "epub",
-  "content_type": "application/epub+zip",
-  "encoding": "epub",
-  "file_size_bytes": 524288,
-  "char_count": 0,
-  "storage_path": "topics/{topic_id}/source/original.epub",
-  "metadata_json": "{\"source_format\":\"epub\",\"parsing_warnings\":[]}",
-  "status": "uploaded",
-  "created_at": "...",
-  "updated_at": "..."
-}
-```
-Errors: `404` topic not found, `400` not .txt/.epub, `400` unsupported TXT encoding, `400` EPUB invalid zip / missing container.xml, `409` already has document, `413` file too large, `422` empty/whitespace-only TXT file.
+The expected assistant ID protects against replacing a stale pair. A conflict must trigger a
+message refresh rather than optimistic overwrite. The backend performs retrieval/LLM generation
+before its short atomic replacement transaction; the old pair remains intact if generation fails.
 
-**`GET /api/topics/{topic_id}/documents/current`**
+## TanStack Query Keys and Mutations
 
-Response `200`: Full document object.
-Errors: `404` topic not found, `404` no document.
+`frontend/src/queryKeys.ts` is the shared key factory. Do not recreate equivalent array literals in
+Topic Detail or Chat.
 
-**`DELETE /api/topics/{topic_id}/documents/current`**
+Rules:
 
-Response `200`: `{ "deleted": true, "freed_bytes": 1048576 }`
-Errors: `404` topic not found, `404` no document.
-⚠️ Cascades: deletes all derived data (chapters, chunks, analysis outputs, chat, jobs).
+- Include every server-selection input that changes a response, including Topic/Work/session IDs,
+  Work filters, pagination, and `includeText`.
+- Use factory prefixes for family invalidation, such as all chunk views for one Topic.
+- On a successful mutation, update exact cached data only when the response is authoritative;
+  otherwise invalidate the narrow affected family.
+- Do not let optimistic Chat updates invent durable linkage. Reconcile with the server response.
+- Clear active Work/session UI state when its owning Topic or session is deleted.
 
----
+## Compatibility and Deprecated Routes
 
-### 3.5 Parse / Chapters / Chunks / Storage
+The following APIs remain backend-compatible in v0.4 but must not gain new frontend callers:
 
-**`POST /api/topics/{topic_id}/parse`**
+- `POST /api/topics/{topic_id}/analysis/run` and its `pipeline=v2` bridge.
+- `POST /api/topics/{topic_id}/analysis/run-async`.
+- `POST /api/topics/{topic_id}/analysis/run/{output_type}`.
+- `/api/topics/{topic_id}/analysis/jobs`, `/analysis/status`, and
+  `/api/analysis/jobs/{job_id}` operations.
 
-Response `200`:
-```json
-{
-  "chapter_count": 120,
-  "chunk_count": 480,
-  "char_count": 800000,
-  "estimated_tokens": 533333
-}
-```
-Errors: `404` topic not found, `404` no document, `409` original.txt not found on disk.
+Historical output rows, legacy evidence arrays, and nullable Chat linkage remain readable. Backend
+compatibility is not permission to expose a second execution UX.
 
-**`GET /api/topics/{topic_id}/chapters`**
+## Verification Boundary
 
-Response `200`:
-```json
-{
-  "chapters": [
-    {
-      "id": "uuid",
-      "topic_id": "uuid",
-      "document_id": "uuid",
-      "chapter_index": 0,
-      "title": "第一章 宴桃园豪杰三结义",
-      "start_char": 0,
-      "end_char": 6500,
-      "char_count": 6500,
-      "created_at": "..."
-    }
-  ]
-}
-```
-
-**`GET /api/topics/{topic_id}/chunks?include_text=true&limit=100&offset=0`**
-
-Response `200`:
-```json
-{
-  "chunks": [
-    {
-      "id": "uuid",
-      "chapter_index": 0,
-      "chunk_index": 0,
-      "text": "",
-      "start_char": 0,
-      "end_char": 4000,
-      "char_count": 4000,
-      "estimated_tokens": 2667
-    }
-  ]
-}
-```
-Query params: `include_text` (bool, default `false`), `limit` (int, default `100`, max `1000`), `offset` (int, default `0`).
-⚠️ Frontend should default to `include_text=false`. Only load text for preview of first ~20 chunks.
-
-**`GET /api/topics/{topic_id}/chunks/meta`** (v0.2)
-
-Returns lightweight chunk metadata without chunk text. Per-chapter breakdown included.
-
-Response `200`:
-```json
-{
-  "topic_id": "uuid",
-  "document_id": "uuid",
-  "chunk_count": 120,
-  "chapter_count": 30,
-  "total_chars": 500000,
-  "estimated_tokens": 333333,
-  "first_chunk_index": 0,
-  "last_chunk_index": 119,
-  "chunks_by_chapter": [
-    {"chapter_index": 0, "title": "第一章", "chunk_count": 4, "char_count": 12000, "estimated_tokens": 8000}
-  ]
-}
-```
-
-Errors: `404` topic not found / no document, `409` document not parsed / no chunks.
-
-**`GET /api/topics/{topic_id}/storage`**
-
-Response `200`:
-```json
-{
-  "total_disk_usage_bytes": 5242880,
-  "database_size_bytes": 204800,
-  "data_dir_size_bytes": 5038080,
-  "topics": [
-    {
-      "topic_id": "uuid",
-      "topic_name": "Three Kingdoms",
-      "novel_size_bytes": 1048576,
-      "chunks_size_bytes": 480000,
-      "analyses_size_bytes": 512000,
-      "total_bytes": 2032576
-    }
-  ]
-}
-```
-
----
-
-### 3.5b Document Metadata (v0.3)
-
-**`GET /api/topics/{topic_id}/documents/current/metadata`**
-
-Returns document metadata with parsed `metadata_json`. For TXT files `metadata` is `{}`; for EPUB it contains `source_format` and `parsing_warnings`.
-
-Response `200`:
-```json
-{
-  "id": "uuid",
-  "topic_id": "uuid",
-  "original_filename": "novel.epub",
-  "file_type": "epub",
-  "encoding": "epub",
-  "file_size_bytes": 524288,
-  "char_count": 500000,
-  "status": "parsed",
-  "metadata": {
-    "source_format": "epub",
-    "parsing_warnings": []
-  },
-  "created_at": "2026-05-10T12:00:00Z",
-  "updated_at": "2026-05-10T12:00:00Z"
-}
-```
-Errors: `404` topic not found, `404` no document uploaded.
-
----
-
-### 3.5c Search (v0.3)
-
-**`POST /api/topics/{topic_id}/search`**
-
-Full-text search via FTS5 with keyword fallback.
-
-Request:
-```json
-{
-  "query": "刘备 桃园",
-  "limit": 20,
-  "include_snippets": true,
-  "methods": ["fts", "keyword_fallback"]
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `query` | str | (required) | 1-500 chars |
-| `limit` | int | 20 | 1-100 |
-| `include_snippets` | bool | true | Set to false to omit snippets |
-| `methods` | list[str] | ["fts", "keyword_fallback"] | Valid: "fts", "keyword_fallback" |
-
-Response `200`:
-```json
-{
-  "query": "刘备 桃园",
-  "results": [
-    {
-      "chunk_id": "uuid",
-      "topic_id": "uuid",
-      "chapter_index": 0,
-      "chunk_index": 5,
-      "title": "第一章 宴桃园豪杰三结义",
-      "snippet": "刘备和关羽张飞在桃园...",
-      "score": 2.35,
-      "method": "fts"
-    }
-  ],
-  "trace_id": null
-}
-```
-`trace_id` is always null in v0.3 (reserved for future retrieval trace).
-
-Errors: `404` topic not found, `422` (empty query, query >500 chars, limit <1 or >100, invalid/empty methods, boolean limit).
-
----
-
-### 3.5d Retrieve (v0.3)
-
-**`POST /api/topics/{topic_id}/retrieve`**
-
-Hybrid retrieval across chunks (FTS + keyword fallback), analysis outputs, and extracted atoms. Returns ranked, deduplicated, score-normalized evidence candidates. Optionally persists a `RetrievalTrace` for debug inspection.
-
-Request:
-```json
-{
-  "query": "曹操 赤壁",
-  "top_k": 8,
-  "methods": ["fts", "keyword_fallback", "structured", "analysis_output"],
-  "persist_trace": false
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `query` | str | (required) | 1-500 chars, must not be whitespace-only |
-| `top_k` | int | `8` | Max candidates to return (1-50) |
-| `methods` | list[str] | `["fts", "keyword_fallback", "structured", "analysis_output"]` | Candidate generators + optional `semantic_rerank` |
-| `persist_trace` | bool | `false` | Save a RetrievalTrace and return its ID |
-
-Valid methods: `fts`, `keyword_fallback`, `structured`, `analysis_output`, `semantic_rerank` (optional post-processing, disabled by default). `semantic_rerank` must be combined with at least one retrieval method; when disabled the response includes a `warning` and results are unchanged.
-
-Response `200`:
-```json
-{
-  "query": "曹操 赤壁",
-  "results": [...],
-  "trace_id": "uuid-or-null",
-  "warning": null
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `trace_id` | str or null | RetrievalTrace ID when `persist_trace: true`; `null` otherwise |
-| `warning` | str or null | Warning when `semantic_rerank` is requested but disabled; `null` normally |
-
-Errors: `404` topic not found, `422` (empty query, query >500 chars, top_k <1 or >50, boolean top_k, invalid/empty methods, semantic_rerank alone).
-
----
-
-### 3.5e Chunk Locator (v0.3)
-
-**`GET /api/topics/{topic_id}/chunks/{chunk_id}/locator`**
-
-Returns source locator info and a short text excerpt (first 200 chars).
-
-Response `200`:
-```json
-{
-  "chunk_id": "uuid",
-  "topic_id": "uuid",
-  "chapter_index": 0,
-  "chunk_index": 3,
-  "locator": {
-    "source_href": "chapter1.xhtml",
-    "offset": 450
-  },
-  "excerpt": "刘备和关羽张飞在桃园..."
-}
-```
-`locator` is the parsed `source_locator_json` (empty `{}` for TXT).
-
-Errors: `404` chunk not found (includes wrong-topic access).
-
----
-
-### 3.6 Analysis Outputs
-
-**`POST /api/topics/{topic_id}/analysis/run?limit_chunks=5`** (deprecated)
-
-Compatibility-only v1 executor. It runs all 6 analysis types synchronously and deletes old outputs before running. The frontend must not call it.
-⚠️ Makes real LLM calls. Show API consumption warning in UI.
-
-Response `200`:
-```json
-{
-  "outputs": [
-    {
-      "id": "uuid",
-      "topic_id": "uuid",
-      "job_id": null,
-      "output_type": "overview",
-      "title": "Work Overview",
-      "content_json": { ... },
-      "source_chunk_ids": ["uuid1", "uuid2"],
-      "evidence_quotes": ["quote1", "quote2"],
-      "confidence": 0.85,
-      "created_at": "...",
-      "updated_at": "..."
-    }
-  ],
-  "count": 6
-}
-```
-Errors: `404` topic not found, `409` no document / not parsed / no provider.
-
-**`GET /api/topics/{topic_id}/analysis/outputs?output_type=characters`**
-
-Response `200`: `{ "outputs": [...], "count": N }`
-Errors: `404` topic not found.
-Query: `output_type` (optional) — filter by AnalysisType value.
-
-**`DELETE /api/topics/{topic_id}/analysis/outputs`**
-
-Response `200`: `{ "deleted": true, "count": N }`
-Errors: `404` topic not found.
-
----
-
-### 3.6b Analysis Runs (authoritative)
-
-See [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md). New frontend analysis actions must create AnalysisRun records; historical `run_id=null` outputs remain readable.
-
-**`POST /api/topics/{topic_id}/analysis/runs`** (201)
-
-Creates and optionally starts the authoritative staged AnalysisRun. The Topic facade resolves one deterministic default Work.
-
-Request (Pydantic model `CreateRunRequest`):
-```json
-{
-  "mode": "preview",
-  "requested_types": ["overview", "characters", "relations", "events", "causality", "themes"],
-  "limit_chunks": 5,
-  "chunk_index_start": null,
-  "chunk_index_end": null,
-  "chapter_index_start": null,
-  "chapter_index_end": null,
-  "force": false,
-  "start_immediately": true
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `mode` | str | `"preview"` | analysis mode |
-| `requested_types` | list[str] | null | output types (default 6) |
-| `limit_chunks` | int | null | max chunks for preview |
-| `chunk_index_start/end` | int | null | range mode chunk bounds |
-| `chapter_index_start/end` | int | null | range mode chapter bounds |
-| `start_immediately` | bool | true | start background execution |
-
-Response `201`:
-```json
-{
-  "run": {"id": "uuid", "topic_id": "uuid", "mode": "preview",
-          "status": "pending", "progress_total": 8},
-  "status_url": "/api/analysis/runs/{id}"
-}
-```
-Errors: `404` topic not found, `409` no chunks/no provider/not parsed, `422` invalid mode/invalid range/invalid requested_types.
-
-**`GET /api/topics/{topic_id}/analysis/runs`**
-
-Response `200`:
-```json
-{
-  "runs": [{"id": "uuid", "mode": "preview", "status": "succeeded",
-             "extraction_succeeded": 3, "extraction_failed": 0,
-             "merge_succeeded": 5, "merge_failed": 0,
-             "total_tokens": 15000, "model_used": "deepseek-chat",
-             "started_at": "...", "finished_at": "...", "created_at": "..."}]
-}
-```
-
-**`GET /api/analysis/runs/{run_id}`**
-
-Response `200`:
-```json
-{
-  "run": {"id": "uuid", "topic_id": "uuid", "mode": "preview",
-          "status": "succeeded", "progress_current": 8, "progress_total": 8,
-          "extraction_total": 3, "extraction_succeeded": 3, "extraction_failed": 0,
-          "merge_total": 5, "merge_succeeded": 5, "merge_failed": 0,
-          "total_tokens": 15000, "model_used": "deepseek-chat",
-          "error_message": null, "started_at": "...", "finished_at": "..."},
-  "extractions": [{"id": "uuid", "chunk_id": "uuid", "status": "succeeded",
-                    "attempt_count": 1, "error_message": null}],
-  "merge": {"total": 5, "succeeded": 5, "failed": 0,
-            "outputs": [{"id": "uuid", "output_type": "merge_overview",
-                          "title": "Merged overview"}],
-            "warnings": []}
-}
-```
-The `merge` section reports intermediate merge results. The `final` section reports the v0.1-compatible final AnalysisOutput records produced by Step 8.
-
-Step 8 response now includes:
-```json
-"final": {
-  "total": 6,
-  "succeeded": 6,
-  "failed": 0,
-  "outputs": [
-    {"id": "uuid", "output_type": "overview", "title": "Work Overview"},
-    {"id": "uuid", "output_type": "characters", "title": "Character List"}
-  ]
-}
-```
-
-The `run` object now includes `final_total`, `final_succeeded`, `final_failed` fields.
-
-**`POST /api/analysis/runs/{run_id}/cancel`**
-
-Response `200`: `{"run": {"id": "uuid", "status": "cancelled"}}`
-Errors: `404`.
-
-**`POST /api/analysis/runs/{run_id}/retry-failed`**
-
-Retry failed extractions in a previously failed or partially-successful analysis run.
-
-Response `200`:
-```json
-{
-  "run": {"id": "uuid", "status": "pending"},
-  "message": "Retrying 3 failed extractions"
-}
-```
-Errors: `404` run not found, `409` run is not in a retryable state.
-
-**`POST /api/analysis/runs/{run_id}/resume?retry_failed=true`**
-
-Resume an incomplete analysis run from where it stopped. Optionally retry failed extractions on resume.
-
-Response `200`:
-```json
-{
-  "run": {"id": "uuid", "status": "running"},
-  "message": "Resuming run"
-}
-```
-Errors: `404` run not found, `409` run is not in a resumable state.
-
-**`GET /api/topics/{topic_id}/analysis/status`** (deprecated Job-era compatibility)
-
-Enhanced status response with `v2_available` and `latest_v2_run` fields.
-
-Response `200`:
-```json
-{
-  "topic_id": "uuid",
-  "has_jobs": false,
-  "has_outputs": true,
-  "latest_job": null,
-  "analysis_types_completed": ["overview", "characters"],
-  "output_counts_by_type": {"overview": 1, "characters": 2},
-  "latest_v2_run": {
-    "id": "uuid", "mode": "preview", "status": "succeeded",
-    "progress_current": 8, "progress_total": 8,
-    "extraction_succeeded": 3, "extraction_failed": 0,
-    "merge_succeeded": 5, "merge_failed": 0,
-    "total_tokens": 15000, "model_used": "deepseek-chat"
-  },
-  "v2_available": true
-}
-```
-
----
-
-### 3.6c Work Analysis Numeric Preflight (v0.4)
-
-**`POST /api/works/{work_id}/analysis/estimate`**
-
-Send the exact selection body that will be used to create the Work analysis run. The current Work
-preview UI sends:
-
-```json
-{"mode": "preview", "limit_chunks": 3, "requested_types": ["characters"]}
-```
-
-The response includes `selected_chunk_count`, `estimated_llm_requests`,
-`estimated_total_input_tokens`, `estimated_total_output_tokens`, and `estimate_notes`, plus Work,
-mode, type, and model metadata. The frontend must show the numeric chunk/input/output/total token
-estimate before enabling confirmation. If estimation fails, run creation remains disabled and the
-user can retry. This is a token estimate rather than a currency quote.
-
-The endpoint is preflight-only: it creates no run, performs no LLM request, and persists no analysis
-state.
-
----
-### 3.7 Analysis Jobs (deprecated compatibility API)
-
-**`POST /api/topics/{topic_id}/analysis/jobs?job_type=analysis`** (202, deprecated)
-
-OpenAPI marks every Job operation deprecated. The current frontend has no Job caller; these routes remain only for historical clients and records.
-
-Valid `job_type`: `parse`, `analysis` (default: `analysis`).
-
-Response `202`:
-```json
-{
-  "job": {
-    "id": "uuid",
-    "topic_id": "uuid",
-    "job_type": "analysis",
-    "status": "succeeded",
-    "progress_current": 6,
-    "progress_total": 6,
-    "message": "Analysis complete",
-    "error_message": null,
-    "started_at": "...",
-    "finished_at": "...",
-    "created_at": "...",
-    "updated_at": "..."
-  },
-  "items": [
-    {
-      "id": "uuid",
-      "job_id": "uuid",
-      "item_type": "overview",
-      "status": "succeeded",
-      "progress_current": 1,
-      "progress_total": 1,
-      "message": "overview completed",
-      "error_message": null,
-      "created_at": "...",
-      "updated_at": "..."
-    }
-  ]
-}
-```
-Errors: `404` topic not found, `409` no document / not parsed, `422` invalid job_type.
-
-**`GET /api/topics/{topic_id}/analysis/jobs`**
-
-Response `200`: `{ "jobs": [...] }`
-
-**`GET /api/topics/{topic_id}/analysis/status`**
-
-Response `200`:
-```json
-{
-  "topic_id": "uuid",
-  "has_jobs": true,
-  "latest_job": { ... },
-  "analysis_types_completed": ["overview", "characters"]
-}
-```
-`analysis_types_completed` uses lowercase AnalysisType values.
-
-**`GET /api/analysis/jobs/{job_id}`**
-
-Response `200`: `{ "job": {...}, "items": [...] }`
-Errors: `404`.
-
-**`POST /api/analysis/jobs/{job_id}/cancel`**
-
-Response `200`: `{ "job": {...}, "items": [...] }`
-Errors: `404`.
-
----
-
-### 3.8 Chat
-
-**`POST /api/topics/{topic_id}/chat/sessions`** (201)
-
-Request:
-```json
-{ "title": "Character Discussion" }
-```
-Response `201`:
-```json
-{
-  "id": "uuid",
-  "topic_id": "uuid",
-  "title": "Character Discussion",
-  "created_at": "...",
-  "updated_at": "..."
-}
-```
-✅ Field is `title` (not `name`).
-
-**`GET /api/topics/{topic_id}/chat/sessions`**
-
-Response `200`: `{ "sessions": [...] }`
-
-**`GET /api/chat/sessions/{session_id}/messages`**
-
-`evidence_json` may be old string arrays (v0.1–v0.2) or new structured objects (v0.3+). Frontend must handle both.
-
-Response `200` (v0.3 — new assistant messages use structured evidence):
-```json
-{
-  "messages": [
-    {
-      "id": "uuid",
-      "session_id": "uuid",
-      "role": "user",
-      "content": "刘备的性格特点是什么？",
-      "evidence_json": null,
-      "uncertainty": null,
-      "created_at": "..."
-    },
-    {
-      "id": "uuid",
-      "session_id": "uuid",
-      "role": "assistant",
-      "content": "刘备是一个仁德的领袖...",
-      "evidence_json": [
-        {
-          "text": "刘备与关羽张飞在桃园结为兄弟...",
-          "source_type": "chunk",
-          "source_id": "uuid",
-          "chunk_id": "uuid",
-          "title": "",
-          "method": "legacy",
-          "score": 2.0,
-          "locator": null
-        }
-      ],
-      "uncertainty": null,
-      "created_at": "..."
-    }
-  ],
-  "total": 2
-}
-```
-Old messages may still have `evidence_json` as `["string", ...]`. Handle both.
-
-Errors: `404` session not found.
-
-**`POST /api/chat/sessions/{session_id}/messages`**
-
-Request:
-```json
-{ "content": "刘备的性格特点是什么？" }
-```
-⚠️ Makes real LLM call with hybrid retrieval (FTS + keyword + structured + analysis output). Content must be non-empty string (max 20000 chars). A `RetrievalTrace` is persisted for every request.
-
-Response `200` (v0.3 — structured evidence items):
-```json
-{
-  "id": "uuid",
-  "session_id": "uuid",
-  "role": "assistant",
-  "content": "刘备是一个仁德的领袖...",
-  "evidence_json": [
-    {
-      "text": "刘备与关羽张飞在桃园结为兄弟...",
-      "source_type": "chunk",
-      "source_id": "uuid",
-      "chunk_id": "uuid",
-      "title": "",
-      "method": "legacy",
-      "score": 2.0,
-      "locator": null
-    }
-  ],
-  "uncertainty": null,
-  "created_at": "..."
-}
-```
-| Field | Type | Description |
-|-------|------|-------------|
-| `text` | str | Snippet from the evidence source |
-| `source_type` | str | `chunk`, `analysis_output`, or `atom` |
-| `source_id` | str | ID of the matching source |
-| `chunk_id` | str or null | Chunk ID when available |
-| `title` | str | Display title |
-| `method` | str | `fts`, `keyword_fallback`, `structured`, `analysis_output`, or `legacy` |
-| `score` | float | Normalized relevance score [0, 1] |
-| `locator` | dict or null | Source locator when a chunk is linked |
-
-`evidence_json` is `null` when no evidence was found. `uncertainty` is set when the model is unsure or when retrieval found no evidence (service-enforced guard against hallucination).
-
-Backward compatibility: messages created before v0.3 may have `evidence_json` as `["string", ...]`. Handle both formats when reading old messages.
-
-Errors: `404` session not found, `409` no provider configured, `422` content is null / empty / non-string / >20000 chars.
-
-**`POST /api/chat/sessions/{session_id}/messages/{message_id}/resend`**
-
-Request:
-```json
-{
-  "content": "edited question",
-  "expected_assistant_message_id": "current-assistant-uuid"
-}
-```
-
-⚠️ Makes a real LLM call and may consume API credits. Only the latest complete exchange can be
-resent. The backend generates first, then atomically replaces the old pair; `404`, `409`, `422`, or
-`502` leaves the original exchange unchanged. On failure, keep the editor open and preserve the
-edited text. Response `200` uses the normal assistant-message shape.
-
-**`DELETE /api/chat/sessions/{session_id}`**
-
-Response `200`: `{ "deleted": true }`
-Errors: `404`.
-
-**`DELETE /api/chat/sessions/messages/{message_id}`**
-
-Deletes a message. If it's a user message, the following assistant reply is also deleted.
-Response `200`: `{ "deleted": true }`
-Errors: `404` message not found.
-
----
-
-### 3.8b Entities & Similar Scenes (v0.3)
-
-**`GET /api/topics/{topic_id}/entities/{entity_id}/evidence?limit=20`**
-
-Find all evidence for an entity by atom `id`, `stable_id`, or `canonical_name`. Returns matching atoms, source chunks (<=300 char excerpts with locators), and related AnalysisOutputs sharing source chunks. All arrays capped by `limit` (1-50, default 20). Entity not found returns 200 with empty arrays; cross-topic chunks are excluded.
-
-Response `200`:
-```json
-{
-  "entity_id": "char_liubei",
-  "canonical_name": "刘备",
-  "atoms": [{"id":"uuid","atom_type":"character","stable_id":"char_liubei","canonical_name":"刘备","title":"刘玄德","summary":null,"confidence":0.95,"evidence_quotes":["刘备出场。"],"chapter_index":0,"chunk_index":0}],
-  "chunks": [{"id":"uuid","chapter_index":0,"chunk_index":0,"excerpt":"刘备和关羽在桃园结义...","locator":{"source_type":"txt",...}}],
-  "outputs": [{"id":"uuid","output_type":"characters","title":"刘备分析","excerpt":"刘备是主角..."}]
-}
-```
-Errors: `404` topic not found.
-
----
-
-**`GET /api/topics/{topic_id}/similar-scenes?chunk_id=...&query=...&limit=10`**
-
-Lexical + structured similarity (no embeddings). At least one of `chunk_id` or `query` required. `chunk_id` mode builds query seed from chunk text + associated atom names and excludes the seed chunk from results. `limit` 1-30, default 10.
-
-Response `200`:
-```json
-{
-  "results": [
-    {"chunk_id":"uuid","chapter_index":1,"chunk_index":3,"title":"第二章","snippet":"曹操率军南下...","score":0.85,"locator":{...}}
-  ]
-}
-```
-Errors: `404` topic/chunk not found, `422` missing both params/empty query.
-
----
-
-### 3.9 Provider Presets
-
-**`GET /api/provider-presets`**
-
-Response `200`: `{ "presets": [...] }` — built-in catalog (DeepSeek, OpenAI, Qwen, Moonshot, Custom).
-
-**`GET /api/provider-presets/{provider_key}`**
-
-Response `200`: Single preset object. `404` if unknown key.
-
-**`GET /api/provider-presets/detect?base_url=...`**
-
-Detect preset by base URL (normalizes trailing slash). Returns matching preset or `provider_key="openai_compatible"`.
-
-### 3.10 Topic Provider Config
-
-**`GET /api/topics/{topic_id}/provider-config`**
-
-Response `200`: `{ "config": {...} | null }`
-
-**`PUT /api/topics/{topic_id}/provider-config`**
-
-Request: partial overrides (all fields optional, null = inherit).
-Response `200`: updated config object.
-Errors: `422` on invalid temperature/parallelism/context_window.
-
-**`GET /api/topics/{topic_id}/provider-config/effective`**
-
-Response `200`: `EffectiveProviderConfig` with `is_ready`, `missing_fields`, `warnings`.
-
-**`GET /api/topics/{topic_id}/analysis/recommendation`**
-
-Response `200`: `AnalysisRecommendation` with size_category, recommended model/tokens/temp/parallelism/mode, warnings, rationale.
-
-**`POST /api/topics/{topic_id}/provider-config/apply-recommendation`**
-
-Applies recommendation to topic config. Returns updated config + recommendation.
-
----
-
-## 4. Field Naming Confirmations
-
-| Question | Answer |
-|----------|--------|
-| ChatSession: `title` or `name`? | ✅ `title` (consistent across model, router, API.md) |
-| Provider response: `api_key` returned? | ✅ NEVER returned. Only `masked_api_key`. |
-| AnalysisOutput.output_type values? | ✅ Lowercase: `overview`, `characters`, `relations`, `events`, `causality`, `themes` |
-| Job status values? | ✅ Lowercase: `pending`, `running`, `succeeded`, `failed`, `cancelled` |
-| Job.job_type values? | ✅ Lowercase: `parse`, `analysis` |
-| Document status? | `uploaded`, `parsed` |
-| Topic enrich includes `document`? | ✅ Yes, with `id`, `original_filename`, `status`, `file_size_bytes`, `char_count` |
-| Topic enrich includes `analysis_summary`? | ✅ Yes, keys are AnalysisType values, values are `"completed"` |
-
-## 5. API.md vs Actual Code Discrepancies
-
-| Area | API.md says | Actual code | Severity |
-|------|-----------|-------------|----------|
-| Provider prefix | `/api/model-providers` | `/api/providers` | ⚠️ Use `/api/providers` |
-| Jobs API | Listed under "Analysis" section | Separate deprecated compatibility section | Low |
-| `PUT /api/topics/{id}/provider` | Documented but not implemented | Endpoint does NOT exist | ⚠️ Frontend: don't build this |
-| Job defaults | `ANALYSIS_ALL` | `analysis` | ⚠️ Use `analysis` |
-| `GET /api/storage` (global) | Documented | NOT implemented (topic-level `/api/topics/{id}/storage` exists) | Low |
-| Analysis Output endpoint | `POST /api/topics/{id}/analysis` | `POST /api/topics/{id}/analysis/run` | ⚠️ Use `/run` |
-
-## 6. Complete User Smoke Test Flow
-
-The following is the full end-to-end flow from fresh install:
-
-1. **Health**: `GET /api/health` → status ok
-2. **Configure Provider**: `POST /api/providers` → create (fake or real)
-3. **Test Provider** (optional, real): `POST /api/providers/{id}/test`
-4. **Create Topic**: `POST /api/topics` → with or without provider_id
-5. **Upload txt**: `POST /api/topics/{id}/documents/upload` → .txt file
-6. **Check document**: `GET /api/topics/{id}/documents/current`
-7. **Parse**: `POST /api/topics/{id}/parse`
-8. **View chapters**: `GET /api/topics/{id}/chapters`
-9. **View chunks**: `GET /api/topics/{id}/chunks?include_text=true&limit=10`
-10. **Check storage**: `GET /api/topics/{id}/storage`
-11. **Run analysis**: `POST /api/topics/{id}/analysis/run?limit_chunks=5` (needs real provider)
-12. **View outputs**: `GET /api/topics/{id}/analysis/outputs`
-13. **Create chat**: `POST /api/topics/{id}/chat/sessions`
-14. **Send message**: `POST /api/chat/sessions/{sid}/messages` (needs real provider)
-15. **View answer**: Check evidence_json and uncertainty in response
-16. **Cleanup**: Delete chat session → delete analysis outputs → delete document → delete topic → delete provider
-
-## 7. Backend Smoke Test Script
-
-A standalone Python smoke test is available:
-
-```bash
-cd backend
-# Safe mode (no real LLM):
-python scripts/smoke_backend.py --base-url http://127.0.0.1:8000 --cleanup
-
-# Real LLM mode:
-set DEEPSEEK_API_KEY=sk-...
-python scripts/smoke_backend.py --real-llm --provider-api-key-env DEEPSEEK_API_KEY --cleanup
-```
+- Pure formatting, selection, query-key, and normalization logic belongs in fast unit tests.
+- API workflow changes require Playwright coverage with mocked external APIs where practical.
+- Backend-integrated upload/parse/AnalysisRun smoke uses temporary database/data paths and mocks
+  only the LLM extraction boundary.
+- Default tests must never call a real provider or mutate the real `data/` directory.

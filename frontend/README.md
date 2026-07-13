@@ -10,7 +10,7 @@ npm install
 npm run dev           # → http://localhost:5173
 npm run typecheck     # TypeScript check
 npm run lint          # ESLint across source, E2E, unit tests, and configs
-npm run test:unit     # Pure-logic Playwright tests (12 tests, no browser fixture)
+npm run test:unit     # Pure-logic Playwright tests (17 tests, no browser fixture)
 npm run build         # Production build → dist/
 npm run check         # All three checks at once
 npm run e2e           # Playwright end-to-end tests (53 tests: 41 baseline + 12 v0.4)
@@ -41,7 +41,7 @@ frontend/
 ├── package.json              # React 18, Vite 6, TypeScript 5
 ├── vite.config.ts            # @vitejs/plugin-react, port 5173
 ├── playwright.config.ts      # Playwright e2e config (53 tests)
-├── playwright.unit.config.ts # Pure-logic unit config (12 tests)
+├── playwright.unit.config.ts # Pure-logic unit config (17 tests)
 ├── tsconfig.json             # strict mode, ES2020, jsx react-jsx
 ├── eslint.config.js          # typescript-eslint + recommended
 ├── .env.example              # VITE_API_BASE_URL template
@@ -86,7 +86,8 @@ frontend/
 
     │   │   ├── analysisSelection.ts       # estimateTokens (aligned with backend formula)
     │   │   ├── useAnalysisRun.ts          # Run query + polling hook
-    │   │   └── useActiveRunPersistence.ts # SessionStorage run ID persistence
+    │   │   ├── useActiveRunPersistence.ts # SessionStorage run ID persistence
+    │   │   └── output/                    # Tolerant output data + family renderers
     │   ├── search/           # v0.3: search panel and results
     │   │   ├── TopicSearchPanel.tsx       # Query input + method filter + debug drawer
     │   │   ├── SearchResultList.tsx       # Result count + card list
@@ -131,7 +132,7 @@ frontend/
     │   └── format.ts         # formatBytes, formatDateTime, formatJsonPreview
     ├── components/           # Shared UI components
     │   ├── HealthPanel.tsx
-    │   ├── AnalysisOutputCard.tsx
+    │   ├── AnalysisOutputCard.tsx          # Stable card chrome + output-family dispatch
     │   ├── TokenRangeSlider.tsx
     │   ├── LoadingBlock.tsx
     │   ├── ErrorBlock.tsx
@@ -256,7 +257,7 @@ The frontend creates only staged AnalysisRun records: Local Extraction → Deter
 | `preview` | `vite preview` | Preview production build |
 | `typecheck` | `tsc --noEmit` | Strict TypeScript check for source, E2E, unit tests, and configs |
 | `lint` | explicit source/E2E/test/config paths | ESLint all maintained frontend TypeScript/JavaScript |
-| `test:unit` | `playwright test --config playwright.unit.config.ts` | Run 12 pure-logic tests without browser fixtures |
+| `test:unit` | `playwright test --config playwright.unit.config.ts` | Run 17 pure-logic tests without browser fixtures |
 | `check` | typecheck + lint + unit + build | All non-E2E frontend checks |
 | `e2e` | `playwright test` | Run 53 mocked Playwright E2E tests |
 | `e2e:ui` | `playwright test --ui` | Run Playwright in UI mode |

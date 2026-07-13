@@ -1,339 +1,251 @@
-# LongNovelInsight v0.1.0 — LLM Analysis Pipeline
+# LongNovelInsight v0.4.0 — LLM Pipeline
 
-## Overview
+This document describes the current LLM call boundaries and the authoritative analysis and chat
+pipelines. Endpoint request and response shapes live in [API.md](API.md); AnalysisRun lifecycle and
+legacy deprecation rules live in [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md).
 
-The pipeline takes a parsed novel (chapters + chunks) and runs six independent analysis types against the configured LLM. Each analysis type has a specific prompt, output schema, and evidence requirements.
+## External Call Boundary
 
-## Principles
+LongNovelInsight sends requests directly to the user-selected OpenAI-compatible chat completions
+endpoint. There is no LLM framework, remote LongNovelInsight service, or background cloud worker.
+The configured API key is stored in the local SQLite database, omitted from API responses, and sent
+only in the `Authorization` header to the selected provider.
 
-1. **Evidence-grounded**: Every claim about the novel MUST be backed by `source_chunk_ids` and `evidence_quotes` — direct quotes from the original text.
-2. **Confidence required**: Each output item includes a `confidence` score (0.0–1.0). Low-confidence items are still stored but flagged in the UI.
-3. **No fabrication**: The LLM MUST NOT invent characters, events, relationships, or themes not present in the source text. The system prompt explicitly instructs against hallucination.
-4. **Structured output**: All LLM responses must be valid JSON matching the predefined schema. Malformed JSON triggers a retry (max 2 retries).
+All chat-completions HTTP requests use
+`backend/services/llm_client.py::OpenAICompatibleLLMClient`. The wrapper:
 
-## Pipeline Steps
+- posts to `{base_url}/chat/completions`;
+- supports JSON response mode and provider-specific request fields;
+- returns content, model, usage, and `finish_reason`;
+- masks no data by itself, so each calling service must sanitize provider errors before persistence
+  or logging;
+- may retry transport failures and an invalid HTTP response envelope when `max_retries` is greater
+  than zero, but does not retry non-200 HTTP status codes.
 
-### Step 0: Novel Parsing (Pre-LLM)
+Product code makes a real LLM request only at these visible boundaries:
 
-Before any LLM call, the novel is processed:
+| User action | Runtime caller | LLM behavior |
+| --- | --- | --- |
+| Start, retry, or resume an AnalysisRun | `local_extraction_worker.py` | One request per chunk scheduled by that operation and attempt |
+| Send a grounded chat message | `chat_service.py` | One request when retrieval finds evidence |
+| Edit and resend the latest chat turn | `chat_service.py` | One request when retrieval finds evidence; replacement is committed only after generation succeeds |
+| Test a provider | `provider_test_service.py` | One minimal request with `max_tokens=8` |
 
-1. **Encoding detection**: Sample first 4 KB, detect UTF-8 vs GBK. Convert to UTF-8 if needed.
-2. **Chapter splitting**: Apply regex patterns to find chapter boundaries:
-   - `第[一二三四五六七八九十百千0-9]+[章节回]` (Chinese)
-   - `Chapter\s+\d+` (English)
-   - `CHAPTER\s+\d+` (English)
-   - Fallback: split by double-newline clusters if no chapters detected.
-3. **Chunking**: Each chapter is split into overlapping chunks:
-   - Target chunk size: ~4000 tokens (estimated via character count / 1.5 for Chinese, character count / 4 for English).
-   - Overlap: ~200 tokens between consecutive chunks.
-   - Chunks never cross chapter boundaries.
-   - Chunk text is stored in SQLite (`chunk.text` column) in v0.1. Migration to disk files planned for v0.2.
-4. **Whitespace normalization**: Before storing, chunk text has excessive blank lines collapsed (3+ consecutive newlines → 2) and per-line trailing whitespace stripped, reducing token waste in LLM prompts.
+Startup recovery, parsing, search/retrieval, merge, final-output generation, and cross-Work
+materialization never call an LLM. Default tests replace the LLM boundary and must not make external
+requests.
 
-### Step 1–6: LLM Analysis Types
+## Provider Resolution
 
-The 6 analysis types run in **parallel via `ThreadPoolExecutor`** (bounded 1–6, default 3 concurrency). Each worker thread calls the LLM independently and returns a result dataclass; the main thread writes all DB results. The effective provider config is resolved at runtime: Topic override > Provider default > Preset default.
+Authoritative analysis resolves effective settings through
+`provider_config_service.get_effective_config()`:
 
-Each analysis type uses a two-part prompt:
-- **Shared system instructions**: Common extraction rules, evidence requirements, and output format rules form a stable prefix shared across all 6 types for prompt-cache friendliness.
-- **Task-specific schema**: Output JSON schema and type-specific instructions appended after the shared prefix.
-
-If the novel has more chunks than fit in a single context window, the caller batches chunks into multiple LLM calls and merges/deduplicates the results (batch-map-merge pipeline).
-
----
-
-### Analysis 1: Work Overview (`overview`)
-
-**Purpose:** A high-level summary of the novel's plot, style, narrative structure, and key features.
-
-**Input:** Selected chunks from the first chapter (for style/intro), middle chapters (evenly sampled), and final chapter (for ending).
-
-**Output Schema:**
-```json
-{
-  "analysis_type": "overview",
-  "results": {
-    "title": "三国演义",
-    "author_hint": "罗贯中",
-    "era_setting": "东汉末年",
-    "genre_tags": ["历史演义", "战争", "政治谋略"],
-    "one_paragraph_summary": "...",
-    "narrative_structure": "章回体, 120回",
-    "style_notes": "文白夹杂, 说书人口吻...",
-    "key_themes_brief": ["天下大势分久必合", "忠义"],
-    "total_chapters_analyzed": 120,
-    "source_chunk_ids": ["uuid1", "uuid3", "uuid120"],
-    "evidence_quotes": ["话说天下大势，分久必合，合久必分"],
-    "confidence": 0.85
-  }
-}
+```text
+TopicProviderConfig override > ModelProvider value > Provider preset default
 ```
 
----
+The resolved model, base URL, temperature, maximum output tokens, thinking mode, and analysis
+parallelism are copied into `AnalysisRun.effective_config_json` when the run is created. The API key
+is not copied into the run; execution resolves it from the selected Provider.
 
-### Analysis 2: Character List (`characters`)
+Chat currently selects `Topic.provider_id`, falling back to the default Provider. Provider Test uses
+the selected `ModelProvider` row directly. These call sites therefore do not share the full analysis
+override resolution path.
 
-**Purpose:** Extract all named characters with descriptions, traits, roles, and first-appearance evidence.
+For local extraction, thinking mode is sent as
+`{"thinking": {"type": "enabled|disabled"}}`. Structured extraction recommends disabled thinking
+because reasoning tokens increase latency and output-size risk.
 
-**Input:** All chunks (batched). Deduplication step merges mentions of the same character across batches.
+## Authoritative AnalysisRun Pipeline
 
-**Output Schema:**
-```json
-{
-  "analysis_type": "characters",
-  "results": [
-    {
-      "name": "刘备",
-      "aliases": ["刘玄德", "刘皇叔"],
-      "description": "蜀汉开国皇帝...",
-      "traits": ["仁德", "坚忍", "知人善任"],
-      "role": "protagonist",
-      "first_appearance_chapter": 1,
-      "source_chunk_ids": ["uuid1", "uuid15"],
-      "evidence_quotes": ["那人平生不甚好读书；性宽和，寡言语...", "..."],
-      "confidence": 0.95
-    }
-  ]
-}
+New product code uses `AnalysisRun` and the `analysis_run_service` lifecycle facade as the only
+authoritative analysis lifecycle. Initial execution is implemented in
+`analysis_run_execution_service.py`; retry and resume are implemented in
+`analysis_run_continuation_service.py`. The explicit entry point is:
+
+```http
+POST /api/works/{work_id}/analysis/runs
 ```
 
----
+`POST /api/topics/{topic_id}/analysis/runs` is a compatibility facade that resolves the Topic's
+deterministic default Work and invokes the same service. It never creates a cross-Work run.
 
-### Analysis 3: Character Relationships (`relationships`)
+### 1. Select and persist the scope
 
-**Purpose:** Identify pairwise relationships between characters.
+The backend resolves one Work and its single Document, then selects chunks in one of four modes:
 
-**Input:** Completed character list + all chunks (batched).
+- `preview`: the requested or recommended leading subset;
+- `range`: a chunk-index or chapter-index range;
+- `full`: all chunks in the selected Document;
+- `incremental`: chunks not successfully extracted by the selected prior-run baseline.
 
-**Output Schema:**
-```json
-{
-  "analysis_type": "relationships",
-  "results": [
-    {
-      "character_a": "刘备",
-      "character_b": "关羽",
-      "relationship_type": "结义兄弟",
-      "description": "桃园三结义中的大哥与二弟，生死相托的君臣兼兄弟关系。",
-      "direction": "bidirectional",
-      "source_chunk_ids": ["uuid1", "uuid25"],
-      "evidence_quotes": ["次日，于桃园中，备下乌牛白马祭礼等项，三人焚香再拜而说誓曰..."],
-      "confidence": 0.95
-    }
-  ]
-}
-```
+The exact ordered `selected_chunk_ids` and `work_id` are persisted in
+`AnalysisRun.chunk_selection_json`. Execution reads these persisted IDs rather than re-running the
+selection query, which keeps retries and resume tied to the original scope. Requested analysis
+types and the effective provider configuration are also persisted before execution starts.
 
----
+Creating a run with `start_immediately=false` leaves it pending and performs no LLM request.
 
-### Analysis 4: Key Events (`events`)
+### 2. Extract once per selected chunk
 
-**Purpose:** Extract major plot events in chronological order.
+Initial execution loads the persisted chunks and submits one local-extraction task per chunk to a
+`ThreadPoolExecutor`. Parallelism is clamped to 1–6. Worker tasks have no database access; they
+return a `LocalExtractionResult`, and the orchestrator writes results using short-lived sessions.
 
-**Input:** All chunks (batched, ordered by chapter/chunk index).
+Each request contains:
 
-**Output Schema:**
-```json
-{
-  "analysis_type": "events",
-  "results": [
-    {
-      "event_id": "evt_001",
-      "title": "桃园三结义",
-      "chapter": 1,
-      "summary": "刘备、关羽、张飞在桃园结为兄弟，立誓共扶汉室。",
-      "participants": ["刘备", "关羽", "张飞"],
-      "importance": "critical",
-      "source_chunk_ids": ["uuid1"],
-      "evidence_quotes": ["念刘备、关羽、张飞，虽然异姓，既结为兄弟，则同心协力，救困扶危..."],
-      "confidence": 0.95
-    }
-  ]
-}
-```
+- the stable system prompt from `backend/prompts/local/local_extraction.md`;
+- a user message with chunk ID, chapter/chunk metadata, optional chapter title, and chunk text;
+- `response_format={"type": "json_object"}`;
+- the resolved model, temperature, maximum output tokens, and thinking setting.
 
----
+The response parser accepts a JSON object directly and can recover an object from a code fence or
+surrounding text. Validation requires `analysis_type="local_extraction"`, the expected `chunk_id`,
+and dictionary atom items. Missing per-item `source_chunk_ids` or `evidence_quotes` are reported as
+warnings rather than hard validation failures.
 
-### Analysis 5: Event Causal Chain (`causal_chain`)
+Successful parsed data is serialized as canonical JSON in `LocalExtraction.content_json`. The
+normalizer then creates deterministic `ExtractedAtom` rows for characters, events, relations,
+causal links, theme signals, worldbuilding, foreshadowing, and open questions. Malformed individual
+atoms are skipped with warnings instead of invalidating other atoms from the chunk.
 
-**Purpose:** Identify causal links between key events — "A caused B", "B led to C".
+### 3. Adaptive extraction retry
 
-**Input:** Completed key events list + event-surrounding chunks.
+The authoritative worker disables retries in the generic HTTP client and owns its retry policy.
+There is one initial attempt and at most two worker retries.
 
-**Output Schema:**
-```json
-{
-  "analysis_type": "causal_chain",
-  "results": [
-    {
-      "cause_event_id": "evt_005",
-      "effect_event_id": "evt_012",
-      "causal_description": "董卓专权导致十八路诸侯联合讨伐。",
-      "causal_strength": "direct",
-      "source_chunk_ids": ["uuid10", "uuid20"],
-      "evidence_quotes": ["..."],
-      "confidence": 0.85
-    }
-  ]
-}
-```
+Retryable conditions are:
 
----
+- HTTP 429, 500, 502, 503, or 504;
+- transport, network, timeout, rate-limit, or equivalent transient errors;
+- content JSON parse failures, including likely truncation.
 
-### Analysis 6: Theme / Philosophy (`themes`)
+Non-retryable provider and validation errors stop that chunk immediately. Backoff is longest for
+429 responses (15 then 30 seconds), shorter for JSON/truncation failures (1.5 then 3 seconds), and
+3 then 6 seconds for other retryable transport failures.
 
-**Purpose:** Identify major themes, philosophical ideas, and moral frameworks in the novel. Analyze how they are expressed through plot, characters, and dialogue.
+For JSON failures, the completion budget escalates from the configured value to
+`min(configured * 2, 16384)`, then to 16384. A response is treated as likely truncated when
+`finish_reason == "length"` or completion usage is within eight tokens of the current budget.
 
-**Input:** Selected chunks from key chapters + work overview + character list.
+### 4. Account for every observable attempt
 
-**Output Schema:**
-```json
-{
-  "analysis_type": "themes",
-  "results": [
-    {
-      "theme_name": "忠义观",
-      "description": "小说通过关羽、诸葛亮等人物的行为，构建了一套以'忠义'为核心的价值体系...",
-      "related_characters": ["关羽", "诸葛亮", "刘备"],
-      "related_chapters": [25, 26, 27, 77],
-      "philosophical_framework": "儒家忠孝伦理 + 民间侠义传统",
-      "source_chunk_ids": ["uuid50", "uuid150"],
-      "evidence_quotes": ["吾今遇害，虽死无悔，但恐兄长不知..."],
-      "confidence": 0.9
-    }
-  ]
-}
-```
+Each `LocalExtraction` stores cumulative prompt, completion, total, reasoning, prompt-cache-hit,
+and prompt-cache-miss tokens. `attempt_usage_json` records per-attempt status, token budget, usage,
+finish reason, and sanitized error for the latest worker invocation; retry/resume preserves earlier
+token totals but does not yet merge every historical attempt record. `usage_unavailable_attempts`
+counts attempts for which the provider returned no usage data.
 
----
+Run totals are derived from the extraction rows. Merge and final stages record zero LLM usage. A
+provider may still bill an attempt whose failure response did not include usage, so local totals
+can be lower than the provider dashboard; `usage_unavailable_attempts` makes that limitation
+visible.
 
-## Anti-Fabrication Rules (Included in Every System Prompt)
+`POST /api/works/{work_id}/analysis/estimate` applies the same chunk selection and effective
+configuration without making an LLM call. It reports one expected LLM request per selected chunk
+before retries and estimates extraction tokens using prompt overhead, an expected output fraction,
+thinking-mode inflation, and a mode-specific retry buffer. It reports merge and final LLM cost as
+zero.
 
-```
-RULES:
-1. Only report information EXPLICITLY present in the provided text.
-2. If you are unsure about a detail, set confidence < 0.5 and note your uncertainty.
-3. Every claim MUST include at least one direct quote from the source text as evidence.
-4. Do NOT invent characters, events, relationships, or themes not mentioned in the text.
-5. If the text provides insufficient information for a field, use null — do NOT guess.
-6. Output must be valid JSON matching the schema exactly.
-```
+### 5. Deterministic merge
 
-## LLM Client Wrapper
+When at least one extraction succeeds, `merge_service.py` groups and consolidates `ExtractedAtom`
+rows in Python. No merge prompt is sent to a provider. Merge supports:
 
-All LLM calls go through a single `llm_client.py` module (`backend/services/llm_client.py`):
+- overview;
+- characters;
+- relations;
+- events;
+- causality;
+- themes;
+- worldbuilding;
+- foreshadowing.
 
-- **Class**: `OpenAICompatibleLLMClient(base_url, api_key, timeout=120.0, max_retries=2)`
-- **Endpoint**: `{provider.base_url}/chat/completions` — the base_url should already include `/v1` if needed.
-- **Request format**: OpenAI-compatible chat completions. Headers: `Authorization: Bearer {api_key}`, `Content-Type: application/json`.
-- **Retry logic**: 2 retries on network/timeout errors and JSON parse failures, with 1s/2s backoff.
-- **Timeout**: 120 seconds per request (configurable).
-- **Sync only**: v0.1.0 uses sync `httpx.Client`. No async needed.
-- **No streaming**: All calls wait for the full response.
-- **API key safety**: The client never logs the raw API key. The `provider_test_service` sanitizes error messages via `mask_api_key()`.
-- **Tests**: All tests mock `httpx.post` via `monkeypatch`. No real external API calls in CI.
+The stage writes idempotent `AnalysisOutput` projections named `merge_<type>`, including source
+chunk IDs, evidence quotes, confidence, and stable identifiers. Re-running a merge replaces the
+same run/type projection. The markdown files under `backend/prompts/merge/` are retained contract
+references and prompt-loader test fixtures; the current merge runtime does not invoke them.
 
-## Historical Pipeline Orchestration (v0.1.0, deprecated)
+### 6. Deterministic final outputs
 
-v0.1.0 runs analysis synchronously via `POST /api/topics/{topic_id}/analysis/run`:
+`final_output_service.py` converts successful merge projections into the six frontend-compatible
+output families: overview, characters, relations, events, causality, and themes. This stage is also
+Python-only and idempotent. Worldbuilding and foreshadowing have merge support but no final-output
+builders in v0.4.
 
-1. Delete previous analysis outputs for the topic.
-2. Select provider: prefer `topic.provider_id`, fall back to `is_default=true`.
-3. Load the first `limit_chunks` (default 5) from the database ordered by chapter/chunk index.
-4. For each of 6 analysis types:
-   a. Load the corresponding prompt template from `backend/prompts/`.
-   b. Build system + user messages with chunk context.
-   c. Call LLM via `OpenAICompatibleLLMClient.chat()` with `response_format={"type":"json_object"}`.
-   d. Parse JSON response, extract evidence_quotes, source_chunk_ids, confidence.
-   e. Save `AnalysisOutput` row to SQLite.
-   f. On failure (LLM error, JSON parse error): log and continue to next type.
-5. Return all generated outputs.
+Final `AnalysisOutput` rows carry a non-null `run_id`, which is authoritative provenance. Small JSON
+payloads remain inline; payloads larger than 64 KiB may be stored under the Topic artifact directory
+with an `AnalysisArtifact` pointer. Historical outputs with `run_id=null` remain readable but are
+not created by the authoritative path.
 
-Each output is stored in the `analysis_output` table with:
-- `content_json` — the full LLM response as JSON
-- `source_chunk_ids` — array of chunk IDs used as sources
-- `evidence_quotes` — direct quotes extracted from the LLM response
-- `confidence` — overall confidence score
+### 7. Complete, cancel, retry, and resume
 
-## Evidence-Based Chat (v0.3)
+Run status becomes:
 
-The chat flow uses hybrid retrieval to ground LLM answers in source material:
+- `succeeded` when all extractions and requested merge/final stages succeed;
+- `partial_success` when usable results exist but an extraction or later stage failed;
+- `failed` when no extraction succeeds or an unhandled failure prevents completion;
+- `cancelled` after an explicit cancellation request.
 
-1. User sends a message via `POST /api/chat/sessions/{session_id}/messages`.
-2. `retrieval_service.hybrid_retrieve()` performs multi-source search:
-   - **FTS**: SQLite FTS5 full-text search over chunk text/titles (BM25 scoring).
-   - **Keyword fallback**: LIKE-based substring search with CJK AND-group char-overlap for unsegmented queries.
-   - **Structured**: ExtractedAtom search by canonical_name, aliases, evidence_quotes.
-   - **Analysis output**: AnalysisOutput search by title, content, evidence_quotes.
-   - **Legacy fallback**: When hybrid returns nothing (e.g. long natural-language CJK queries), the old `retrieve_chunks()`/`retrieve_analysis()` fuzzy character-overlap scoring is used.
-3. Candidates are deduplicated by chunk_id, scores are min-max normalized to [0, 1], and the top-k are assembled into an evidence context.
-4. The LLM receives a system prompt instructing it to answer based only on evidence, outputting JSON with `answer`, `evidence`, and `uncertainty` fields.
-5. The assistant message is saved with structured `evidence_json` (list of objects with `text`, `source_type`, `source_id`, `chunk_id`, `method`, `score`, `locator`) and `uncertainty`.
-6. A `RetrievalTrace` is persisted for every request (including empty results) with `session_id` and `message_id` for debugging.
-7. When retrieval finds no evidence, the service layer forces an `uncertainty` note to guard against LLM hallucination.
-8. No vector embeddings are used.
+Cancellation prevents subsequent results from being saved when observed and skips merge/final.
+In-flight provider calls cannot be forcibly terminated.
 
-### evidence_json format
+`retry-failed` reprocesses failed extraction rows, replaces their atoms, then reruns merge and final.
+`resume` never reruns succeeded chunks; it processes missing rows and, by default, failed rows,
+then reruns deterministic stages. Usage is recomputed from all extraction rows after continuation.
 
-**v0.3 (structured objects):**
-```json
-[
-  {
-    "text": "刘备与关羽张飞在桃园结为兄弟...",
-    "source_type": "chunk",
-    "source_id": "uuid",
-    "chunk_id": "uuid",
-    "title": "",
-    "method": "legacy",
-    "score": 2.0,
-    "locator": null
-  }
-]
-```
+A process-local registry permits at most one executor per Topic and prevents duplicate execution of
+the same run in the supported single-process backend. On startup, orphaned `running` rows are marked
+failed with recovery metadata and remain explicitly resumable. Pending rows are left unchanged, and
+startup recovery never triggers an LLM call. Multiple backend processes sharing one SQLite database
+are outside the v0.4 runtime contract.
 
-**v0.1–v0.2 (string array — still valid for old messages):**
-```json
-["桃园结义展现了刘备的义气。"]
-```
+## Evidence-Grounded Chat
 
-## Authoritative Staged Analysis Pipeline (v0.4)
+Chat is a separate LLM pipeline and does not create AnalysisRuns.
 
-v0.2 replaces the single-pass 6-type LLM pipeline with a staged map-reduce design:
+1. The service persists the user message with a logical `turn_id` and session-local
+   `sequence_index`.
+2. `hybrid_retrieve()` gathers FTS5, CJK keyword fallback, structured atom, and AnalysisOutput
+   candidates. Optional `work_ids` filter the annotated candidates.
+3. If hybrid retrieval returns no candidates, the service tries the legacy fuzzy chunk/output
+   scorer. Stored scores are ranking signals and consumers must treat their scale as
+   method-dependent.
+4. A `RetrievalTrace` is persisted for every attempt, including empty retrieval and LLM failure.
+5. If no evidence exists, the service skips the LLM and stores a conservative assistant response.
+6. Otherwise, the provider receives the fixed chat system prompt, up to six recent user/assistant
+   messages for reference resolution, and the current evidence plus question. Factual claims must
+   remain grounded in the current evidence.
+7. The assistant content is parsed as JSON with `answer`, `evidence`, and `uncertainty`. Structured
+   evidence stored by the backend comes from retrieval candidates, not untrusted LLM citations.
 
-The supported entry points and deprecation boundary are defined in [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md).
+Assistant messages share the user message's `turn_id` and `sequence_index` and set
+`reply_to_message_id` explicitly. Listing, pair deletion, and resend use these fields, with a legacy
+fallback only for unbackfilled rows. Ordering is stable even when timestamps tie.
 
-### Pipeline Stages
+Normal sends keep the user message and retrieval trace when the provider fails and store a guarded
+assistant error. Edit/resend generates without a long SQLite transaction, then locks and revalidates
+the expected latest pair. It replaces the pair and trace atomically only after successful generation;
+a generation failure leaves the original exchange unchanged.
 
-```
-Step 1–3: Schema + Stable ID + Selection
-    ↓
-Step 4–5: Local Extraction (per chunk, parallel, LLM)
-    ↓
-Step 6: Orchestrator (AnalysisRun lifecycle: create → start → run)
-    ↓
-Step 7: Deterministic Merge (per type, Python — no LLM)
-    ↓
-Step 8: Final Outputs (convert merged → frontend AnalysisOutput with run_id)
-```
+Chat uses the generic client's default two retries for transport failures or an invalid HTTP
+response envelope. It does not adapt the token budget or retry malformed JSON inside the assistant
+message; malformed content is preserved with an uncertainty marker.
 
-### Current State
+## Provider Test
 
-- **Local extraction worker**: Pure function, per-chunk LLM call. Parses JSON, validates against contract (analysis_type, chunk_id, evidence requirements). Stores canonical JSON (not raw markdown). Retries on retryable HTTP codes (429/500/502/503/504) and JSON parse errors. API key masking in error messages.
-- **AnalysisRun orchestrator**: Creates run, executes extractions in parallel via ThreadPoolExecutor (bounded 1–6, respects `analysis_parallelism` config). After extraction, runs deterministic merge stage.
-- **Deterministic merge** (7 types + overview): Python functions that group ExtractedAtoms by stable_id, consolidate fields, and write intermediate `AnalysisOutput` rows with `output_type="merge_<type>"`. Merge is idempotent — re-running overwrites previous merge outputs. Each merged item includes per-item `source_chunk_ids`, `evidence_quotes`, and `confidence`.
-- **Chunk selection**: Persists selected chunk IDs in `chunk_selection_json`. Range/incremental modes execute exactly the selected chunks (not `all_chunks[:n]`).
-- **Progress tracking**: `progress_total = extraction_total + merge_total + final_total`.
-- **Status**: `get_analysis_run_status` returns extraction, merge, final, and token-usage summaries.
-- **Error handling**: Unhandled exceptions → run.status = failed. Cancelled runs skip merge stage.
-- **API key resolution**: TopicProviderConfig.provider_id > Topic.provider_id > default provider.
+Provider Test makes one synchronous request using the selected Provider row, a 60-second timeout,
+no client retries, temperature 0, and `max_tokens=8`. Any successful chat-completions response marks
+the connection successful; the response text is not used as analysis data. Provider errors are
+sanitized before they are returned.
 
-### Step 8 — Final Outputs (COMPLETED)
+## Deprecated Compatibility Pipelines
 
-Step 8 converts merge outputs into frontend-compatible AnalysisOutput records matching v0.1's 6 analysis types. Key details:
+The v1 synchronous executor, v1 async executor, single-type executor, and Job/JobItem APIs still use
+the six prompts in `backend/prompts/{overview,characters,relations,events,causality,themes}.md` and
+may make per-type LLM calls. They remain callable only for v0.4 compatibility, are marked deprecated
+in OpenAPI, and have no frontend caller. They must not be used for new product work.
 
-- **`final_output_service.py`**: 6 `build_final_<type>` functions (overview/characters/relations/events/causality/themes) + `run_final_output_stage` orchestrator
-- Each function reads the corresponding `merge_<type>` AnalysisOutput, transforms into a v0.1-compatible JSON shape, and writes a new `AnalysisOutput` with v0.1 output_type
-- **Deterministic** — no LLM required. Items include per-item source_chunk_ids, evidence_quotes, confidence inherited from merge data
-- **progress_total** includes final stage: extraction_total + merge_total + final_total
-- **Status API** `GET /api/analysis/runs/{id}` returns `"final"` section alongside `"merge"` and `"extractions"`
-- Rerun-safe: old final outputs for the same run+type are deleted before writing new ones
+The deprecated paths have independent lifecycle, retry, deletion, and provenance behavior. Their
+historical `AnalysisOutput` rows may have `run_id=null`. Do not infer authoritative AnalysisRun
+semantics from those rows, and do not delete or rewrite them during ordinary v0.4 operation.

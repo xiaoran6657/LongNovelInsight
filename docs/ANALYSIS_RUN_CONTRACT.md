@@ -5,8 +5,10 @@ for older local databases and API clients.
 
 ## Authoritative Path
 
-AnalysisRun and services/analysis_run_service.py are the only supported execution lifecycle for
-new product code.
+AnalysisRun and the `services/analysis_run_service.py` lifecycle facade are the only supported
+execution lifecycle for new product code. The facade delegates initial execution to
+`analysis_run_execution_service.py` and explicit retry/resume work to
+`analysis_run_continuation_service.py` without changing the HTTP contract.
 
 | Concern | Authoritative contract |
 | --- | --- |
@@ -59,13 +61,14 @@ the generated OpenAPI document and must not receive new frontend callers:
 - All /api/topics/{topic_id}/analysis/jobs, /api/topics/{topic_id}/analysis/status, and
   /api/analysis/jobs/{job_id} operations.
 
-These are independent executors, not adapters over AnalysisRun. Some can delete Topic-wide
-outputs and their Job records do not provide reliable AnalysisOutput provenance. The frontend no
-longer exposes them.
+The `pipeline=v2` option on `/analysis/run` is a deprecated facade into AnalysisRun. The default
+v1 path, `run-async`, the single-type route, and Job operations are independent legacy executors.
+Some legacy paths can delete Topic-wide outputs, and Job records do not provide reliable
+AnalysisOutput provenance. The frontend no longer exposes any of them.
 
 ## Compatibility and Removal Plan
 
-### v0.4.0-dev
+### v0.4.0
 
 - Preserve response bodies, status codes, tables, and historical rows.
 - Mark legacy executor operations deprecated in OpenAPI.

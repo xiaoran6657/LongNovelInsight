@@ -60,7 +60,7 @@ def main():
 
     # ── Health ──
     r = client.get("/api/health")
-    ok = r.status_code == 200 and r.json()["version"] == "0.4.0-dev"
+    ok = r.status_code == 200 and r.json()["version"] == "0.4.0"
     passed += check("Backend healthy", ok, r.text)
     if not ok:
         failed += 1

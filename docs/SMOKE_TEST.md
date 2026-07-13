@@ -2,16 +2,38 @@
 
 ## What is a smoke test?
 
-A smoke test is a quick end-to-end check that exercises the full API flow against a **live running server**. Unlike `pytest` unit tests (which use mock LLM responses and an in-memory database), the smoke test sends real HTTP requests to a running FastAPI backend and verifies that all endpoints work together.
+A smoke test is a short end-to-end check that verifies several backend layers together. The
+authoritative v0.4 smoke uses FastAPI TestClient, a temporary SQLite database and data directory,
+and a mocked extraction boundary. Older scripts can still target a live backend.
 
-| | pytest | smoke_backend.py |
+| | v0.4 isolated smoke | live smoke scripts |
 |---|---|---|
-| Database | In-memory SQLite per test | Real `data/longnovelinsight.sqlite` |
-| LLM calls | Mocked | Real (only with `--real-llm`) |
-| Server | TestClient (no network) | Live HTTP via httpx |
-| Purpose | Catch regressions in code | Catch integration / deployment issues |
+| Database | Temporary SQLite per test | Real `data/longnovelinsight.sqlite` |
+| Files | Temporary pytest data directory | Real `data/topics/` |
+| LLM calls | Mocked and explicitly blocked | Real only with the documented opt-in flag |
+| Server | TestClient (no network listener) | Live HTTP via httpx |
+| Purpose | Default-safe Work workflow regression | Deployment/provider verification |
 
-## Prerequisites
+## v0.4 isolated Work smoke test
+
+The default backend suite includes one integrated Work workflow:
+
+```powershell
+cd backend
+conda run -n LongNovelInsight python -m pytest tests/test_v04_integrated_smoke.py -v
+```
+
+It exercises the public Provider, Topic, and Work APIs; uploads and parses an in-memory TXT source;
+starts the authoritative Work-scoped AnalysisRun; executes the real selection, persistence, merge,
+and final-output stages; reads status and Work-filtered outputs; and deletes the temporary Topic.
+Only `run_local_extraction_for_chunk` is replaced with a deterministic result. An additional guard
+fails the test if the HTTP LLM client is called. The shared pytest fixtures redirect both SQLite and
+all uploaded/generated files to a per-test temporary directory.
+
+This test is intentionally not marked `integration`, so it runs in the default suite. Historical
+`tests/integration/` tests remain opt-in; some of them require a live backend or real provider.
+
+## Live smoke prerequisites
 
 1. Start the backend server:
 
@@ -27,7 +49,7 @@ python -m uvicorn main:app --reload --port 8000
 curl http://127.0.0.1:8000/api/health
 ```
 
-Expected: `{"status":"ok","version":"0.4.0-dev","topic_count":0,"total_disk_usage_bytes":...}`
+Expected: `{"status":"ok","version":"0.4.0","topic_count":0,"total_disk_usage_bytes":...}`
 
 ## Running the safe-mode smoke test (no real LLM)
 

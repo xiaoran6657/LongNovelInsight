@@ -2,7 +2,7 @@
 
 Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 
-## P0 — Complete the v0.4.0-dev Baseline
+## P0 — Complete the v0.4.0 Release Baseline
 
 | ID | Status | Owner | Task | Acceptance |
 | --- | --- | --- | --- | --- |
@@ -31,11 +31,13 @@ Statuses: `ready`, `in_progress`, `blocked`, `review`, `done`.
 | --- | --- | --- | --- |
 | FE-TEST-001 | done | frontend | Typecheck and lint E2E/config files; add pure-logic unit tests |
 | FE-CACHE-001 | done | frontend | Centralize TanStack Query key factories across Topic Detail and Chat |
-| CHAT-002 | ready | backend | Add explicit turn/reply linkage and stable ordering for chat message pairs |
-| E2E-001 | ready | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
-| DB-001 | ready | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |
-| DOC-001 | ready | docs | Consolidate current v0.4 API, architecture, and LLM pipeline documentation |
-| REFACTOR-001 | ready | both | Split the largest service/components along existing domain boundaries without new frameworks |
+| CHAT-002 | done | backend | Add explicit turn/reply linkage and stable ordering for chat message pairs |
+| E2E-001 | done | integration | Add isolated backend-integrated smoke coverage for Work upload/parse/analysis |
+| DB-001 | done | backend | Move hand-written migrations into ordered, tested migration functions with old-schema fixtures |
+| DOC-001 | done | docs | Consolidate current v0.4 API, architecture, and LLM pipeline documentation |
+| REFACTOR-001 | done | both | Split the largest service/components along existing domain boundaries without new frameworks |
+| REL-001 | done | release | Run the final v0.4.0 release-readiness audit and draft release notes without tagging or publishing |
+| REL-002 | done | release | Promote final version metadata and create the v0.4.0 release commit, tag, and publication after explicit approval |
 
 ## Later v0.4.x Candidates
 

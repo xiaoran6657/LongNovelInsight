@@ -59,7 +59,7 @@ Non-goals:
 
 Goal: support novel series and visual analysis. Backend and frontend implementation steps are complete.
 
-**Status: Implementation complete; v0.4.0 release validation pending.**
+**Status: v0.4.0 released on 2026-07-13.**
 
 - [x] One Topic contains multiple Works.
 - [x] Cross-work entity registry (deterministic merge, no new LLM calls).
@@ -74,7 +74,9 @@ Goal: support novel series and visual analysis. Backend and frontend implementat
 Known limitations:
 - Graph uses edge table MVP; Cytoscape visualization deferred to v0.4.1.
 - Timeline uses fixed-limit list; pagination/evidence controls deferred.
-- Upload/parse/analysis e2e tests not mocked (WorkCard click dependency in Playwright env).
+- Browser Playwright coverage remains API-mocked. A default-safe backend-integrated Work smoke now
+  covers upload, parse, AnalysisRun extraction/merge/final, output reads, and cleanup while mocking
+  only the external LLM extraction boundary.
 
 Non-goals:
 - Plugin marketplace.

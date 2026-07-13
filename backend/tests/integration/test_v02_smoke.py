@@ -72,7 +72,7 @@ def test_v02_smoke_pipeline(api):
     # --- Health ---
     r = api.get("/api/health")
     assert r.status_code == 200
-    assert r.json()["version"] == "0.4.0-dev"
+    assert r.json()["version"] == "0.4.0"
 
     # --- Provider ---
     r = api.get("/api/providers")

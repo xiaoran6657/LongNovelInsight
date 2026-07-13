@@ -23,6 +23,9 @@ class ChatMessage(SQLModel, table=True):
     session_id: str = Field(foreign_key="chat_session.id", index=True)
     role: str  # "user" | "assistant" | "system"
     content: str
+    turn_id: str | None = Field(default=None, index=True)
+    reply_to_message_id: str | None = Field(default=None, index=True)
+    sequence_index: int | None = None
     evidence_json: str | None = None
     uncertainty: str | None = None
     prompt_tokens: int = 0
@@ -84,6 +87,9 @@ class ChatMessageRead(SQLModel):
     session_id: str
     role: str
     content: str
+    turn_id: str | None = None
+    reply_to_message_id: str | None = None
+    sequence_index: int | None = None
     evidence_json: str | None = None
     uncertainty: str | None = None
     prompt_tokens: int = 0
@@ -100,6 +106,9 @@ class ChatAnswerRead(SQLModel):
     session_id: str
     role: str
     content: str
+    turn_id: str | None = None
+    reply_to_message_id: str | None = None
+    sequence_index: int | None = None
     evidence_json: dict | list | None = None
     uncertainty: str | None = None
     created_at: datetime
@@ -113,6 +122,9 @@ class ChatAnswerRead(SQLModel):
             session_id=msg.session_id,
             role=msg.role,
             content=msg.content,
+            turn_id=msg.turn_id,
+            reply_to_message_id=msg.reply_to_message_id,
+            sequence_index=msg.sequence_index,
             evidence_json=_safe_json(msg.evidence_json),
             uncertainty=msg.uncertainty,
             created_at=msg.created_at,

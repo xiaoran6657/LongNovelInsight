@@ -2,7 +2,7 @@ import json
 import logging
 from collections.abc import Callable
 
-from sqlalchemy import update
+from sqlalchemy import case, func, update
 from sqlmodel import Session, select
 
 from models.chat import ChatMessage, ChatSession
@@ -19,6 +19,8 @@ from services.retrieval_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ROLE_ORDER = case((ChatMessage.role == "user", 0), (ChatMessage.role == "assistant", 1), else_=2)
 
 CHAT_SYSTEM_PROMPT = (
     "You are a novel analysis assistant. "
@@ -73,18 +75,35 @@ def get_chat_messages(session_id: str, session: Session) -> list[ChatMessage]:
         session.exec(
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at)
+            .order_by(
+                ChatMessage.sequence_index.is_(None),
+                ChatMessage.sequence_index,
+                _ROLE_ORDER,
+                ChatMessage.created_at,
+                ChatMessage.id,
+            )
         ).all()
     )
 
 
 def _following_assistant(msg: ChatMessage, session: Session) -> ChatMessage | None:
+    linked = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == msg.session_id)
+        .where(ChatMessage.reply_to_message_id == msg.id)
+        .where(ChatMessage.role == "assistant")
+        .order_by(ChatMessage.sequence_index, ChatMessage.id)
+    ).first()
+    if linked is not None:
+        return linked
+    if msg.sequence_index is not None:
+        return None
     next_msgs = list(
         session.exec(
             select(ChatMessage)
             .where(ChatMessage.session_id == msg.session_id)
             .where(ChatMessage.created_at > msg.created_at)
-            .order_by(ChatMessage.created_at)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
             .limit(1)
         ).all()
     )
@@ -94,7 +113,7 @@ def _following_assistant(msg: ChatMessage, session: Session) -> ChatMessage | No
 
 
 def _delete_chat_message_records(msg: ChatMessage, session: Session) -> None:
-    assistant = _following_assistant(msg, session)
+    assistant = _following_assistant(msg, session) if msg.role == "user" else None
     message_ids = [msg.id]
     if assistant is not None:
         message_ids.append(assistant.id)
@@ -161,7 +180,15 @@ def _build_recent_history_messages(
     if exclude_message_ids:
         statement = statement.where(ChatMessage.id.not_in(exclude_message_ids))
     messages = list(
-        session.exec(statement.order_by(ChatMessage.created_at.desc()).limit(limit)).all()
+        session.exec(
+            statement.order_by(
+                ChatMessage.sequence_index.is_(None),
+                ChatMessage.sequence_index.desc(),
+                _ROLE_ORDER.desc(),
+                ChatMessage.created_at.desc(),
+                ChatMessage.id.desc(),
+            ).limit(limit)
+        ).all()
     )
     messages.reverse()  # chronological order
     result = []
@@ -245,6 +272,8 @@ def send_user_message(
     commit: bool = True,
     history_excluded_message_ids: set[str] | None = None,
     before_deferred_write: Callable[[], None] | None = None,
+    turn_id: str | None = None,
+    sequence_start: int | None = None,
 ) -> ChatMessage:
     chat_session = session.get(ChatSession, session_id)
     if chat_session is None:
@@ -256,7 +285,28 @@ def send_user_message(
 
     # Normal sends preserve the existing trace-before-LLM behavior. Atomic resend
     # generation defers every write until the LLM result is available.
-    user_msg = ChatMessage(session_id=session_id, role="user", content=trimmed)
+    if sequence_start is None:
+        # SQLite serializes this no-op write. Once it completes, the following
+        # max() observes every earlier committed turn before reserving the next.
+        session.execute(
+            update(ChatSession).where(ChatSession.id == session_id).values(title=ChatSession.title)
+        )
+        sequence_start = (
+            session.exec(
+                select(func.max(ChatMessage.sequence_index)).where(
+                    ChatMessage.session_id == session_id
+                )
+            ).one()
+            or 0
+        ) + 1
+    user_msg = ChatMessage(
+        session_id=session_id,
+        role="user",
+        content=trimmed,
+        turn_id=turn_id,
+        sequence_index=sequence_start,
+    )
+    user_msg.turn_id = user_msg.turn_id or user_msg.id
     if commit:
         session.add(user_msg)
         session.flush()
@@ -529,6 +579,9 @@ def _finish_chat_turn(
     commit: bool,
     before_deferred_write: Callable[[], None] | None,
 ) -> ChatMessage:
+    assistant_msg.turn_id = user_msg.turn_id
+    assistant_msg.reply_to_message_id = user_msg.id
+    assistant_msg.sequence_index = user_msg.sequence_index
     if not commit:
         if before_deferred_write is not None:
             before_deferred_write()
@@ -592,6 +645,8 @@ def resend_user_message(
             commit=False,
             history_excluded_message_ids=excluded_ids,
             before_deferred_write=lock_and_revalidate,
+            turn_id=original.turn_id or original.id,
+            sequence_start=original.sequence_index,
         )
         if revised_assistant.uncertainty == "LLM error":
             raise ChatResendGenerationError("The LLM could not produce a revised response")
@@ -628,7 +683,13 @@ def _validate_resend_target(
     latest = session.exec(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.desc())
+        .order_by(
+            ChatMessage.sequence_index.is_(None),
+            ChatMessage.sequence_index.desc(),
+            _ROLE_ORDER.desc(),
+            ChatMessage.created_at.desc(),
+            ChatMessage.id.desc(),
+        )
         .limit(1)
     ).first()
     if latest is None or latest.id != original_assistant.id:

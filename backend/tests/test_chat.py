@@ -158,6 +158,9 @@ class TestChat:
                 assert resp.status_code == 200
                 data = resp.json()
                 assert data["role"] == "assistant"
+                assert data["turn_id"] is not None
+                assert data["reply_to_message_id"] is not None
+                assert data["sequence_index"] == 1
                 assert "刘备" in data["content"]
                 assert data["evidence_json"] is not None
                 assert data["uncertainty"] is None
@@ -210,6 +213,13 @@ class TestChat:
             assert not any("刘备是谁？" in content for content in prompt_contents)
             assert sum("刘备有哪些性格特点？" in content for content in prompt_contents) == 1
             revised_user = next(message for message in revised if message["role"] == "user")
+            revised_assistant = next(
+                message for message in revised if message["role"] == "assistant"
+            )
+            assert revised_user["turn_id"] == original_user["turn_id"]
+            assert revised_user["sequence_index"] == original_user["sequence_index"]
+            assert revised_assistant["turn_id"] == revised_user["turn_id"]
+            assert revised_assistant["reply_to_message_id"] == revised_user["id"]
             revised_traces = _get_chat_traces(session_id)
             assert len(revised_traces) == 1
             assert revised_traces[0].id not in original_trace_ids
@@ -341,18 +351,22 @@ class TestChat:
                 session_gen = app.dependency_overrides.get(get_session, get_session)
                 other_session = next(session_gen())
                 try:
-                    other_session.add(
-                        ChatMessage(
-                            session_id=session_id,
-                            role="user",
-                            content="Concurrent question",
-                        )
+                    concurrent_user = ChatMessage(
+                        session_id=session_id,
+                        role="user",
+                        content="Concurrent question",
+                        turn_id="concurrent-turn",
+                        sequence_index=2,
                     )
+                    other_session.add(concurrent_user)
                     other_session.add(
                         ChatMessage(
                             session_id=session_id,
                             role="assistant",
                             content="Concurrent answer",
+                            turn_id="concurrent-turn",
+                            reply_to_message_id=concurrent_user.id,
+                            sequence_index=2,
                         )
                     )
                     other_session.commit()

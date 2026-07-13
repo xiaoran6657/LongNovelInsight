@@ -1,10 +1,8 @@
-"""v0.2 AnalysisRun orchestration: create, start, parallel extraction, merge, cancel."""
+"""AnalysisRun lifecycle facade and process-local executor ownership."""
 
-import json
 import threading
-import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,8 +12,8 @@ from sqlmodel import Session, func, select
 from models.analysis_run import AnalysisRun
 from models.enums import AnalysisMode, JobStatus
 from models.local_extraction import LocalExtraction
-from services import atom_normalizer as _atom_normalizer
-from services import local_extraction_worker as _extraction_worker
+from services import analysis_run_continuation_service as _continuation
+from services import analysis_run_execution_service as _execution
 
 _EXECUTOR_STATE_LOCK = threading.RLock()
 _ACTIVE_EXECUTORS_BY_TOPIC: dict[str, str] = {}
@@ -28,9 +26,6 @@ INTERRUPTED_RUN_MESSAGE = (
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-# ── Create & Start ──
 
 
 def create_analysis_run(
@@ -76,10 +71,7 @@ def _create_analysis_run(
     force: bool = False,
     work_id: str | None = None,
 ) -> AnalysisRun:
-    """Create an AnalysisRun and persist it.
-
-    When work_id is provided, chunks are filtered to that Work's document only.
-    """
+    """Create and persist an AnalysisRun for one Topic and optional Work."""
     from services.analysis_selection_service import (
         FINAL_ANALYSIS_TYPES,
         normalize_requested_types,
@@ -90,7 +82,6 @@ def _create_analysis_run(
 
     validate_analysis_mode(mode)
 
-    # Guard both persisted active state and an executor finishing its terminal commit.
     if topic_id in _ACTIVE_EXECUTORS_BY_TOPIC:
         raise ValueError("Analysis is already running for this topic")
     active_run = session.exec(
@@ -101,17 +92,15 @@ def _create_analysis_run(
     if active_run is not None:
         raise ValueError("Analysis is already running for this topic")
 
-    # Resolve document_id from work_id for chunk filtering
     document_id: str | None = None
     if work_id is not None:
         from models.document import Document
 
-        doc = session.exec(select(Document).where(Document.work_id == work_id)).first()
-        if doc is None:
+        document = session.exec(select(Document).where(Document.work_id == work_id)).first()
+        if document is None:
             raise ValueError("No document found for this Work")
-        document_id = doc.id
+        document_id = document.id
 
-    # Validate chunks exist
     from models.chunk import Chunk
 
     chunk_base = select(Chunk).where(Chunk.topic_id == topic_id)
@@ -121,7 +110,6 @@ def _create_analysis_run(
     if chunk is None:
         raise ValueError("No chunks found; parse document first")
 
-    # Select chunks
     selected, selection_info = select_chunks_for_analysis(
         session,
         topic_id,
@@ -134,25 +122,23 @@ def _create_analysis_run(
         document_id=document_id,
     )
 
-    # Persist selected chunk IDs in selection info
-    selection_info["selected_chunk_ids"] = [c.id for c in selected]
+    selection_info["selected_chunk_ids"] = [selected_chunk.id for selected_chunk in selected]
     if work_id is not None:
         selection_info["work_id"] = work_id
 
-    # Resolve effective config
     effective = get_effective_config(session, topic_id)
     if not effective or not effective.is_ready:
         raise ValueError("No provider configured for this topic")
 
     types = normalize_requested_types(requested_types)
-
-    # Map requested types to merge types (same names for v0.2)
     merge_requested_types = types.copy()
     extraction_total = len(selected)
     merge_total = len(merge_requested_types)
-
-    # Final types: subset that maps to v0.1-compatible output types
-    final_requested_types = [t for t in merge_requested_types if t in FINAL_ANALYSIS_TYPES]
+    final_requested_types = [
+        analysis_type
+        for analysis_type in merge_requested_types
+        if analysis_type in FINAL_ANALYSIS_TYPES
+    ]
     final_total = len(final_requested_types)
     progress_total = extraction_total + merge_total + final_total
 
@@ -240,443 +226,70 @@ def recover_interrupted_analysis_runs(engine: Engine | None = None) -> list[str]
     return recovered
 
 
-# ── Execution ──
-
-
-def _execute_run(run_id: str, engine=None) -> None:
-    """Background thread: extraction → merge pipeline.
-
-    engine can be injected for testing. Defaults to db.engine.
-    """
-    if engine is None:
-        from db import engine as db_engine
-
-        engine = db_engine
-
+def _execute_run(run_id: str, engine: Engine | None = None) -> None:
+    """Run initial analysis in the registered background executor."""
+    engine = _resolve_engine(engine)
     try:
         _execute_run_impl(run_id, engine)
-    except Exception as e:
-        _fail_run(run_id, engine, str(e))
+    except Exception as exc:
+        _fail_run(run_id, engine, str(exc))
 
 
-def _fail_run(run_id: str, engine, error: str) -> None:
-    """Mark a run as failed due to an unhandled exception.
-
-    Does NOT overwrite succeeded, cancelled, partial_success, or already-completed runs.
-    """
+def _fail_run(run_id: str, engine: Engine, error: str) -> None:
+    """Record an unhandled executor failure without overwriting terminal work."""
     try:
         with Session(engine) as session:
             run = session.get(AnalysisRun, run_id)
             if run is None:
                 return
-            protected = {JobStatus.SUCCEEDED, JobStatus.CANCELLED, JobStatus.PARTIAL_SUCCESS}
+            protected = {
+                JobStatus.SUCCEEDED,
+                JobStatus.CANCELLED,
+                JobStatus.PARTIAL_SUCCESS,
+            }
             if run.status in protected:
                 return
-            # If the run has already finished with stage=completed metadata, don't overwrite
             if run.finished_at is not None:
                 metadata = run.get_metadata()
                 if metadata.get("stage") == "completed":
                     return
-            safe = _mask_api_keys_in_error(session, error)
-            safe = safe[:1000]
+            safe = _mask_api_keys_in_error(session, error)[:1000]
             run.status = JobStatus.FAILED
             run.error_message = safe
             run.finished_at = _now()
             session.add(run)
             session.commit()
     except Exception:
-        pass  # best-effort failure recording
+        pass
 
 
 def _mask_api_keys_in_error(session: Session, error: str) -> str:
-    """Replace all known api_keys in error string with masked versions."""
+    """Replace all known provider keys in an error with masked values."""
     from models.model_provider import ModelProvider, mask_api_key
 
     result = error
     try:
         providers = session.exec(select(ModelProvider)).all()
-        for p in providers:
-            if p.api_key and len(p.api_key) > 4 and p.api_key in result:
-                result = result.replace(p.api_key, mask_api_key(p.api_key))
+        for provider in providers:
+            if provider.api_key and len(provider.api_key) > 4 and provider.api_key in result:
+                result = result.replace(provider.api_key, mask_api_key(provider.api_key))
     except Exception:
         pass
     return result
 
 
 def _execute_run_impl(run_id: str, engine: Engine) -> None:
-    from models.chapter import Chapter
-    from models.chunk import Chunk
-
-    with Session(engine) as session:
-        run = session.get(AnalysisRun, run_id)
-        if run is None or run.status not in (JobStatus.PENDING, JobStatus.RUNNING):
-            return
-
-        run.status = JobStatus.RUNNING
-        run.started_at = run.started_at or _now()
-        session.add(run)
-        session.commit()
-
-        config = run.get_effective_config()
-        parallelism = min(max(config.get("analysis_parallelism", 3), 1), 6)
-        model_name = config.get("model_name", "")
-        base_url = config.get("base_url", "")
-        api_key = _resolve_api_key(session, run.topic_id)
-        temperature = config.get("temperature") or 0.1
-        max_tokens = config.get("max_output_tokens") or 3072
-        thinking_mode = config.get("thinking_mode", "disabled")
-
-        # Load selected chunks by persisted IDs
-        selection = run.get_chunk_selection()
-        selected_chunk_ids = selection.get("selected_chunk_ids", [])
-        if not selected_chunk_ids:
-            run.status = JobStatus.FAILED
-            run.error_message = "No chunks selected"
-            run.finished_at = _now()
-            session.add(run)
-            session.commit()
-            return
-
-        # Query chunks by IDs, preserving order
-        id_to_chunk = {}
-        all_chunks = session.exec(
-            select(Chunk).where(Chunk.id.in_(selected_chunk_ids))  # noqa: E711
-        ).all()
-        for c in all_chunks:
-            id_to_chunk[c.id] = c
-        selected = [id_to_chunk[cid] for cid in selected_chunk_ids if cid in id_to_chunk]
-
-        if not selected:
-            run.status = JobStatus.FAILED
-            run.error_message = "No chunks selected"
-            run.finished_at = _now()
-            session.add(run)
-            session.commit()
-            return
-
-        # Extract chapter titles for metadata
-        chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-        chapter_map = {ch.chapter_index: ch.title for ch in chapters}
-
-    # ── Parallel extraction (outside session to avoid long-lived sessions) ──
-    stage_start = time.monotonic()
-    extraction_start = stage_start
-    succeeded = 0
-    failed = 0
-    total_tokens = 0
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    failed_chunks: list[dict] = []
-
-    with ThreadPoolExecutor(max_workers=parallelism, thread_name_prefix="v2-extract") as executor:
-        futures = {}
-        for chunk in selected:
-            future = executor.submit(
-                _extraction_worker.run_local_extraction_for_chunk,
-                chunk_id=chunk.id,
-                chunk_text=chunk.text,
-                base_url=base_url,
-                api_key=api_key,
-                model_name=model_name,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                thinking_mode=thinking_mode,
-                chapter_index=chunk.chapter_index,
-                chunk_index=chunk.chunk_index,
-                chapter_title=chapter_map.get(chunk.chapter_index),
-            )
-            futures[future] = chunk.id
-
-        for future in as_completed(futures):
-            chunk_id = futures[future]
-
-            # Check cancel before saving
-            with Session(engine) as session:
-                run = session.get(AnalysisRun, run_id)
-                if run is None or run.status == JobStatus.CANCELLED:
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    return
-
-            try:
-                result = future.result()
-            except Exception as e:
-                failed += 1
-                failed_chunks.append({"chunk_id": chunk_id, "error": str(e)[:200]})
-                with Session(engine) as session:
-                    _save_extraction(
-                        session, run_id, run.topic_id, chunk_id, ok=False, error=str(e)
-                    )
-                    session.commit()
-                continue
-
-            with Session(engine) as session:
-                _save_extraction(
-                    session,
-                    run_id,
-                    run.topic_id,
-                    chunk_id,
-                    ok=result.ok,
-                    content_json=result.content_json,
-                    parsed_json=result.parsed_json,
-                    error=result.error,
-                    prompt_tokens=result.prompt_tokens,
-                    completion_tokens=result.completion_tokens,
-                    total_tokens=result.total_tokens,
-                    model_used=result.model_used,
-                    retry_count=result.retry_count,
-                    reasoning_tokens=result.cumulative_reasoning_tokens,
-                    prompt_cache_hit_tokens=result.cumulative_prompt_cache_hit_tokens,
-                    prompt_cache_miss_tokens=result.cumulative_prompt_cache_miss_tokens,
-                    usage_unavailable_attempts=result.usage_unavailable_attempts,
-                    attempt_usage_json=_serialize_attempts(result.attempts),
-                )
-                if result.ok:
-                    succeeded += 1
-                else:
-                    failed += 1
-                    failed_chunks.append(
-                        {
-                            "chunk_id": chunk_id,
-                            "error": (result.error or "")[:200],
-                        }
-                    )
-                total_tokens += result.total_tokens
-                total_prompt_tokens += result.prompt_tokens
-                total_completion_tokens += result.completion_tokens
-
-                # Update progress
-                run = session.get(AnalysisRun, run_id)
-                if run is None or run.status == JobStatus.CANCELLED:
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    break
-                run.extraction_succeeded = succeeded
-                run.extraction_failed = failed
-                run.total_tokens = total_tokens
-                run.prompt_tokens = total_prompt_tokens
-                run.completion_tokens = total_completion_tokens
-                run.progress_current = succeeded + failed
-                session.add(run)
-                session.commit()
-
-    extraction_elapsed = round(time.monotonic() - extraction_start, 3)
-
-    # ── Post-extraction: check cancel, then run merge ──
-    with Session(engine) as session:
-        run = session.get(AnalysisRun, run_id)
-        if run is None:
-            return
-
-        # If cancelled, skip merge
-        if run.status == JobStatus.CANCELLED:
-            run.finished_at = run.finished_at or _now()
-            session.add(run)
-            session.commit()
-            return
-
-        # Update extraction counters
-        run.extraction_succeeded = succeeded
-        run.extraction_failed = failed
-        run.total_tokens = total_tokens
-        run.prompt_tokens = total_prompt_tokens
-        run.completion_tokens = total_completion_tokens
-        run.progress_current = succeeded + failed
-
-        # Determine final status if no merge is possible
-        if succeeded == 0:
-            run.status = JobStatus.FAILED
-            run.error_message = run.error_message or "All extractions failed"
-            run.finished_at = _now()
-            run.set_metadata(
-                {
-                    "stage": "extraction_failed",
-                    "failed_chunks": failed_chunks,
-                    "warnings": [],
-                }
-            )
-            session.add(run)
-            session.commit()
-            return
-
-        # ── Merge stage ──
-        merge_start = time.monotonic()
-        extraction_tokens = run.total_tokens or 0
-        requested_types = run.get_requested_types()
-        merge_types = [
-            t
-            for t in requested_types
-            if t
-            in {
-                "overview",
-                "characters",
-                "relations",
-                "events",
-                "causality",
-                "themes",
-                "worldbuilding",
-                "foreshadowing",
-            }
-        ]
-
-        if merge_types:
-            from services.merge_service import run_merge_stage
-
-            merge_summaries = run_merge_stage(session, run_id, requested_types=merge_types)
-            merge_succeeded_count = sum(
-                1
-                for s in merge_summaries
-                if s.atom_count >= 0 and not any("Merge failed:" in w for w in s.warnings)
-            )
-            merge_failed_count = sum(
-                1 for s in merge_summaries if any("Merge failed:" in w for w in s.warnings)
-            )
-            merge_warnings: list[str] = []
-            for s in merge_summaries:
-                merge_warnings.extend(s.warnings)
-
-            run = session.get(AnalysisRun, run_id)  # refresh
-            if run:
-                run.merge_succeeded = merge_succeeded_count
-                run.merge_failed = merge_failed_count
-                run.progress_current = (
-                    succeeded + failed + merge_succeeded_count + merge_failed_count
-                )
-        else:
-            merge_summaries = []
-            merge_succeeded_count = 0
-            merge_failed_count = 0
-            merge_warnings = []
-
-        merge_elapsed = round(time.monotonic() - merge_start, 3)
-
-        # ── Final output stage ──
-        final_start = time.monotonic()
-        final_summaries: list = []
-        final_succeeded_count = 0
-        final_failed_count = 0
-        final_warnings: list[str] = []
-
-        if merge_succeeded_count > 0:
-            _final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
-            final_types = [t for t in merge_types if t in _final_types]
-
-            if final_types:
-                from services.final_output_service import run_final_output_stage
-
-                final_summaries = run_final_output_stage(
-                    session, run_id, requested_types=final_types
-                )
-                for s in final_summaries:
-                    final_warnings.extend(s.warnings)
-
-                run = session.get(AnalysisRun, run_id)
-                if run:
-                    final_succeeded_count = run.final_succeeded or 0
-                    final_failed_count = run.final_failed or 0
-                    final_skipped_count = run.final_skipped or 0
-                    run.progress_current = (
-                        succeeded
-                        + failed
-                        + merge_succeeded_count
-                        + merge_failed_count
-                        + final_succeeded_count
-                        + final_failed_count
-                        + final_skipped_count
-                    )
-
-        # ── Final status ──
-        final_elapsed = round(time.monotonic() - final_start, 3)
-        run = session.get(AnalysisRun, run_id)
-        if run and run.status != JobStatus.CANCELLED:
-            if succeeded == 0:
-                run.status = JobStatus.FAILED
-            elif failed == 0 and merge_failed_count == 0 and final_failed_count == 0:
-                run.status = JobStatus.SUCCEEDED
-            else:
-                run.status = JobStatus.PARTIAL_SUCCESS
-            run.finished_at = _now()
-
-            # Collect failed merge/final type names
-            failed_merge_types = [
-                s.merge_type
-                for s in merge_summaries
-                if any("Merge failed:" in w for w in s.warnings)
-            ]
-            failed_final_types = [
-                s.output_type
-                for s in final_summaries
-                if any("Final output failed:" in w for w in s.warnings)
-            ]
-
-            # Aggregate usage breakdown across all extractions (in current session)
-            all_exts_for_usage = session.exec(
-                select(LocalExtraction).where(LocalExtraction.run_id == run_id)
-            ).all()
-            agg_reasoning = sum(e.reasoning_tokens or 0 for e in all_exts_for_usage)
-            agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in all_exts_for_usage)
-            agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in all_exts_for_usage)
-            agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in all_exts_for_usage)
-
-            # Update Work status if this run was scoped to a Work
-            work_id = selection.get("work_id")
-            if work_id and run.status == JobStatus.SUCCEEDED:
-                from models.work import Work as WorkModel
-
-                work = session.get(WorkModel, work_id)
-                if work is not None:
-                    work.status = "analyzed"
-                    session.add(work)
-
-            run.set_metadata(
-                {
-                    "stage": "completed",
-                    "stage_timings": {
-                        "extraction": extraction_elapsed,
-                        "merge": merge_elapsed,
-                        "final": final_elapsed,
-                    },
-                    "failed_chunks": failed_chunks,
-                    "failed_merge_types": failed_merge_types,
-                    "failed_final_types": failed_final_types,
-                    "merge_summaries": [
-                        {"type": s.merge_type, "atoms": s.atom_count, "merged": s.merged_count}
-                        for s in merge_summaries
-                    ],
-                    "final_summaries": [
-                        {"type": s.output_type, "items": s.item_count} for s in final_summaries
-                    ],
-                    "usage_by_stage": {
-                        "extraction": {
-                            "prompt_tokens": total_prompt_tokens,
-                            "completion_tokens": total_completion_tokens,
-                            "total_tokens": extraction_tokens,
-                            "reasoning_tokens": agg_reasoning,
-                            "prompt_cache_hit_tokens": agg_cache_hit,
-                            "prompt_cache_miss_tokens": agg_cache_miss,
-                            "usage_unavailable_attempts": agg_unavailable,
-                        },
-                        "merge": 0,
-                        "final": 0,
-                    },
-                    "warnings": merge_warnings + final_warnings,
-                }
-            )
-            session.add(run)
-            session.commit()
+    """Compatibility entry point for the initial execution implementation."""
+    _execution.execute_run_impl(
+        run_id,
+        engine,
+        executor_factory=ThreadPoolExecutor,
+    )
 
 
 def _serialize_attempts(attempts: list) -> str | None:
-    """Serialize attempts list to JSON, handling both AttemptUsage objects and plain dicts."""
-    if not attempts:
-        return None
-    serialized = []
-    for a in attempts:
-        if hasattr(a, "to_dict"):
-            serialized.append(a.to_dict())
-        elif isinstance(a, dict):
-            serialized.append(a)
-        else:
-            serialized.append(str(a))
-    return json.dumps(serialized, ensure_ascii=False)
+    """Compatibility entry point for extraction attempt serialization."""
+    return _execution.serialize_attempts(attempts)
 
 
 def _save_extraction(
@@ -700,93 +313,33 @@ def _save_extraction(
     usage_unavailable_attempts: int = 0,
     attempt_usage_json: str | None = None,
 ) -> None:
-    """Write a LocalExtraction row and, if successful, normalize atoms.
-
-    Idempotent: if a succeeded extraction already exists for this run+chunk,
-    skip unless force=True.
-    """
-    if ok and not force:
-        existing = session.exec(
-            select(LocalExtraction).where(
-                LocalExtraction.run_id == run_id,
-                LocalExtraction.chunk_id == chunk_id,
-                LocalExtraction.status == "succeeded",
-            )
-        ).first()
-        if existing is not None:
-            return
-
-    ext = LocalExtraction(
-        run_id=run_id,
-        topic_id=topic_id,
-        chunk_id=chunk_id,
-        status="succeeded" if ok else "failed",
-        attempt_count=retry_count + 1,
+    """Compatibility entry point for extraction persistence."""
+    _execution.save_extraction(
+        session,
+        run_id,
+        topic_id,
+        chunk_id,
+        ok,
         content_json=content_json,
-        confidence=0.5,
+        parsed_json=parsed_json,
+        error=error,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         model_used=model_used,
-        error_message=error[:1000] if error else None,
-        started_at=_now(),
-        finished_at=_now(),
+        retry_count=retry_count,
+        force=force,
         reasoning_tokens=reasoning_tokens,
         prompt_cache_hit_tokens=prompt_cache_hit_tokens,
         prompt_cache_miss_tokens=prompt_cache_miss_tokens,
         usage_unavailable_attempts=usage_unavailable_attempts,
         attempt_usage_json=attempt_usage_json,
     )
-    session.add(ext)
-    session.flush()
-
-    if ok and content_json:
-        _atom_normalizer.normalize_local_extraction(
-            extraction_id=ext.id,
-            run_id=run_id,
-            topic_id=topic_id,
-            chunk_id=chunk_id,
-            content_json_str=content_json,
-            session=session,
-        )
 
 
 def _resolve_api_key(session: Session, topic_id: str) -> str:
-    """Get the API key for the topic's bound provider.
-
-    Priority: TopicProviderConfig.provider_id > Topic.provider_id > default provider.
-    """
-    from models.model_provider import ModelProvider
-    from models.topic import Topic
-    from models.topic_provider_config import TopicProviderConfig
-
-    # 1. Check TopicProviderConfig.provider_id
-    tpc = session.exec(
-        select(TopicProviderConfig).where(TopicProviderConfig.topic_id == topic_id)
-    ).first()
-    if tpc and tpc.provider_id:
-        provider = session.get(ModelProvider, tpc.provider_id)
-        if provider and provider.api_key:
-            return provider.api_key
-
-    # 2. Check Topic.provider_id
-    topic = session.get(Topic, topic_id)
-    if topic and topic.provider_id:
-        provider = session.get(ModelProvider, topic.provider_id)
-        if provider and provider.api_key:
-            return provider.api_key
-
-    # 3. Fallback to default provider
-    provider = session.exec(
-        select(ModelProvider).where(ModelProvider.is_default == True)  # noqa: E712
-    ).first()
-    if provider and provider.api_key:
-        return provider.api_key
-
-    raise ValueError("No provider configured")
-
-
-# ── Status & List & Cancel ──
+    """Compatibility entry point for provider key resolution."""
+    return _execution.resolve_api_key(session, topic_id)
 
 
 def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
@@ -800,17 +353,20 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
     extractions = session.exec(
         select(LocalExtraction).where(LocalExtraction.run_id == run_id)
     ).all()
+    aggregate_reasoning = sum(extraction.reasoning_tokens or 0 for extraction in extractions)
+    aggregate_cache_hit = sum(extraction.prompt_cache_hit_tokens or 0 for extraction in extractions)
+    aggregate_cache_miss = sum(
+        extraction.prompt_cache_miss_tokens or 0 for extraction in extractions
+    )
+    aggregate_unavailable = sum(
+        extraction.usage_unavailable_attempts or 0 for extraction in extractions
+    )
 
-    # Aggregate usage breakdown across all extractions
-    agg_reasoning = sum(e.reasoning_tokens or 0 for e in extractions)
-    agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in extractions)
-    agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in extractions)
-    agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in extractions)
-
-    # Separate merge intermediates from final outputs
     all_outputs = session.exec(select(AnalysisOutput).where(AnalysisOutput.run_id == run_id)).all()
-    merge_outputs = [o for o in all_outputs if o.output_type.startswith("merge_")]
-    final_outputs = [o for o in all_outputs if not o.output_type.startswith("merge_")]
+    merge_outputs = [output for output in all_outputs if output.output_type.startswith("merge_")]
+    final_outputs = [
+        output for output in all_outputs if not output.output_type.startswith("merge_")
+    ]
 
     metadata = run.get_metadata()
     selection = run.get_chunk_selection()
@@ -836,10 +392,10 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "total_tokens": run.total_tokens,
             "prompt_tokens": run.prompt_tokens,
             "completion_tokens": run.completion_tokens,
-            "reasoning_tokens": agg_reasoning,
-            "prompt_cache_hit_tokens": agg_cache_hit,
-            "prompt_cache_miss_tokens": agg_cache_miss,
-            "usage_unavailable_attempts": agg_unavailable,
+            "reasoning_tokens": aggregate_reasoning,
+            "prompt_cache_hit_tokens": aggregate_cache_hit,
+            "prompt_cache_miss_tokens": aggregate_cache_miss,
+            "usage_unavailable_attempts": aggregate_unavailable,
             "model_used": run.model_used,
             "work_id": selection.get("work_id"),
             "error_message": run.error_message,
@@ -848,13 +404,13 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
         },
         "extractions": [
             {
-                "id": e.id,
-                "chunk_id": e.chunk_id,
-                "status": e.status,
-                "attempt_count": e.attempt_count,
-                "error_message": e.error_message,
+                "id": extraction.id,
+                "chunk_id": extraction.chunk_id,
+                "status": extraction.status,
+                "attempt_count": extraction.attempt_count,
+                "error_message": extraction.error_message,
             }
-            for e in extractions
+            for extraction in extractions
         ],
         "merge": {
             "total": run.merge_total or 0,
@@ -862,11 +418,11 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "failed": run.merge_failed or 0,
             "outputs": [
                 {
-                    "id": o.id,
-                    "output_type": o.output_type,
-                    "title": o.title,
+                    "id": output.id,
+                    "output_type": output.output_type,
+                    "title": output.title,
                 }
-                for o in merge_outputs
+                for output in merge_outputs
             ],
             "warnings": metadata.get("warnings", []),
         },
@@ -877,23 +433,23 @@ def get_analysis_run_status(session: Session, run_id: str) -> dict | None:
             "skipped": run.final_skipped or 0,
             "outputs": [
                 {
-                    "id": o.id,
-                    "output_type": o.output_type,
-                    "title": o.title,
+                    "id": output.id,
+                    "output_type": output.output_type,
+                    "title": output.title,
                 }
-                for o in final_outputs
+                for output in final_outputs
             ],
         },
     }
 
 
 def list_analysis_runs(
-    session: Session, topic_id: str, limit: int = 50, offset: int = 0
+    session: Session,
+    topic_id: str,
+    limit: int = 50,
+    offset: int = 0,
 ) -> tuple[list[AnalysisRun], int]:
-    """List analysis runs for a topic with SQL-level pagination, most recent first.
-
-    Returns (page, total_count).
-    """
+    """List Topic runs with SQL-level pagination, most recent first."""
     base = select(AnalysisRun).where(AnalysisRun.topic_id == topic_id)
     total = session.exec(select(func.count()).select_from(base.subquery())).one()
     runs = list(
@@ -916,453 +472,43 @@ def cancel_analysis_run(session: Session, run_id: str) -> AnalysisRun | None:
     return run
 
 
-# ── Error classification ──
-
-
 def _classify_error(error: str, status_code: int | None = None) -> str:
-    if status_code and status_code not in (429, 500, 502, 503, 504):
-        pass  # non-retryable http errors
-    err_lower = error.lower()
-    if "json" in err_lower and "parse" in err_lower:
-        return "json_parse_error"
-    if any(kw in err_lower for kw in ("rate limit", "rate_limit", "timeout", "timed out")):
-        return "llm_error"
-    if any(kw in err_lower for kw in ("validation", "invalid", "mismatch")):
-        return "validation_error"
-    if "cancelled" in err_lower or "cancel" in err_lower:
-        return "cancelled"
-    if "provider" in err_lower or "api key" in err_lower or "auth" in err_lower:
-        return "provider_config_error"
-    return "unknown"
+    """Compatibility entry point for continuation error classification."""
+    return _continuation.classify_error(error, status_code)
 
 
-def _classify_result_error(result) -> str:
-    """Classify error from a LocalExtractionResult."""
-    return _classify_error(result.error or "", result.status_code)
-
-
-# ── Retry / Resume ──
+def _classify_result_error(result: Any) -> str:
+    """Compatibility entry point for worker-result error classification."""
+    return _continuation.classify_result_error(result)
 
 
 def _recalculate_run_usage_from_extractions(session: Session, run_id: str) -> None:
-    """Recalculate run.prompt/completion/total_tokens and metadata usage_by_stage
-    from all LocalExtraction rows in this run."""
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        return
-
-    all_exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
-    total_prompt = sum(e.prompt_tokens or 0 for e in all_exts)
-    total_completion = sum(e.completion_tokens or 0 for e in all_exts)
-    total_all = sum(e.total_tokens or 0 for e in all_exts)
-    agg_reasoning = sum(e.reasoning_tokens or 0 for e in all_exts)
-    agg_cache_hit = sum(e.prompt_cache_hit_tokens or 0 for e in all_exts)
-    agg_cache_miss = sum(e.prompt_cache_miss_tokens or 0 for e in all_exts)
-    agg_unavailable = sum(e.usage_unavailable_attempts or 0 for e in all_exts)
-
-    run.prompt_tokens = total_prompt
-    run.completion_tokens = total_completion
-    run.total_tokens = total_all
-    session.add(run)
-
-    # Update metadata usage_by_stage
-    metadata = run.get_metadata()
-    metadata["usage_by_stage"] = {
-        "extraction": {
-            "prompt_tokens": total_prompt,
-            "completion_tokens": total_completion,
-            "total_tokens": total_all,
-            "reasoning_tokens": agg_reasoning,
-            "prompt_cache_hit_tokens": agg_cache_hit,
-            "prompt_cache_miss_tokens": agg_cache_miss,
-            "usage_unavailable_attempts": agg_unavailable,
-        },
-        "merge": 0,
-        "final": 0,
-    }
-    run.set_metadata(metadata)
-    session.add(run)
-    session.commit()
+    """Compatibility entry point for persisted usage recalculation."""
+    _continuation.recalculate_run_usage_from_extractions(session, run_id)
 
 
 def _clear_atoms_for_chunk(session: Session, run_id: str, chunk_id: str) -> int:
-    """Delete ExtractedAtom rows for a specific chunk in a run. Returns count."""
-    from models.extracted_atom import ExtractedAtom
-
-    atoms = session.exec(
-        select(ExtractedAtom).where(
-            ExtractedAtom.run_id == run_id,
-            ExtractedAtom.chunk_id == chunk_id,
-        )
-    ).all()
-    count = len(atoms)
-    for a in atoms:
-        session.delete(a)
-    return count
+    """Compatibility entry point for chunk atom cleanup."""
+    return _continuation.clear_atoms_for_chunk(session, run_id, chunk_id)
 
 
-def retry_failed_extractions(
-    session: Session,
-    run_id: str,
-) -> dict:
-    """Retry all failed LocalExtraction chunks for a run, then re-merge and re-final.
-
-    Returns a summary dict with counts.
-    """
-    from models.chunk import Chunk
-
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        raise ValueError(f"AnalysisRun not found: {run_id}")
-
-    failed_exts = session.exec(
-        select(LocalExtraction).where(
-            LocalExtraction.run_id == run_id,
-            LocalExtraction.status == "failed",
-        )
-    ).all()
-
-    if not failed_exts:
-        return {"retried": 0, "succeeded": 0, "failed": 0, "message": "No failed extractions"}
-
-    config = run.get_effective_config()
-    api_key = _resolve_api_key(session, run.topic_id)
-    model_name = config.get("model_name", "")
-    base_url = config.get("base_url", "")
-    temperature = config.get("temperature") or 0.1
-    max_tokens = config.get("max_output_tokens") or 3072
-    thinking_mode = config.get("thinking_mode", "disabled")
-
-    # Load chapters for metadata
-    from models.chapter import Chapter
-
-    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-    chapter_map = {ch.chapter_index: ch.title for ch in chapters}
-
-    # Collect chunk IDs to retry
-    chunk_ids = {e.chunk_id for e in failed_exts if e.chunk_id}
-    chunks = session.exec(select(Chunk).where(Chunk.id.in_(chunk_ids))).all()  # noqa: E711
-    chunk_map = {c.id: c for c in chunks}
-
-    retried = 0
-    retry_succeeded = 0
-    retry_failed = 0
-    error_types: dict[str, int] = {}
-
-    for ext in failed_exts:
-        if not ext.chunk_id or ext.chunk_id not in chunk_map:
-            continue
-        chunk = chunk_map[ext.chunk_id]
-        retried += 1
-
-        result = _extraction_worker.run_local_extraction_for_chunk(
-            chunk_id=chunk.id,
-            chunk_text=chunk.text,
-            base_url=base_url,
-            api_key=api_key,
-            model_name=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            thinking_mode=thinking_mode,
-            chapter_index=chunk.chapter_index,
-            chunk_index=chunk.chunk_index,
-            chapter_title=chapter_map.get(chunk.chapter_index),
-        )
-
-        # Delete old atoms before re-normalizing
-        _clear_atoms_for_chunk(session, run_id, chunk.id)
-
-        ext.status = "succeeded" if result.ok else "failed"
-        ext.attempt_count = (ext.attempt_count or 0) + 1
-        ext.content_json = result.content_json
-        ext.error_message = result.error[:1000] if result.error else None
-        ext.confidence = 0.5
-        # Add to existing token values (previous failed attempts are preserved)
-        ext.prompt_tokens = (ext.prompt_tokens or 0) + result.prompt_tokens
-        ext.completion_tokens = (ext.completion_tokens or 0) + result.completion_tokens
-        ext.total_tokens = (ext.total_tokens or 0) + result.total_tokens
-        ext.model_used = result.model_used
-        ext.finished_at = _now()
-        ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
-        ext.prompt_cache_hit_tokens = (
-            ext.prompt_cache_hit_tokens or 0
-        ) + result.cumulative_prompt_cache_hit_tokens
-        ext.prompt_cache_miss_tokens = (
-            ext.prompt_cache_miss_tokens or 0
-        ) + result.cumulative_prompt_cache_miss_tokens
-        ext.usage_unavailable_attempts = (
-            ext.usage_unavailable_attempts or 0
-        ) + result.usage_unavailable_attempts
-        ext.attempt_usage_json = _serialize_attempts(result.attempts)
-        session.add(ext)
-        session.flush()
-
-        if result.ok:
-            retry_succeeded += 1
-            run.extraction_succeeded = (run.extraction_succeeded or 0) + 1
-            run.extraction_failed = max(0, (run.extraction_failed or 0) - 1)
-            if result.content_json:
-                _atom_normalizer.normalize_local_extraction(
-                    extraction_id=ext.id,
-                    run_id=run_id,
-                    topic_id=run.topic_id,
-                    chunk_id=chunk.id,
-                    content_json_str=result.content_json,
-                    session=session,
-                )
-        else:
-            retry_failed += 1
-            etype = _classify_result_error(result)
-            error_types[etype] = error_types.get(etype, 0) + 1
-
-    session.commit()
-
-    # Re-run merge and final stages
-    _run_merge_and_final(session, run_id)
-
-    # Recalculate run usage from all extractions (including retried)
-    _recalculate_run_usage_from_extractions(session, run_id)
-
-    # Update metadata
-    run = session.get(AnalysisRun, run_id)
-    if run:
-        metadata = run.get_metadata()
-        metadata["retry_summary"] = {
-            "retried": retried,
-            "succeeded": retry_succeeded,
-            "failed": retry_failed,
-            "error_types": error_types,
-        }
-        run.set_metadata(metadata)
-        session.add(run)
-        session.commit()
-
-    return {
-        "retried": retried,
-        "succeeded": retry_succeeded,
-        "failed": retry_failed,
-        "error_types": error_types,
-    }
+def retry_failed_extractions(session: Session, run_id: str) -> dict:
+    """Retry failed extractions and rebuild deterministic outputs."""
+    return _continuation.retry_failed_extractions(session, run_id)
 
 
 def _run_merge_and_final(session: Session, run_id: str) -> None:
-    """Re-run merge and final stages for a run. Used after retry/resume."""
-    from services.final_output_service import run_final_output_stage
-    from services.merge_service import run_merge_stage
-
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        return
-
-    requested_types = run.get_requested_types()
-    valid_merge = {
-        "overview",
-        "characters",
-        "relations",
-        "events",
-        "causality",
-        "themes",
-        "worldbuilding",
-        "foreshadowing",
-    }
-    merge_types = [t for t in requested_types if t in valid_merge]
-
-    merge_succeeded = 0
-    merge_failed = 0
-    if merge_types:
-        merge_summaries = run_merge_stage(session, run_id, requested_types=merge_types)
-        merge_succeeded = sum(
-            1
-            for s in merge_summaries
-            if s.atom_count >= 0 and not any("Merge failed:" in w for w in s.warnings)
-        )
-        merge_failed = sum(
-            1 for s in merge_summaries if any("Merge failed:" in w for w in s.warnings)
-        )
-
-    final_types = {"overview", "characters", "relations", "events", "causality", "themes"}
-    final_merge_types = [t for t in merge_types if t in final_types]
-    if final_merge_types and merge_succeeded > 0:
-        run_final_output_stage(session, run_id, requested_types=final_merge_types)
-
-    run = session.get(AnalysisRun, run_id)
-    if run:
-        run.merge_succeeded = merge_succeeded
-        run.merge_failed = merge_failed
-        if run.extraction_succeeded == 0:
-            run.status = JobStatus.FAILED
-        elif (
-            (run.extraction_failed or 0) == 0 and merge_failed == 0 and (run.final_failed or 0) == 0
-        ):
-            run.status = JobStatus.SUCCEEDED
-        else:
-            run.status = JobStatus.PARTIAL_SUCCESS
-        run.finished_at = _now()
-        session.add(run)
-        session.commit()
+    """Compatibility entry point for deterministic output rebuilding."""
+    _continuation.run_merge_and_final(session, run_id)
 
 
-def resume_analysis_run(session: Session, run_id: str, retry_failed: bool = True) -> AnalysisRun:
-    """Resume an interrupted run: run missing chunks, optionally retry failed.
-
-    Loads selected_chunk_ids from run.chunk_selection_json, finds succeeded/failed
-    LocalExtractions, and runs any chunks without a LocalExtraction row.
-    Never re-runs succeeded chunks.
-    """
-    from models.chapter import Chapter
-    from models.chunk import Chunk
-
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        raise ValueError(f"AnalysisRun not found: {run_id}")
-
-    if run.status == JobStatus.CANCELLED:
-        raise ValueError("Cannot resume a cancelled run")
-
-    if run.status in (JobStatus.SUCCEEDED,):
-        return run  # Nothing to do
-
-    # Load selected chunk IDs
-    selection = run.get_chunk_selection()
-    selected_ids = selection.get("selected_chunk_ids", [])
-    if not selected_ids:
-        raise ValueError("No chunk selection found; cannot resume")
-
-    # Map existing extraction status by chunk
-    existing = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
-    succeeded_chunks = {e.chunk_id for e in existing if e.status == "succeeded"}
-    failed_chunks = {e.chunk_id for e in existing if e.status == "failed"}
-    has_extraction = succeeded_chunks | failed_chunks
-
-    # Chunks that have no extraction row at all
-    missing_ids = [cid for cid in selected_ids if cid not in has_extraction]
-
-    # Failed chunks to retry
-    retry_ids = [cid for cid in failed_chunks if retry_failed]
-
-    to_run = set(missing_ids) | set(retry_ids)
-    if not to_run:
-        # All chunks done, just re-run merge + final
-        _run_merge_and_final(session, run_id)
-        run = session.get(AnalysisRun, run_id)
-        return run
-
-    # Load chunk objects for the chunks to run
-    chunks = session.exec(select(Chunk).where(Chunk.id.in_(to_run))).all()  # noqa: E711
-    chunk_map = {c.id: c for c in chunks}
-
-    config = run.get_effective_config()
-    api_key = _resolve_api_key(session, run.topic_id)
-    model_name = config.get("model_name", "")
-    base_url = config.get("base_url", "")
-    temperature = config.get("temperature") or 0.1
-    max_tokens = config.get("max_output_tokens") or 3072
-    thinking_mode = config.get("thinking_mode", "disabled")
-
-    chapters = session.exec(select(Chapter).where(Chapter.topic_id == run.topic_id)).all()
-    chapter_map = {ch.chapter_index: ch.title for ch in chapters}
-
-    succeeded = len(succeeded_chunks)
-    failed = 0
-    new_succeeded = 0
-
-    for cid in to_run:
-        chunk = chunk_map.get(cid)
-        if chunk is None:
-            continue
-
-        # Delete old atoms for this chunk if retrying
-        if cid in retry_ids:
-            _clear_atoms_for_chunk(session, run_id, chunk.id)
-
-        result = _extraction_worker.run_local_extraction_for_chunk(
-            chunk_id=chunk.id,
-            chunk_text=chunk.text,
-            base_url=base_url,
-            api_key=api_key,
-            model_name=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            thinking_mode=thinking_mode,
-            chapter_index=chunk.chapter_index,
-            chunk_index=chunk.chunk_index,
-            chapter_title=chapter_map.get(chunk.chapter_index),
-        )
-
-        # Upsert LocalExtraction
-        ext = session.exec(
-            select(LocalExtraction).where(
-                LocalExtraction.run_id == run_id,
-                LocalExtraction.chunk_id == chunk.id,
-            )
-        ).first()
-        if ext is None:
-            ext = LocalExtraction(run_id=run_id, topic_id=run.topic_id, chunk_id=chunk.id)
-            session.add(ext)
-            session.flush()
-
-        ext.status = "succeeded" if result.ok else "failed"
-        ext.attempt_count = (ext.attempt_count or 0) + 1
-        ext.content_json = result.content_json
-        ext.error_message = result.error[:1000] if result.error else None
-        ext.confidence = 0.5
-        # Add to existing token values (preserving previous attempts)
-        ext.prompt_tokens = (ext.prompt_tokens or 0) + result.prompt_tokens
-        ext.completion_tokens = (ext.completion_tokens or 0) + result.completion_tokens
-        ext.total_tokens = (ext.total_tokens or 0) + result.total_tokens
-        ext.model_used = result.model_used
-        ext.finished_at = _now()
-        ext.reasoning_tokens = (ext.reasoning_tokens or 0) + result.cumulative_reasoning_tokens
-        ext.prompt_cache_hit_tokens = (
-            ext.prompt_cache_hit_tokens or 0
-        ) + result.cumulative_prompt_cache_hit_tokens
-        ext.prompt_cache_miss_tokens = (
-            ext.prompt_cache_miss_tokens or 0
-        ) + result.cumulative_prompt_cache_miss_tokens
-        ext.usage_unavailable_attempts = (
-            ext.usage_unavailable_attempts or 0
-        ) + result.usage_unavailable_attempts
-        ext.attempt_usage_json = _serialize_attempts(result.attempts)
-        session.add(ext)
-        session.flush()
-
-        if result.ok:
-            new_succeeded += 1
-            if cid not in succeeded_chunks:
-                succeeded += 1
-            if result.content_json:
-                _atom_normalizer.normalize_local_extraction(
-                    extraction_id=ext.id,
-                    run_id=run_id,
-                    topic_id=run.topic_id,
-                    chunk_id=chunk.id,
-                    content_json_str=result.content_json,
-                    session=session,
-                )
-        else:
-            failed += 1
-
-    # Update run counters from actual DB state
-    all_exts = session.exec(select(LocalExtraction).where(LocalExtraction.run_id == run_id)).all()
-    total_succeeded = sum(1 for e in all_exts if e.status == "succeeded")
-    total_failed = sum(1 for e in all_exts if e.status == "failed")
-
-    run = session.get(AnalysisRun, run_id)
-    if run:
-        run.extraction_succeeded = total_succeeded
-        run.extraction_failed = total_failed
-        session.add(run)
-
-    session.commit()
-
-    # Re-run merge and final
-    _run_merge_and_final(session, run_id)
-
-    # Recalculate run usage from all extractions
-    _recalculate_run_usage_from_extractions(session, run_id)
-
-    run = session.get(AnalysisRun, run_id)
-    return run
+def resume_analysis_run(
+    session: Session,
+    run_id: str,
+    retry_failed: bool = True,
+) -> AnalysisRun:
+    """Resume missing or failed extraction work without rerunning successes."""
+    return _continuation.resume_analysis_run(session, run_id, retry_failed=retry_failed)
 
 
 def start_retry_failed(run_id: str, engine: Engine | None = None) -> bool:
@@ -1400,7 +546,11 @@ def start_retry_failed(run_id: str, engine: Engine | None = None) -> bool:
             )
 
 
-def start_resume(run_id: str, retry_failed: bool = True, engine: Engine | None = None) -> bool:
+def start_resume(
+    run_id: str,
+    retry_failed: bool = True,
+    engine: Engine | None = None,
+) -> bool:
     """Atomically transition and start one resume executor for a run."""
     engine = _resolve_engine(engine)
     with _EXECUTOR_STATE_LOCK:
@@ -1430,28 +580,26 @@ def start_resume(run_id: str, retry_failed: bool = True, engine: Engine | None =
             )
 
 
-def _execute_retry(run_id: str, engine=None) -> None:
-    if engine is None:
-        from db import engine as db_engine
-
-        engine = db_engine
+def _execute_retry(run_id: str, engine: Engine | None = None) -> None:
+    engine = _resolve_engine(engine)
     try:
         with Session(engine) as session:
             retry_failed_extractions(session, run_id)
-    except Exception as e:
-        _fail_run(run_id, engine, str(e))
+    except Exception as exc:
+        _fail_run(run_id, engine, str(exc))
 
 
-def _execute_resume(run_id: str, retry_failed: bool, engine=None) -> None:
-    if engine is None:
-        from db import engine as db_engine
-
-        engine = db_engine
+def _execute_resume(
+    run_id: str,
+    retry_failed: bool,
+    engine: Engine | None = None,
+) -> None:
+    engine = _resolve_engine(engine)
     try:
         with Session(engine) as session:
             resume_analysis_run(session, run_id, retry_failed=retry_failed)
-    except Exception as e:
-        _fail_run(run_id, engine, str(e))
+    except Exception as exc:
+        _fail_run(run_id, engine, str(exc))
 
 
 def _resolve_engine(engine: Engine | None = None) -> Engine:

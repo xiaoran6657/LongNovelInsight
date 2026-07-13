@@ -333,3 +333,80 @@ infrastructure or speculative tables.
 - Entity, graph, and timeline GET Work filters return 404 for foreign-Topic Work IDs.
 - A future independently versioned entity or timeline snapshot model requires a separate migration
   decision.
+
+---
+
+## 2026-07-13 — ADR-021: Explicit Chat Turns and Stable Session Ordering
+
+**Decision:** Each new user/assistant exchange shares a `turn_id` and session-local
+`sequence_index`; the assistant also stores `reply_to_message_id` pointing to the user message.
+Reads order by sequence, user-before-assistant role rank, timestamp, and ID. Normal send reserves
+the next sequence only after obtaining SQLite's serialized writer claim. Atomic resend preserves
+the logical turn and sequence while replacing its message records.
+
+Legacy SQLite databases receive nullable additive columns and deterministic per-session backfill in
+stored `created_at, rowid` order. Runtime-created pairs always populate all linkage fields. No
+self-referential foreign key is added because SQLite ALTER compatibility and local repairability are
+more important than a table rebuild in v0.4; service validation enforces roles and session scope.
+
+**Rationale:** Timestamps are neither unique nor an ownership relation. Explicit linkage makes
+delete and resend target the intended pair, while a shared turn sequence keeps the pair adjacent
+regardless of response time.
+
+**Consequences:**
+- Deleting an assistant deletes only that message; deleting a user also deletes only its linked reply.
+- Legacy rows with inherently ambiguous equal timestamps are reconstructed best-effort by row order.
+- Multiple backend processes remain outside the supported v0.4 runtime boundary.
+
+---
+
+## 2026-07-13 — ADR-022: Ordered Replayable SQLite Migration Registry
+
+**Decision:** Database startup first asks SQLModel to create absent current tables, then executes an
+immutable ordered registry of idempotent migration functions. Each function receives the target
+Engine explicitly. The runner stops on the first failure and does not record a permanent
+applied-version ledger.
+
+**Rationale:** The former `db.py` call list encoded dependencies implicitly and most functions used
+the global engine, which forced tests to mutate module state. A registry makes the v0.3 locator →
+v0.4 Document rebuild dependency reviewable and lets genuine old-schema fixtures exercise the same
+production path. A one-time ledger would be unsafe today because Work ownership and Chat linkage
+steps also repair partial or newly introduced null data on subsequent startups.
+
+**Consequences:**
+- Migration IDs and order are stable review surfaces; new migrations append rather than reorder.
+- Startup may replay checks, so every migration must stay idempotent.
+- Historical inline SQLite unique constraints must be inspected separately from named indexes.
+- The Document table rebuild must explicitly preserve every supported Document column and restore
+  the connection's prior foreign-key mode before integrity checks.
+- Schema startup installs SQLite foreign-key enforcement for current and future pooled connections;
+  migrations do not provide that guarantee through connection-local side effects.
+
+---
+
+## 2026-07-13 — ADR-023: Current-First Documentation Authorities
+
+**Decision:** Current v0.4 documentation is divided by concern instead of repeating full API,
+schema, and pipeline catalogs in multiple files. Runtime FastAPI OpenAPI is the exact HTTP schema
+authority; `docs/API.md` is its complete human endpoint map. `docs/ARCHITECTURE.md` owns component,
+runtime, and storage boundaries. `docs/ANALYSIS_RUN_CONTRACT.md` owns lifecycle, recovery,
+provenance, and deprecation. `docs/LLM_PIPELINE.md` owns provider-call, prompt, retry, and usage
+semantics. `docs/DATA_MODEL.md` owns persistence meaning and relationships.
+
+`docs/FRONTEND_API_CONTRACT.md` describes frontend consumption, compatibility, error, and cache
+rules without duplicating request/response catalogs. Root and backend READMEs link to these
+authorities. Historical designs remain in release/audit documents and must be labelled historical;
+they do not override current code or contracts.
+
+**Rationale:** The previous architecture and LLM documents presented obsolete v0.1-v0.3 execution
+paths before the current AnalysisRun flow, while API and frontend documents duplicated hundreds of
+mutable payload lines and still omitted v0.4 Work and cross-work operations. A single owner per
+concern makes drift detectable and keeps compatibility history from appearing as current design.
+
+**Consequences:**
+- Endpoint additions must update runtime OpenAPI and the human API map; frontend-only integration
+  rules change only when a consumer invariant changes.
+- Historical executor details stay concise in current docs and link to release history when deeper
+  context is needed.
+- Documentation verification compares the API map with the generated OpenAPI method/path set and
+  checks local Markdown links.

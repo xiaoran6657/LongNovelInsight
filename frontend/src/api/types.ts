@@ -270,6 +270,9 @@ export interface ChatMessageRead {
   session_id: string;
   role: string;
   content: string;
+  turn_id: string | null;
+  reply_to_message_id: string | null;
+  sequence_index: number | null;
   evidence_json: string | null;
   uncertainty: string | null;
   prompt_tokens: number;
@@ -284,6 +287,9 @@ export interface ChatAnswerRead {
   session_id: string;
   role: string;
   content: string;
+  turn_id: string | null;
+  reply_to_message_id: string | null;
+  sequence_index: number | null;
   evidence_json: unknown;
   uncertainty: string | null;
   created_at: string;

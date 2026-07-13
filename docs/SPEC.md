@@ -1,4 +1,4 @@
-# LongNovelInsight v0.4.0-dev — Product Specification
+# LongNovelInsight v0.4.0 — Product Specification
 
 ## Product Goal
 

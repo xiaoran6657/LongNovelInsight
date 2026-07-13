@@ -115,6 +115,9 @@ export default function TopicChatPage() {
         session_id: activeSessionId!,
         role: "user",
         content,
+        turn_id: null,
+        reply_to_message_id: null,
+        sequence_index: null,
         evidence_json: null,
         uncertainty: null,
         prompt_tokens: 0,
@@ -510,7 +513,9 @@ export default function TopicChatPage() {
                         expectedAssistantMessageId={
                           msg.role === "user" &&
                           index === chatMessages.length - 2 &&
-                          chatMessages[index + 1]?.role === "assistant"
+                          chatMessages[index + 1]?.role === "assistant" &&
+                          (chatMessages[index + 1].reply_to_message_id == null ||
+                            chatMessages[index + 1].reply_to_message_id === msg.id)
                             ? chatMessages[index + 1].id
                             : null
                         }

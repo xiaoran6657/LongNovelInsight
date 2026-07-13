@@ -1,479 +1,260 @@
-# LongNovelInsight v0.4.0-dev — Architecture
+# LongNovelInsight v0.4.0 — Architecture
 
-This document preserves the architecture's version-by-version evolution. Sections explicitly
-labelled v0.1-v0.3 are historical context; the v0.4 boundaries and current code take precedence.
+This document defines the current v0.4 component, runtime, and storage boundaries. Historical
+designs belong in [release notes](releases/) and are not part of the current contract.
+
+## Documentation Authority
+
+| Concern | Authority |
+| --- | --- |
+| Product scope and non-goals | [SPEC.md](SPEC.md) |
+| Components, ownership, runtime, and storage | This document |
+| Exact REST paths and schemas | Runtime OpenAPI at `/docs` or `/openapi.json`; human map in [API.md](API.md) |
+| Analysis lifecycle and deprecation | [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md) |
+| LLM calls, prompts, retries, and token accounting | [LLM_PIPELINE.md](LLM_PIPELINE.md) |
+| SQLite records and relationships | [DATA_MODEL.md](DATA_MODEL.md) |
 
 ## System Overview
 
-```
-Browser (localhost:5173)
-     │
-     │  REST API (JSON)
-     ▼
-FastAPI Backend (localhost:8000)
-     │
-     ├── SQLite (data/longnovelinsight.sqlite)
-     │     ├── Application tables (SQLModel)
-     │     ├── chunk_fts (FTS5 virtual table)
-     │     └── embedding_cache (optional)
-     │
-     ├── data/ directory
-     │     ├── topics/{topic_id}/        — uploaded novel .txt / .epub + metadata
-     │     │     └── artifacts/          — large analysis JSON (>64KB, v0.2+)
-     │     └── source files
-     │
-     └── LLM Provider (external HTTP)
-           └── DeepSeek / OpenAI-Compatible API
-```
-
-## Component Breakdown
-
-### Frontend (React + TypeScript + Vite)
-
-A single-page application served by Vite dev server at `localhost:5173`.
-
-**Tech:** React 18 + TypeScript (strict) + Vite + TanStack Query v5 + React Router DOM v7 + Plain CSS. No UI component library, no Tailwind, no Redux/Zustand/MobX.
-
-**Pages / Views:**
-- **Dashboard** (`/`) — health status, topic count, storage overview.
-- **Providers** (`/providers`) — CRUD for LLM provider configs with preset catalog.
-- **Topics** (`/topics`) — list, create, delete topics with status badges.
-- **Topic Detail** (`/topics/:id`) — document upload (TXT/EPUB), parse, chapters/chunks, search panel, retrieval debug drawer, analysis runs, entity evidence explorer, similar scenes, chat link.
-- **Chat** (`/topics/:id/chat`) — multi-session chat with structured evidence, collapsible sidebars, provider config panel, source text viewer.
-
-**Component Organization (v0.3):**
-```
-src/
-  api/                  — API client modules (client.ts, types.ts, topics.ts,
-                           providers.ts, documents.ts, parse.ts, analysis.ts,
-                           chat.ts, search.ts, retrieve.ts, entities.ts)
-  components/           — Shared UI (LoadingBlock, ErrorBlock)
-  features/
-    topic/              — TopicHeader, ProviderBindingPanel, DocumentPanel,
-                           ParsePanel, ChaptersPanel, EpubChapterTree,
-                           SourceLocatorBadge, StoragePanel
-    document/           — DocumentMetadataCard (v0.3)
-    search/             — TopicSearchPanel, SearchResultList, SearchResultCard,
-                           RetrievalMethodBadge, RetrievalDebugDrawer (v0.3)
-    analysis/           — ChunksMetaPanel, ChunkRangeSelector, AnalysisRunPanel,
-                           AnalysisRunHistory, AnalysisOutputsPanel,
-                           LegacyAnalysisPanel, useActiveRunPersistence
-    evidence/           — EntityEvidencePanel (v0.3), SimilarScenesPanel (v0.3)
-    chat/               — ChatEvidenceList with normalizeEvidence() helper (v0.3)
-    provider/           — ProviderConfigForm
-  pages/                — Dashboard, ProvidersPage, TopicsPage,
-                           TopicDetailPage, TopicChatPage, NotFoundPage
-  styles/               — Plain CSS (global.css, chat.css)
+```text
+Browser SPA (localhost:5173)
+        |
+        | JSON REST API
+        v
+FastAPI process (localhost:8000)
+        |
+        +-- SQLite: data/longnovelinsight.sqlite
+        |     +-- SQLModel application tables
+        |     +-- FTS5 chunk index
+        |     +-- ordered replayable startup migrations
+        |
+        +-- data/topics/{topic_id}/
+        |     +-- source/work_{work_id}_original.{txt,epub}
+        |     +-- artifacts/{artifact_type}/{owner_id}.json
+        |
+        +-- user-selected OpenAI-compatible provider
+              +-- POST {base_url}/chat/completions
 ```
 
-**State Management:** TanStack Query for all server state (queries + mutations with cache invalidation). `useRef` for non-render-triggering state (submitted queries, drag handles). SessionStorage for active analysis run persistence. No global client state library.
+LongNovelInsight is a local-first, single-user application. The browser and backend run on the
+same machine. Source text, derived records, provider credentials, and generated artifacts remain
+local except for text intentionally sent to the configured LLM provider during connection tests,
+analysis, or chat.
 
-**API Communication:** `fetch`-based `apiRequest` wrapper in `src/api/client.ts`. All requests go to `VITE_API_BASE_URL` (default `http://127.0.0.1:8000`). Query keys follow `["resource", topicId, ...sub]` pattern.
+## Domain Ownership
 
-**v0.3 Component Highlights:**
-- **EpubChapterTree**: Collapsible, nav_order-sorted, `useMemo` for sort/filter to avoid per-render O(n log n).
-- **TopicSearchPanel**: Method filter checkboxes (FTS/Keyword Fallback), Enter-to-submit, inline chunk locator detail via `useQuery`.
-- **RetrievalDebugDrawer**: Method checkboxes for all 5 `RetrieveMethod` values, `semantic_rerank` disabled with tooltip, persisted trace via `POST /retrieve`.
-- **ChatEvidenceList**: `normalizeEvidence()` helper field-normalizes each evidence item for safe rendering (score as number, locator as object, string defaults). Structured cards with source opening. Backward-compatible with legacy `string[]`.
-- **EntityEvidencePanel**: Three sections (Atoms/Source Chunks/Related Outputs), `useQuery` with enabled guard, 404 detection.
-- **SimilarScenesPanel**: Dual-mode (By Query / By Chunk ID), scored results with inline locator detail.
-
-**API Communication:** `fetch`-based `apiRequest` wrapper in `src/api/client.ts`. All requests go to `VITE_API_BASE_URL` (default `http://127.0.0.1:8000`). No server-side rendering. No static generation.
-
-### Backend (Python + FastAPI + SQLModel)
-
-A REST API served by Uvicorn at `localhost:8000`.
-
-**Module Structure:**
+```text
+Topic (story universe / research workspace)
+  +-- Work (novel or volume; one or more per Topic)
+  |     +-- Document (zero or one TXT/EPUB source)
+  |           +-- Chapter
+  |                 +-- Chunk + source locator
+  +-- AnalysisRun -> LocalExtraction -> ExtractedAtom
+  |     +-- deterministic merge/final AnalysisOutput
+  +-- ChatSession -> ChatMessage + RetrievalTrace
+  +-- GlobalEntity / EntityMention
+  +-- GraphSnapshot
+  +-- TimelineItem
+  +-- CrossWorkRun
 ```
+
+Work is the source and analysis isolation boundary. Topic-level document, parse, and AnalysisRun
+routes remain compatibility facades over one deterministic default Work; they must never combine
+chunks from multiple Works. Cross-work materializations are Topic-owned derived views over Work
+evidence.
+
+## Frontend
+
+The frontend is a React single-page application built with strict TypeScript and Vite. React Router
+owns page navigation, TanStack Query owns server state, and plain CSS owns presentation. There is
+no server-side rendering or global client-state framework.
+
+Primary pages:
+
+- Dashboard: health, Topics, and local storage summary.
+- Providers: OpenAI-compatible provider configuration and explicit connection tests.
+- Topics: Topic creation, listing, and deletion.
+- Topic Detail: Works, upload/parse, analysis estimate/runs/outputs, search/retrieval, entities,
+  graph, timeline, and cross-work build controls.
+- Topic Chat: evidence-grounded sessions, source evidence, and provider controls.
+
+`frontend/src/api/` contains fetch-based domain clients. `frontend/src/queryKeys.ts` is the shared
+TanStack Query key factory for Topic Detail and Chat. Feature folders follow existing domains such
+as `analysis`, `works`, `crossWork`, `graphs`, `timeline`, `search`, and `chat`; they are not a
+plugin system.
+
+Analysis output rendering keeps `components/AnalysisOutputCard.tsx` as a stable card/dispatch
+facade. Tolerant data normalization, shared evidence primitives, and output-family renderers live
+under `features/analysis/output/`, so malformed provider data remains isolated without putting all
+six output families in one component.
+
+The API base URL is `VITE_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`. The backend permits
+the Vite origins `http://localhost:5173` and `http://127.0.0.1:5173`.
+
+See [FRONTEND_API_CONTRACT.md](FRONTEND_API_CONTRACT.md) for frontend-specific consumption,
+compatibility, and cache rules.
+
+## Backend
+
+The backend is one FastAPI application with a flat `backend/` module layout:
+
+```text
 backend/
-  main.py                — FastAPI app, CORS, lifespan
-  config.py              — Settings (data dir, DB path, etc.)
-  db.py                  — SQLite engine + session factory
-  provider_presets.py   — Provider preset catalog (DeepSeek, OpenAI, Qwen, Moonshot)
-  routers/
-    health.py             — GET /api/health
-    topics.py             — Topic CRUD
-    documents.py          — Novel upload
-    parse.py              — Chapter/chunk operations
-    model_providers.py    — LLM provider config CRUD + test
-    provider_presets.py   — Provider preset catalog API
-    topic_provider_config.py — Per-topic config, effective config, recommendations
-    analysis_jobs.py      — Async analysis job creation & status
-    analysis_outputs.py   — Structured analysis run & results
-    chat.py               — Chat sessions & messages
-  models/
-    __init__.py
-    enums.py              — Shared enums (AnalysisType, JobType, etc.)
-    topic.py
-    document.py
-    chapter.py
-    chunk.py
-    model_provider.py
-    topic_provider_config.py — Topic-level provider config overrides
-    analysis_output.py
-    chat.py
-    job.py
-    job_item.py
-  services/
-    storage.py            — File storage helpers
-    document_service.py   — Upload/delete logic
-    parser_service.py     — Chapter splitting, chunking, encoding detection
-    job_service.py        — Job create, list, cancel, async parallel run
-    llm_client.py         — OpenAI-compatible API client wrapper
-    provider_test_service.py — Provider connection test
-    prompt_loader.py      — Prompt template loading
-    analysis_service.py   — Analysis pipeline orchestration
-    analysis_worker.py    — Worker: run_one_analysis_type (no DB, pure LLM + retry)
-    provider_config_service.py — Effective config resolution + recommendations
-    chat_service.py       — Chat context assembly & LLM call
-    retrieval_service.py  — Keyword-based chunk/analysis retrieval
-  prompts/
-    overview.md, characters.md, relations.md, events.md, causality.md, themes.md
-  tests/
-    ...
+  main.py                 application, CORS, startup lifespan, routers
+  config.py               data/database paths, upload limit, feature flags
+  db.py                   engine, sessions, database bootstrap
+  migrations.py           ordered Engine-scoped migration registry
+  provider_presets.py     built-in OpenAI-compatible preset metadata
+  models/                 SQLModel records
+  routers/                HTTP validation and response boundaries
+  services/               domain operations and external HTTP calls
+  prompts/                current extraction prompts plus legacy prompt assets
+  tests/                  isolated unit, API, migration, and smoke coverage
 ```
 
-The backend uses a flat `backend/` structure. There is no nested `backend/app/` directory. All source modules live directly under `backend/`.
+Important service boundaries:
 
-**Key Design Decisions:**
-- All LLM calls go through `llm_client.py` — a single thin wrapper around the OpenAI-compatible chat completions API.
-- Analysis runs the 6 output types as parallel async jobs via `ThreadPoolExecutor`. Worker threads only call LLM; the main thread writes DB results.
-- Provider configuration has three layers: Preset catalog (built-in) → Provider (credentials + defaults) → TopicProviderConfig (per-novel overrides). Effective config resolves Topic > Provider > Preset.
-- Chat answers use hybrid retrieval (v0.3): FTS5 full-text search, LIKE-based CJK keyword fallback, structured atom/output search, with legacy fuzzy character-overlap fallback for long natural-language queries. Candidates are deduplicated, score-normalized, and persisted as structured evidence_json with RetrievalTrace debugging.
-- Chat edit/resend is server-owned and failure-safe: retrieval and LLM generation run without a
-  SQLite transaction; the backend then serializes writers, revalidates the expected latest pair,
-  and replaces messages plus RetrievalTrace rows in one short transaction.
+- `document_service.py`, `parser_service.py`, `source_document.py`, and
+  `epub_parser_service.py` own TXT/EPUB ingestion and source locators.
+- `analysis_run_service.py` owns the public lifecycle facade, restart recovery, and process-local
+  executor registry. It delegates initial extraction/merge/final execution to
+  `analysis_run_execution_service.py` and retry/resume reconstruction to
+  `analysis_run_continuation_service.py`.
+- `analysis_selection_service.py`, `local_extraction_worker.py`, `atom_normalizer.py`,
+  `merge_service.py`, and `final_output_service.py` own the remaining authoritative analysis
+  stages.
+- `fts_service.py`, `retrieval_service.py`, and `chat_service.py` own evidence retrieval and chat.
+- `cross_work_entity_service.py`, `cross_work_graph_service.py`,
+  `cross_work_timeline_service.py`, and `cross_work_run_service.py` own deterministic cross-work
+  projections.
+- `artifact_storage_service.py` owns the SQLite/disk threshold for large JSON.
+- `llm_client.py` is the thin direct OpenAI-compatible HTTP client; no LLM framework is used.
 
-### SQLite Database
+Routers should validate HTTP inputs and translate domain failures. Database and domain behavior
+belongs in services so tests can use temporary Engines and data directories.
 
-Single file: `data/longnovelinsight.sqlite` (location configured in `config.py`).
+## Database Startup and Migrations
 
-Tables:
-- `topic`
-- `topic_provider_config`
-- `document`
-- `chapter`
-- `chunk`
-- `model_provider`
-- `analysis_output`
-- `chat_session`
-- `chat_message`
-- `job`
+SQLite is stored at `data/longnovelinsight.sqlite` unless tests override configuration. Startup has
+three explicit phases:
 
-See [DATA_MODEL.md](DATA_MODEL.md) for full schema.
+1. SQLModel creates tables that do not exist.
+2. `migrations.upgrade_schema(engine)` runs the immutable `ORDERED_MIGRATIONS` registry.
+3. interrupted `running` AnalysisRuns are marked failed and explicitly resumable.
 
-### data/ Directory
+Each migration receives its target Engine, is idempotent, and stops the sequence on failure. The
+registry is replayable rather than tracked by a one-time version ledger because Work and Chat
+migrations also repair partial or newly introduced null data. SQLite foreign keys are enabled on
+every pooled connection. Startup recovery never calls the LLM and leaves intentional `pending`
+runs unchanged.
 
-```
+See [DATA_MODEL.md](DATA_MODEL.md) for tables and [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md)
+for recovery invariants.
+
+## Local Storage
+
+```text
 data/
-  longnovelinsight.sqlite  — SQLite database (all data including text)
+  longnovelinsight.sqlite
   topics/
     {topic_id}/
       source/
-        original.txt       — the uploaded novel (UTF-8 normalized)
+        work_{work_id}_original.txt
+        work_{work_id}_original.epub
+      artifacts/
+        {artifact_type}/
+          {owner_id}.json
 ```
 
-**v0.1.0 storage note:** For simplicity, chunk text (`Chunk.text`) and analysis JSON (`AnalysisOutput.content_json`) are stored directly in SQLite. The `data/` directory holds only uploaded novel files. Future versions (v0.2+) may migrate large text content to separate files on disk to improve database performance.
+TXT sources are normalized to UTF-8. EPUB sources are preserved as EPUB and parsed through the
+source abstraction. Each Work has at most one Document row and one source file.
 
-### LLM Provider
+Structured JSON up to 64 KiB stays inline in SQLite. Larger analysis JSON is stored under the
+Topic artifact directory, with an `AnalysisArtifact` record and a compact inline pointer. Storage
+helpers reject paths outside `data/`. Tests that mutate state must replace both the database and
+data directory with temporary locations.
 
-The backend communicates with any OpenAI-compatible chat completions API. Default: DeepSeek (`https://api.deepseek.com`).
+## Authoritative Analysis Runtime
 
-**Provider Configuration Layers:**
+New analysis uses the Work-scoped AnalysisRun lifecycle:
 
-| Layer | Source | Stores |
-|-------|--------|--------|
-| Preset Catalog | `provider_presets.py` | Base URLs, model metadata, thinking support, defaults |
-| Provider | `model_provider` table | Credentials (api_key) + global defaults (model_name, temperature, etc.) |
-| Topic Config | `topic_provider_config` table | Per-novel overrides (model, tokens, temp, thinking, parallelism) |
-
-**Effective Config Resolution:** Topic override > Provider default > Preset default. Editing a Topic's config never mutates the global Provider.
-
-**Built-in Provider Presets:**
-- **DeepSeek** — `https://api.deepseek.com`, models: V4 Flash, V4 Pro, Chat (legacy). 1M context, JSON output, thinking mode support.
-- **OpenAI** — `https://api.openai.com/v1`, model list editable.
-- **Qwen / Alibaba Model Studio** — Singapore, Beijing, US Virginia, Hong Kong regions.
-- **Kimi / Moonshot** — `https://api.moonshot.ai/v1`.
-- **OpenAI-compatible custom** — Manual base URL, any model.
-
-**LLM Call Pattern:**
-1. Build a system prompt describing the analysis task and output format (JSON).
-2. Send chunk texts / analysis context as user messages. Shared instructions and chunks form a stable prefix for prompt caching.
-3. Parse the JSON response. Validate required fields (`source_chunk_ids`, `evidence_quotes`, `confidence`).
-4. Store structured output.
-
-### Authoritative Analysis Pipeline
-
-New product code uses AnalysisRun and analysis_run_service as the sole execution lifecycle:
-
-1. **Select** — resolve exactly one Work/Document, then select preview, range, full, or incremental chunks.
-2. **Extract** — send each selected chunk once to the LLM and persist LocalExtraction plus normalized ExtractedAtom rows.
-3. **Merge** — deterministically merge atoms by requested type in Python.
-4. **Finalize** — deterministically write frontend-compatible AnalysisOutput rows with a non-null run_id.
-5. **Control** — status, cancel, retry-failed, and resume operate on the same AnalysisRun.
-
-The explicit Work entry point is POST /api/works/{work_id}/analysis/runs. The Topic facade
-POST /api/topics/{topic_id}/analysis/runs remains supported for the Overview UI and legacy
-single-document clients, but resolves the deterministic default Work before calling the same
-service. It never creates a cross-Work run.
-
-AnalysisOutput remains the current final projection and retrieval source. Rows with non-null
-run_id have authoritative AnalysisRun provenance; rows with null run_id are historical outputs
-that remain readable.
-
-### AnalysisRun Runtime Ownership and Recovery
-
-analysis_run_service owns a process-local registry keyed by both run and Topic. Initial execution,
-retry-failed, and resume claim that registry under one re-entrant lock before starting a daemon
-thread, so a supported single-process backend has at most one executor per Topic. Run creation uses
-the same lock for its active-state check and insert. Executor claims are released in a finally
-path and also on thread-start failure.
-
-FastAPI startup performs database-only recovery after schema initialization. Rows left running
-by a prior process are marked failed with startup_recovery metadata and remain explicitly
-resumable. Intentionally deferred pending rows are not changed, and startup never triggers an LLM
-request. Resume reuses succeeded local extractions and processes only missing or opted-in failed
-chunks.
-
-The registry is intentionally not a distributed lock. Multiple Uvicorn workers or multiple backend
-processes sharing one SQLite database are outside the v0.4 local single-user deployment contract.
-
-### Deprecated Analysis Executors
-
-The v1 synchronous executor, v1 async executor, single-type executor, and Job/JobItem APIs are
-independent legacy lifecycles. They remain callable in v0.4 for compatibility, are marked deprecated
-in OpenAPI, and are no longer exposed by the frontend. They must not be used for new product code.
-No historical rows are automatically deleted or rewritten.
-
-See [ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md) for the endpoint matrix, invariants, and
-phased removal plan.
-## Technology Boundaries (v0.1.0 / v0.2.0 — historical)
-
-| Technology | Status |
-| ---------- | ------ |
-| FastAPI | Included |
-| SQLModel + SQLite | Included |
-| React + Vite | Included |
-| LangChain | Forbidden |
-| Docker | Forbidden |
-| Redis / Celery | Forbidden |
-| PostgreSQL | Forbidden |
-| Vector Database | Forbidden |
-| .epub / PDF parsing | EPUB: Added in v0.3. PDF: Forbidden. |
-
-## v0.2 Staged Analysis Pipeline
-
-v0.2 replaces v0.1's per-type-per-chunk LLM calls with a staged map-reduce design:
-
-```
-POST /api/works/{work_id}/analysis/runs
-(or Topic default-Work facade /api/topics/{id}/analysis/runs)
-    │
-    ▼
-AnalysisRun (pending → running)
-    │
-    ├── Stage 1: Local Extraction (parallel, per-chunk, LLM)
-    │     └── LocalExtraction rows + ExtractedAtom rows
-    │
-    ├── Stage 2: Deterministic Merge (per-type, Python, no LLM)
-    │     └── AnalysisOutput rows (output_type="merge_<type>")
-    │
-    └── Stage 3: Final Outputs (Python, no LLM)
-          └── AnalysisOutput rows (output_type=v0.1 6 types, run_id set)
+```text
+select Work chunks
+       |
+       v
+one LLM LocalExtraction per selected chunk
+       |
+       v
+validate and normalize ExtractedAtom rows
+       |
+       v
+deterministic Python merge per requested output family
+       |
+       v
+deterministic final AnalysisOutput projections
 ```
 
-**Key differences from v0.1:**
-- Each chunk is sent to LLM once (local_extraction), not 6 times
-- Merge and final stages are deterministic Python — no LLM cost
-- ~4× token savings per chunk
-- Stable IDs for all entities (not LLM-generated)
-- Full retry/resume/idempotency support
+The default final families are overview, characters, relations, events, causality, and themes.
+`worldbuilding` and `foreshadowing` are accepted atom/merge families but do not currently have the
+same final UI projection contract as the default six.
 
-### v0.2 New Modules
+Analysis execution uses process-local daemon threads and one service-owned registry. The supported
+v0.4 deployment is one backend process: at most one executor owns a Topic and a run cannot be
+started twice while registered. Multiple Uvicorn workers sharing one SQLite file are unsupported.
 
-```
-backend/
-  models/
-    analysis_run.py        — AnalysisRun (staged pipeline lifecycle)
-    local_extraction.py    — Per-chunk LLM extraction result
-    extracted_atom.py      — Normalized atomic facts
-    analysis_artifact.py   — Large JSON file storage pointer
-  services/
-    stable_id_service.py       — Canonical ID generation (CJK-safe)
-    atom_normalizer.py         — JSON → ExtractedAtom normalization
-    analysis_selection_service.py — Chunk selection (preview/range/full/incremental)
-    analysis_response_parser.py   — LLM response JSON parsing + validation
-    local_extraction_worker.py    — Single-chunk LLM extraction (pure function)
-    analysis_run_service.py       — Orchestrator: create/start/cancel/retry/resume
-    merge_service.py              — Deterministic merge (8 types)
-    final_output_service.py       — Merge → v0.1-compatible AnalysisOutput
-    artifact_storage_service.py   — Hybrid storage (inline + disk artifacts)
-  routers/
-    analysis_runs.py  — v2 run CRUD + retry/resume/cancel
-```
+The frontend must obtain a numeric token estimate before the credit-confirmed create action. The
+estimate is read-only and does not reserve capacity or guarantee billed usage. Merge and final
+stages make no LLM request.
 
-### v0.2 Database Additions
+For endpoint, cancellation, retry, resume, and legacy compatibility details, see
+[ANALYSIS_RUN_CONTRACT.md](ANALYSIS_RUN_CONTRACT.md). For prompts and retry accounting, see
+[LLM_PIPELINE.md](LLM_PIPELINE.md).
 
-| Table | Purpose |
-|-------|---------|
-| `analysis_run` | One row per v2 pipeline run |
-| `local_extraction` | One row per chunk per run (LLM output) |
-| `extracted_atom` | Normalized atomic facts per extraction |
-| `analysis_artifact` | Large JSON file storage metadata |
+## Retrieval and Chat
 
-Existing tables enhanced: `analysis_output.run_id` (nullable FK to analysis_run), `analysis_run.final_*` columns.
+Parsing populates SQLite FTS5 for source chunks. Retrieval combines available lexical and
+structured sources: FTS, CJK keyword fallback, extracted atoms, and analysis outputs. Candidates
+are deduplicated and ranked; scores are method-dependent and are not a public probability scale.
+Optional semantic reranking is disabled and its provider implementation remains a skeleton.
 
-### v0.2 Storage Strategy
+Chat first retrieves evidence. If no evidence is available, it returns a conservative local answer
+without calling the LLM. Otherwise it sends evidence plus up to six recent messages to the selected
+provider, validates the JSON answer, stores structured evidence, and persists a RetrievalTrace.
 
-- SQLite: all structured data + small analysis JSON (≤64KB) + all LocalExtraction content
-- Disk (`data/topics/{id}/artifacts/`): large merge/final AnalysisOutput JSON (>64KB)
-- Artifacts tracked in `analysis_artifact` table with path/size/SHA256
-- Cascade cleanup: Topic/Document deletion removes all artifacts
+Each new user/assistant pair shares `turn_id` and `sequence_index`; the assistant stores
+`reply_to_message_id`. Reads use stable session ordering. Edit/resend performs retrieval and LLM
+generation outside a write transaction, then serializes and atomically replaces the expected pair
+and RetrievalTrace rows after revalidation.
 
-### v0.2 API Endpoints
+## Cross-Work Materializations
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/topics/{id}/analysis/runs` | POST | Create and start v2 run |
-| `/api/topics/{id}/analysis/runs` | GET | List runs for topic |
-| `/api/topics/{id}/chunks/meta` | GET | Lightweight chunk statistics |
-| `/api/analysis/runs/{id}` | GET | Run status with stage summaries |
-| `/api/analysis/runs/{id}/cancel` | POST | Cancel pending/running run |
-| `/api/analysis/runs/{id}/retry-failed` | POST | Retry failed chunks |
-| `/api/analysis/runs/{id}/resume` | POST | Resume interrupted run |
+Cross-work entity, graph, and timeline builders are deterministic and make no LLM request.
 
-Legacy endpoints enhanced:
-- `POST /analysis/run?pipeline=v2` — creates v2 run
-- `GET /analysis/outputs?run_id=X&latest_only=true` — v2 output filtering
-- `GET /analysis/status` — includes `latest_v2_run` and `v2_available`
+- Empty `work_ids` means the canonical All scope.
+- Work IDs are sorted, deduplicated, and validated as members of the Topic.
+- GlobalEntity and EntityMention form one canonical Topic-wide registry; an entity build is not
+  narrowed by a scoped run request.
+- GraphSnapshot is partitioned by normalized scope. A rebuild replaces only the same scope, and an
+  unfiltered GET reads only All.
+- TimelineItem is Topic-owned but Work-partitioned. A scoped rebuild replaces only selected Works.
 
-## v0.3 Source Abstraction & EPUB
+These rules prevent a one-Work build from silently replacing the canonical All view.
 
-v0.3 adds EPUB support via a unified source abstraction:
+## Compatibility Boundary
 
-```
-Upload (.txt or .epub)
-     │
-     ├── TXT adapter  → SourceDocument → SourceChapter
-     │
-     └── EPUB adapter → zipfile + xml.etree.ElementTree (OPF/container)
-                        + beautifulsoup4 (XHTML text extraction)
-                        → SourceDocument → SourceChapter
-     │
-     ▼
-Unified parse pipeline
-     │
-     ├── Chapter rows (source_href, nav_order for EPUB)
-     ├── Chunk rows (source_locator_json for both formats)
-     └── FTS index rebuild
-```
+Legacy v1 output executors and Job/JobItem routes remain callable in v0.4 for existing local data
+and clients, but are deprecated in OpenAPI and have no frontend caller. They are not the supported
+path for new work. Historical `AnalysisOutput` rows with `run_id = NULL` remain readable; current
+final outputs have non-null AnalysisRun provenance.
 
-EPUB parsing extracts text only — no JS execution, no CSS rendering, no DRM.
+No compatibility route or migration may delete historical records merely because the path is
+deprecated. Removal requires a separately authorized migration and data-handling plan.
 
-## v0.3 Retrieval Architecture
+## Fixed v0.4 Technology Boundary
 
-```
-User query
-     │
-     ▼
-hybrid_retrieve()
-     │
-     ├── FTS5 lexical search (chunk_fts, BM25)
-     ├── Keyword/CJK fallback (LIKE + AND-group char overlap)
-     ├── Structured atom search (canonical_name, aliases, evidence_quotes)
-     └── Analysis output search (title, content, evidence_quotes)
-     │
-     ▼
-Dedup by chunk_id → min-max score normalization → top-k
-     │
-     ▼
-Candidate[] (source_type, source_id, chunk_id, snippet, score, method, matched_terms, source_locator)
-     │
-     ├── /retrieve → response with optional trace
-     ├── /chat → structured evidence_json + RetrievalTrace per message
-     ├── /entities/{id}/evidence → atoms + chunks + outputs
-     └── /similar-scenes → chunk_id seed or free-text query
-```
-
-When `ENABLE_SEMANTIC_RERANK` is true (off by default), an additional embedding-similarity rerank step is applied after lexical/structured candidates are collected. The `EmbeddingProvider` and `EmbeddingCache` table are skeleton implementations — no real embedding API calls in v0.3.0.
-
-## v0.3 Database Additions
-
-| Table | Purpose |
-|-------|---------|
-| `retrieval_trace` | Debug records per search/chat/retrieve call |
-| `chunk_fts` | FTS5 virtual table over chunk text/titles |
-| `embedding_cache` | Optional JSON vector cache (skeleton, disabled by default) |
-
-Existing tables enhanced:
-- `document.file_type` extended to `txt` / `epub`; `metadata_json` added
-- `chapter.source_href`, `nav_order`, `metadata_json` added
-- `chunk.source_locator_json` added
-
-## v0.3 Module Additions
-
-```
-backend/
-  models/
-    retrieval_trace.py      — RetrievalTrace (debug records)
-    embedding_cache.py      — EmbeddingCache (optional, skeleton)
-  services/
-    fts_service.py          — FTS5 rebuild/delete/search + CJK fallback
-    embedding_service.py    — EmbeddingProvider skeleton + semantic_rerank stub
-    epub_parser_service.py  — EPUB text extraction
-    source_document.py      — SourceDocument / SourceChapter dataclasses
-  routers/
-    search.py               — POST /search, GET /metadata, GET /locator
-    retrieve.py             — POST /retrieve (hybrid + optional rerank)
-    entities.py             — GET /entities/{id}/evidence, GET /similar-scenes
-```
-
-## v0.3 API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/topics/{id}/documents/current/metadata` | GET | Document metadata (EPUB parsed or TXT empty) |
-| `/api/topics/{id}/search` | POST | FTS5 + keyword fallback search |
-| `/api/topics/{id}/retrieve` | POST | Hybrid retrieval across all sources |
-| `/api/topics/{id}/chunks/{chunk_id}/locator` | GET | Source locator + excerpt |
-| `/api/topics/{id}/entities/{entity_id}/evidence` | GET | Entity evidence (atoms + chunks + outputs) |
-| `/api/topics/{id}/similar-scenes` | GET | Similar scenes by chunk_id or query |
-
-## Cross-Work Materialization Scope
-
-The empty work_ids scope is the canonical All view. Scoped identifiers are normalized to a sorted,
-deduplicated list and must belong to the requested Topic.
-
-- GlobalEntity and EntityMention form one canonical Topic-wide registry. A scoped cross-work run
-  still rebuilds this complete registry so local identity resolution cannot replace All with a
-  partial subset.
-- GraphSnapshot supports independent All and scoped materializations through scope_json. A build
-  replaces only the same normalized scope. An unfiltered GET selects only the latest All snapshot;
-  a Work-filtered GET selects the latest compatible scoped snapshot and falls back to All, then
-  projects edges and recomputes response node/edge counts.
-- TimelineItem remains a canonical Topic-wide materialization. An All build replaces all items,
-  while a scoped build replaces only items for the selected Works. Empty scoped results commit the
-  selected-scope deletion without touching other Works.
-- CrossWorkRun validates scoped Work ownership and preserves normalized work_ids in create, list,
-  detail, and completed stats responses.
-- Entity, graph, and timeline GET filters reject a Work owned by another Topic with 404.
-## Technology Boundaries (v0.4.0)
-
-| Technology | Status |
-| ---------- | ------ |
-| FastAPI + SQLModel + SQLite | Included |
-| React + TypeScript + Vite | Included |
-| beautifulsoup4 (EPUB XHTML) | Added in v0.3 |
-| SQLite FTS5 | Added in v0.3 |
-| Multi-Work (v0.4) | Added in v0.4 |
-| Cross-work entity registry (v0.4) | Added in v0.4 |
-| Graph snapshots + timeline (v0.4) | Added in v0.4 |
-| LangChain / LlamaIndex | Forbidden |
-| Docker | Forbidden |
-| Redis / Celery / PostgreSQL | Forbidden |
-| Qdrant / Chroma / FAISS | Forbidden |
-| PDF / OCR / DRM removal | Forbidden |
-| Cytoscape.js (planned v0.4.1) | Deferred |
-| Cloud sync / Auth | Forbidden |
-| Multiple source documents per Work | Forbidden |
+- Python, FastAPI, SQLModel, SQLite.
+- React, strict TypeScript, Vite, TanStack Query, plain CSS.
+- Direct OpenAI-compatible HTTP; DeepSeek is the default preset, not a hard dependency.
+- Local SQLite plus local files; no remote storage.
+- No authentication, multi-user behavior, PDF/OCR, Docker, queues, external databases, vector
+  databases, LLM frameworks, plugin systems, or new global state/UI frameworks.

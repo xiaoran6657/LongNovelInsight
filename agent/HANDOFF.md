@@ -2,67 +2,74 @@
 
 ## Objective
 
-Complete FE-CACHE-001: centralize TanStack Query keys shared by Topic Detail and Chat, preserve
-partial invalidation compatibility, prevent response-shape cache collisions, and publish the
-verified increment to codex/repository-takeover.
+Complete REL-002 by promoting final v0.4.0 version metadata, revalidating the release candidate,
+creating and pushing the release commit and annotated tag, and publishing the GitHub Release after
+the user's explicit authorization.
 
 ## Status
 
-FE-CACHE-001 completed and fully verified on 2026-07-13. The worktree started clean at commit
-9f30e95. This handoff and the frontend query-key increment are the complete authorized publication
-scope for the next commit on codex/repository-takeover.
+REL-002 completed on 2026-07-13. v0.4.0 is published from `codex/repository-takeover`, the
+annotated `v0.4.0` tag identifies the release commit, and the GitHub Release is public at
+`https://github.com/xiaoran6657/LongNovelInsight/releases/tag/v0.4.0`.
+
+The release commit contains the previously uncommitted CHAT-002, E2E-001, DB-001, DOC-001,
+REFACTOR-001, REL-001, and REL-002 work. No real LLM request was made.
 
 ## Ownership
 
-- Primary agent: key contract, migration, unit tests, full gates, documentation, and publication.
-- Query-key inventory agent: blocked by the Windows approval stream before file access.
-- Query-key test agent: TanStack partial-match behavior, normalization, and isolation test matrix.
+- Primary agent: final version promotion, release documentation, complete quality gates, explicit
+  staging review, commit, branch/tag push through the configured proxy, GitHub Release, and handoff.
+- No subagents were used for REL-002.
 
-## Query-Key Contract
+## Release Contents
 
-- Existing root strings remain stable so untouched component prefix invalidations keep working.
-- Undefined and null IDs normalize to an explicit null segment.
-- Topic Detail and Chat share the same topic, provider preset, effective config, and stored config
-  keys.
-- Chunk lists use the hierarchy chunks / Topic / list / normalized options.
-- includeText, limit, and offset are canonical key fields, preventing text and summary responses
-  from sharing cache entries.
-- The chunks / Topic prefix invalidates every list shape for that Topic without affecting another
-  Topic.
-- Chat optimistic reads, writes, cancellation, rollback, and invalidation all use the identical
-  session message key.
+- Explicit chat turn/reply linkage, stable ordering, and deterministic legacy backfill.
+- Isolated backend-integrated Work upload/parse/AnalysisRun smoke coverage.
+- Ordered, replayable, Engine-scoped SQLite migrations with old-schema fixtures.
+- Consolidated current API, architecture, data, frontend, and LLM pipeline documentation.
+- AnalysisRun lifecycle/execution/continuation service boundaries and split analysis-output
+  renderers with pure-logic coverage.
+- Final `0.4.0` backend/frontend/health/package/test/documentation identifiers.
+- v0.4.0 release notes, upgrade guidance, known limitations, and verified release evidence.
 
-## Changes
+## Final Verification
 
-- Add frontend/src/queryKeys.ts with small typed factories for Topic, provider/config, document,
-  chapter, chunk, Work, and Chat resources used by the two pages.
-- Replace every literal TanStack key in TopicDetailPage and TopicChatPage.
-- Merge the prior effectiveConfig/providerPresets/provider-config-chat aliases into the same keys
-  already used by Topic Detail.
-- Replace chunksWithText with a response-shape-aware chunk list key.
-- Add four pure tests using a real QueryClient for exact keys, option normalization, Topic prefix
-  invalidation, and Chat session isolation.
-- Update frontend README, project status, queue, and this handoff.
+### Backend
 
-## Verification
+- `conda run -n LongNovelInsight python -m pytest -v`: 762 passed, 6 integration tests deselected
+  in 348.67 seconds.
+- `conda run -n LongNovelInsight ruff check .`: pass.
+- `conda run -n LongNovelInsight ruff format --check .`: 137 files already formatted.
+- `conda run -n LongNovelInsight python -m pip check`: no broken requirements.
 
-- Frontend strict typecheck: pass.
-- Expanded ESLint: pass.
-- Pure-logic unit suite: 12 passed in 1.4 seconds.
-- Production build: pass; 159 modules, 458.98 kB JS / 131.99 kB gzip.
-- Full mocked Playwright suite: 53 passed in 18.1 seconds.
-- Literal-key audit: no raw query keys remain in TopicDetailPage or TopicChatPage.
-- Latest backend gate remains current from CROSS-001: Ruff pass; 755 passed, 6 deselected.
-- No dependency was added and no real LLM request was made.
+### Frontend
 
-## Open Risks
+- `npm run check`: typecheck, ESLint, 17 pure-logic tests, and production build pass.
+- Unit suite: 17 passed in 1.3 seconds.
+- Production build: 164 modules, 459.06 kB JS / 132.03 kB gzip.
+- `npm run e2e`: 53 passed in 21.1 seconds.
+- `npm audit --audit-level=low`: 0 vulnerabilities across 245 dependencies.
 
-- Query keys outside Topic Detail and Chat remain literal and can be migrated incrementally when
-  their subsystems are next changed; their root shapes remain compatible with this factory.
-- AnalysisRun executor ownership remains process-local.
-- Deprecated v1/Job executors remain callable for v0.4 compatibility.
-- scripts/integration_smoke.py remains unexecuted because it can make real LLM calls.
+### Release Hygiene
+
+- All maintained current-version declarations resolve to `0.4.0`.
+- Runtime OpenAPI and `docs/API.md` match across 83 method/path operations.
+- Repository-local Markdown links, tracked data paths, product/document secrets, forbidden source
+  dependencies, generated artifacts, conflict markers, unmerged paths, and patch whitespace pass.
+- The only key-shaped repository match is an intentional masked test fixture.
+- All 13 previously untracked files were reviewed as intended release files before staging.
+
+## Known Limitations
+
+- AnalysisRun executor ownership is process-local; multiple backend processes sharing one SQLite
+  database remain unsupported.
+- Deprecated v1/Job analysis routes remain callable for compatibility.
+- Relationship visualization remains an edge table and timeline pagination is deferred.
+- Browser E2E uses mocked APIs; the backend suite contains the default-safe integrated Work smoke.
+- The opt-in live-provider smoke was not run because it can spend real provider credit.
 
 ## Next Action
 
-Start CHAT-002: add explicit turn/reply linkage and stable ordering for chat message pairs.
+No v0.4.0 release blocker remains. Select and explicitly authorize a later v0.4.x candidate from
+`agent/NEXT_ACTIONS.md`, or begin a separately scoped v0.4.1 maintenance plan. Do not start v0.5
+roadmap work without the user's explicit scope change.
